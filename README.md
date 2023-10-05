@@ -32,7 +32,6 @@ You can use Karaoke Prep via the command line:
 ```sh
 usage: karaoke-prep [-h] [-v] [--log_level LOG_LEVEL] [--model_name MODEL_NAME] [--model_file_dir MODEL_FILE_DIR] [--output_dir OUTPUT_DIR] [--use_cuda] [--use_coreml]
                     [--denoise DENOISE] [--normalize NORMALIZE] [--create_track_subfolders]
-Initial version of the code, mostly copied from karaokenerds prep
                     [artist] [title] [url]
 
 Fetch audio and lyrics for a specified song, to prepare karaoke video creation.
