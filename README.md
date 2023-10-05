@@ -48,7 +48,7 @@ options:
   --log_level LOG_LEVEL            Optional: logging level, e.g. info, debug, warning (default: info). Example: --log_level=debug
   --model_name MODEL_NAME          Optional: model name to be used for separation (default: UVR_MDXNET_KARA_2). Example: --model_name=UVR-MDX-NET-Inst_HQ_3
   --model_file_dir MODEL_FILE_DIR  Optional: model files directory (default: /tmp/audio-separator-models/). Example: --model_file_dir=/app/models
-  --output_dir OUTPUT_DIR          Optional: directory to write output files (default: <current dir>/karaoke). Example: --output_dir=/app/karaoke
+  --output_dir OUTPUT_DIR          Optional: directory to write output files (default: <current dir>). Example: --output_dir=/app/karaoke
   --use_cuda                       Optional: use Nvidia GPU with CUDA for separation (default: False). Example: --use_cuda=true
   --use_coreml                     Optional: use Apple Silicon GPU with CoreML for separation (default: False). Example: --use_coreml=true
   --denoise DENOISE                Optional: enable or disable denoising during separation (default: True). Example: --denoise=False
@@ -59,12 +59,12 @@ options:
   Example:
 
 ```
-karaoke-prep --sort votes 10
+karaoke-prep "The Fray" "Never Say Never"
 ```
 
-This command will process the top 10 requests with the highest votes on Karaoke Nerds, downloading audio and lyrics for each and separating audio, ready for all 10 tracks to be created by whatever process you prefer for creating karaoke tracks!
+This command will search YouTube for the specified song, download audio from the top result and lyrics from genius, then separate the audio to produce an instrumental track, ready for a karaoke video to be created by whatever process you prefer!
 
-By default, you'll then end up with a folder called `karaoke` with all of the input files ready for bulk karaoke track creation, neatly organised e.g.
+By default, you'll end up with files in the current folder, neatly organised e.g.
 
 ```
 ├── Artist - Title (Instrumental UVR-MDX-NET-Inst_HQ_3).flac
@@ -158,7 +158,6 @@ This project is licensed under the MIT [License](LICENSE).
 
 ## Credits 🙏
 
-- [karaokenerd](https://github.com/karaokenerd) - Creator of [KaraokeNerds.com](https://karaokenerds.com/), without which we wouldn't even have a way to request karaoke tracks for creation! Huge thank you for the creation of the website which helps karaoke community creators keep organised and focused!
 - [Anjok07](https://github.com/Anjok07) - Author of [Ultimate Vocal Remover GUI](https://github.com/Anjok07/ultimatevocalremovergui), which was essential for the creation of [audio-separator](https://github.com/karaokenerds/python-audio-separator/)! Thank you!
 
 ## Contact 💌
