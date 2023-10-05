@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "karaoke-prep"
+version = "0.1.0"
+description = "Prepare for karaoke video creation, by downloading audio and lyrics for a specified song."
+authors = ["Andrew Beveridge <andrew@beveridge.uk>"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "karaoke_prep"}]
+homepage = "https://github.com/karaokenerds/karaoke-prep"
+repository = "https://github.com/karaokenerds/karaoke-prep"
+documentation = "https://github.com/karaokenerds/karaoke-prep/blob/main/README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.11"
+requests = "^2"
+beautifulsoup4 = "^4"
+yt-dlp = "*"
+lyricsgenius = "^3"
+fetch-lyrics-from-genius = "^0.1"
+audio-separator = "^0.7"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23"
+
+[tool.poetry.scripts]
+karaoke-prep = 'karaoke_prep.utils.cli:main'
+
+[tool.black]
+line-length = 140
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
