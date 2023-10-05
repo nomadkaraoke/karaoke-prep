@@ -176,9 +176,6 @@ class KaraokePrep:
             "title": title,
         }
 
-        if self.url is None:
-            self.logger.warn(f"No URL specified - the top result from YouTube will be used.")
-
         yt_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.wav")
         youtube_audio_files = glob.glob(yt_filename_pattern)
         youtube_audio_file = None
@@ -187,9 +184,14 @@ class KaraokePrep:
             youtube_audio_file = youtube_audio_files[0]
             self.logger.debug(f"Youtube audio already exists, skipping download: {youtube_audio_file}")
         else:
-            self.logger.info("Searching YouTube for video ID...")
-            query = f"{artist} {title}"
-            youtube_id = self.get_youtube_id_for_top_search_result(query)
+            if self.url is None:
+                self.logger.warn(f"No URL specified - the top result from YouTube will be used.")
+                self.logger.info("Searching YouTube for video ID...")
+                query = f"{artist} {title}"
+                youtube_id = self.get_youtube_id_for_top_search_result(query)
+            else:
+                self.logger.info("Parsing YouTube video ID from URL...")
+                youtube_id = self.url.split("watch?v=")[1]
             if youtube_id:
                 youtube_audio_file = os.path.join(track_output_dir, f"{artist_title} (YouTube {youtube_id})")
 
