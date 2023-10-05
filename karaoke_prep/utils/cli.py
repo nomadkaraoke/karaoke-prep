@@ -19,7 +19,7 @@ def main():
 
     parser.add_argument("artist", nargs="?", help="Artist name for the song to prep.", default=argparse.SUPPRESS)
     parser.add_argument("title", nargs="?", help="Title of the song to prep.", default=argparse.SUPPRESS)
-    parser.add_argument("url", nargs="?", help="YouTube URL of the song to prep.", default=argparse.SUPPRESS)
+    parser.add_argument("url", nargs="?", help="YouTube URL of the song to prep.", default=None)
 
     package_version = pkg_resources.get_distribution("karaoke-prep").version
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {package_version}")

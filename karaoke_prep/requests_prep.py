@@ -62,8 +62,8 @@ class KaraokePrep:
         else:
             self.logger.debug(f"Overall output dir {self.output_dir} already exists")
 
-        if url is None or artist is None or title is None:
-            raise Exception("Error: You must provide a URL, artist and title.")
+        if artist is None or title is None:
+            raise Exception("Error: You must provide an artist and title.")
 
     def get_youtube_id_for_top_search_result(self, query):
         ydl_opts = {"quiet": "True", "format": "bestaudio", "noplaylist": "True", "extract_flat": True}
@@ -175,6 +175,9 @@ class KaraokePrep:
             "artist": artist,
             "title": title,
         }
+
+        if self.url is None:
+            self.logger.warn(f"No URL specified - the top result from YouTube will be used.")
 
         yt_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.wav")
         youtube_audio_files = glob.glob(yt_filename_pattern)

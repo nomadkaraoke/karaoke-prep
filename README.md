@@ -30,28 +30,30 @@ You can install Karaoke Prep using pip:
 You can use Karaoke Prep via the command line:
 
 ```sh
-usage: karaoke-prep [-h] [-v] [--log_level LOG_LEVEL] [--model_name MODEL_NAME] [--model_file_dir MODEL_FILE_DIR] [--output_dir OUTPUT_DIR] [--use_cuda] [--use_coreml] [--denoise DENOISE] [--normalize NORMALIZE]
-                                  [--create_track_subfolders]
+usage: karaoke-prep [-h] [-v] [--log_level LOG_LEVEL] [--model_name MODEL_NAME] [--model_file_dir MODEL_FILE_DIR] [--output_dir OUTPUT_DIR] [--use_cuda] [--use_coreml]
+                    [--denoise DENOISE] [--normalize NORMALIZE] [--create_track_subfolders]
+Initial version of the code, mostly copied from karaokenerds prep
+                    [artist] [title] [url]
 
-Fetch audio and lyrics for a specified song, to prepare for karaoke video creation.
+Fetch audio and lyrics for a specified song, to prepare karaoke video creation.
 
 positional arguments:
-  url                                    YouTube URL to download source audio for.
+  artist                           Artist name for the song to prep.
+  title                            Title of the song to prep.
+  url                              YouTube URL of the song to prep.
 
 options:
-  -h, --help                             show this help message and exit
-  -v, --version                          show program's version number and exit
-  --log_level LOG_LEVEL                  Optional: logging level, e.g. info, debug, warning (default: info). Example: --log_level=debug
-  --model_name MODEL_NAME                Optional: model name to be used for separation (default: UVR_MDXNET_KARA_2). Example: --model_name=UVR-MDX-NET-Inst_HQ_3
-  --model_file_dir MODEL_FILE_DIR        Optional: model files directory (default: /tmp/audio-separator-models/). Example: --model_file_dir=/app/models
-  --output_dir OUTPUT_DIR                Optional: directory to write output files (default: <current dir>/karaoke). Example: --output_dir=/app/karaoke
-  --use_cuda                             Optional: use Nvidia GPU with CUDA for separation (default: False). Example: --use_cuda=true
-  --use_coreml                           Optional: use Apple Silicon GPU with CoreML for separation (default: False). Example: --use_coreml=true
-  --denoise DENOISE                      Optional: enable or disable denoising during separation (default: True). Example: --denoise=False
-  --normalize NORMALIZE                  Optional: enable or disable normalization during separation (default: True). Example: --normalize=False
-  --create_track_subfolders              Optional: create subfolders in the output folder for each track (default: False). Example: --create_track_subfolders=true
-  --skip SKIP_NUM                    Optional: skip the first X number of results. Example: --skip=10
-  --sort {votes,tip,views,spotify,date}  Optional: choose the order for the sort parameter (default: votes). Valid options: votes, tip, views, spotify, date
+  -h, --help                       show this help message and exit
+  -v, --version                    show program's version number and exit
+  --log_level LOG_LEVEL            Optional: logging level, e.g. info, debug, warning (default: info). Example: --log_level=debug
+  --model_name MODEL_NAME          Optional: model name to be used for separation (default: UVR_MDXNET_KARA_2). Example: --model_name=UVR-MDX-NET-Inst_HQ_3
+  --model_file_dir MODEL_FILE_DIR  Optional: model files directory (default: /tmp/audio-separator-models/). Example: --model_file_dir=/app/models
+  --output_dir OUTPUT_DIR          Optional: directory to write output files (default: <current dir>/karaoke). Example: --output_dir=/app/karaoke
+  --use_cuda                       Optional: use Nvidia GPU with CUDA for separation (default: False). Example: --use_cuda=true
+  --use_coreml                     Optional: use Apple Silicon GPU with CoreML for separation (default: False). Example: --use_coreml=true
+  --denoise DENOISE                Optional: enable or disable denoising during separation (default: True). Example: --denoise=False
+  --normalize NORMALIZE            Optional: enable or disable normalization during separation (default: True). Example: --normalize=False
+  --create_track_subfolders        Optional: create subfolders in the output folder for each track (default: False). Example: --create_track_subfolders=true
   ```
 
   Example:
