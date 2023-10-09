@@ -11,13 +11,13 @@ repository = "https://github.com/karaokenerds/karaoke-prep"
 documentation = "https://github.com/karaokenerds/karaoke-prep/blob/main/README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.9,<3.11"
+python = ">=3.9"
 requests = "^2"
 beautifulsoup4 = "^4"
 yt-dlp = "*"
 lyricsgenius = "^3"
 fetch-lyrics-from-genius = "^0.1"
-audio-separator = "^0.7"
+audio-separator = "^0.8"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23"

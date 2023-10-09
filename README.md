@@ -76,7 +76,7 @@ By default, you'll end up with files in the current folder, neatly organised e.g
 
 ## Requirements 📋
 
-Python <= 3.10 (one of the dependencies doesn't like 3.11 yet)
+Python >= 3.9
 
 Libraries: onnx, onnxruntime, numpy, soundfile, librosa, torch, wget, six
 

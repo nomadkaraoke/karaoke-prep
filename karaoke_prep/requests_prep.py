@@ -21,7 +21,7 @@ class KaraokePrep:
         model_name="UVR_MDXNET_KARA_2",
         model_name_2="UVR-MDX-NET-Inst_HQ_3",
         model_file_dir="/tmp/audio-separator-models/",
-        output_dir="karaoke",
+        output_dir=".",
         use_cuda=False,
         use_coreml=False,
         normalization_enabled=True,
