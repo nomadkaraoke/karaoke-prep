@@ -52,7 +52,7 @@ options:
   --use_coreml                     Optional: use Apple Silicon GPU with CoreML for separation (default: False). Example: --use_coreml=true
   --denoise DENOISE                Optional: enable or disable denoising during separation (default: True). Example: --denoise=False
   --normalize NORMALIZE            Optional: enable or disable normalization during separation (default: True). Example: --normalize=False
-  --create_track_subfolders        Optional: create subfolders in the output folder for each track (default: False). Example: --create_track_subfolders=true
+  --no_track_subfolders            Optional:do NOT create a named subfolder for each track. Example: --no_track_subfolders
   ```
 
   Example:

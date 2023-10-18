@@ -44,8 +44,8 @@ def main():
 
     parser.add_argument(
         "--output_dir",
-        default="karaoke",
-        help="Optional: directory to write output files (default: <current dir>/karaoke). Example: --output_dir=/app/karaoke",
+        default=".",
+        help="Optional: directory to write output files (default: <current dir>). Example: --output_dir=/app/karaoke",
     )
 
     parser.add_argument(
@@ -75,9 +75,9 @@ def main():
     )
 
     parser.add_argument(
-        "--create_track_subfolders",
-        action="store_true",
-        help="Optional: create subfolders in the output folder for each track (default: %(default)s). Example: --create_track_subfolders=true",
+        "--no_track_subfolders",
+        action="store_false",
+        help="Optional: do NOT create a named subfolder for each track. Example: --no_track_subfolders",
     )
 
     args = parser.parse_args()
