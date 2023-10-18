@@ -22,6 +22,7 @@ class KaraokePrep:
         model_name_2="UVR-MDX-NET-Inst_HQ_3",
         model_file_dir="/tmp/audio-separator-models/",
         output_dir=".",
+        output_format="WAV",
         use_cuda=False,
         use_coreml=False,
         normalization_enabled=True,
@@ -50,6 +51,7 @@ class KaraokePrep:
         self.model_name_2 = model_name_2
         self.model_file_dir = model_file_dir
         self.output_dir = output_dir
+        self.output_format = output_format
         self.use_cuda = use_cuda
         self.use_coreml = use_coreml
         self.normalization_enabled = normalization_enabled
@@ -142,7 +144,7 @@ class KaraokePrep:
             log_formatter=self.log_formatter,
             model_name=model_name,
             model_file_dir=self.model_file_dir,
-            output_format="FLAC",
+            output_format=self.output_format,
             primary_stem_path=instrumental_path,
             secondary_stem_path=vocals_path,
         )

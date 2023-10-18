@@ -49,6 +49,12 @@ def main():
     )
 
     parser.add_argument(
+        "--output_format",
+        default="MP3",
+        help="Optional: output format for separated audio (default: MP3). Example: --output_format=FLAC",
+    )
+
+    parser.add_argument(
         "--use_cuda",
         action="store_true",
         help="Optional: use Nvidia GPU with CUDA for separation (default: %(default)s). Example: --use_cuda=true",
@@ -100,6 +106,7 @@ def main():
         model_name=args.model_name,
         model_file_dir=args.model_file_dir,
         output_dir=args.output_dir,
+        output_format=args.output_format,
         use_cuda=args.use_cuda,
         use_coreml=args.use_coreml,
         normalization_enabled=args.normalize,
