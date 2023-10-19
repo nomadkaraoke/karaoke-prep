@@ -58,6 +58,8 @@ class KaraokePrep:
         self.denoise_enabled = denoise_enabled
         self.create_track_subfolders = create_track_subfolders
 
+        self.logger.debug(f"KaraokePrep output_format: {self.output_format}")
+
         if not os.path.exists(self.output_dir):
             self.logger.debug(f"Overall output dir {self.output_dir} did not exist, creating")
             os.makedirs(self.output_dir)
@@ -137,7 +139,7 @@ class KaraokePrep:
 
         self.logger.debug(f"audio_file is valid file: {audio_file}")
 
-        self.logger.debug(f"instantiating Separator with model_name: {model_name} and instrumental_path: {instrumental_path}")
+        self.logger.debug(f"instantiating Separator with model_name: {model_name} instrumental_path: {instrumental_path} and output_format: {self.output_format}")
         separator = Separator(
             audio_file,
             log_level=self.log_level,
