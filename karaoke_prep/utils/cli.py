@@ -111,7 +111,7 @@ def main():
         use_coreml=args.use_coreml,
         normalization_enabled=args.normalize,
         denoise_enabled=args.denoise,
-        create_track_subfolders=args.create_track_subfolders,
+        create_track_subfolders=args.no_track_subfolders,
     )
 
     track = kprep.prep()
