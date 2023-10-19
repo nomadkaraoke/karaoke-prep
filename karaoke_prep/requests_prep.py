@@ -218,8 +218,8 @@ class KaraokePrep:
 
         self.logger.info(f"Separating audio twice for track: {title} by {artist}")
 
-        instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental {self.model_name}).flac")
-        vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name}).flac")
+        instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental {self.model_name}).{self.output_format}")
+        vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name}).{self.output_format}")
 
         if os.path.isfile(instrumental_path) and os.path.isfile(vocals_path):
             self.logger.debug(f"Separated audio files already exist in output paths, skipping separation: {instrumental_path}")
@@ -229,8 +229,8 @@ class KaraokePrep:
         processed_track["instrumental_audio"] = instrumental_path
         processed_track["vocals_audio"] = vocals_path
 
-        instrumental_path_2 = os.path.join(track_output_dir, f"{artist_title} (Instrumental {self.model_name_2}).flac")
-        vocals_path_2 = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name_2}).flac")
+        instrumental_path_2 = os.path.join(track_output_dir, f"{artist_title} (Instrumental {self.model_name_2}).{self.output_format}")
+        vocals_path_2 = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name_2}).{self.output_format}")
 
         if os.path.isfile(instrumental_path_2) and os.path.isfile(vocals_path_2):
             self.logger.debug(f"Separated audio files already exist in output paths, skipping separation: {instrumental_path_2}")
