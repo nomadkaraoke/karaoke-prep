@@ -81,22 +81,31 @@ class KaraokePrep:
                 self.logger.warning(f"No YouTube results found for query: {query}")
                 return None
 
-    def download_audio(self, youtube_id, filename):
+    def download_video(self, youtube_id, output_filename_no_extension):
+        self.logger.debug(f"Downloading YouTube video {youtube_id} to filename {output_filename_no_extension} + (as yet) unknown extension")
         ydl_opts = {
-            "format": "ba",
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "wav",
-                    "preferredquality": "192",
-                }
-            ],
-            "outtmpl": f"{filename}",
+            "format": "bv*+ba/b",  # if a combined video + audio format is better than the best video-only format use the combined format
+            "outtmpl": f"{output_filename_no_extension}",
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as youtube_dl_instance:
             youtube_dl_instance.download([f"https://www.youtube.com/watch?v={youtube_id}"])
+            self.logger.warn(f"Download finished, assuming hard-coded webm extension (!) and returning this filename")
+            # TODO: Replace hard-coded webm extension with the actual extension of the downloaded file using yt-dlp hooks / event callback
+            return output_filename_no_extension + ".webm"
+
+    def extract_still_image_from_video(self, input_filename, output_filename_no_extension):
+        output_filename = output_filename_no_extension + ".png"
+        self.logger.debug(f"Extracting still image from position 30s YouTube video to {output_filename}")
+        os.system(f'ffmpeg -i "{input_filename}" -ss 00:00:30 -vframes 1 "{output_filename}"')
+        return output_filename
+
+    def convert_to_wav(self, input_filename, output_filename_no_extension):
+        output_filename = output_filename_no_extension + ".wav"
+        self.logger.debug(f"Converting {input_filename} to WAV file {output_filename}")
+        os.system(f'ffmpeg -i "{input_filename}" "{output_filename}"')
+        return output_filename
 
     def write_lyrics_from_genius(self, artist, title, filename):
         genius = lyricsgenius.Genius(os.environ["GENIUS_API_TOKEN"])
@@ -139,7 +148,9 @@ class KaraokePrep:
 
         self.logger.debug(f"audio_file is valid file: {audio_file}")
 
-        self.logger.debug(f"instantiating Separator with model_name: {model_name} instrumental_path: {instrumental_path} and output_format: {self.output_format}")
+        self.logger.debug(
+            f"instantiating Separator with model_name: {model_name} instrumental_path: {instrumental_path} and output_format: {self.output_format}"
+        )
         separator = Separator(
             audio_file,
             log_level=self.log_level,
@@ -180,13 +191,25 @@ class KaraokePrep:
             "title": title,
         }
 
-        yt_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.wav")
-        youtube_audio_files = glob.glob(yt_filename_pattern)
-        youtube_audio_file = None
+        yt_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.webm")
+        yt_webm_glob = glob.glob(yt_webm_filename_pattern)
 
-        if youtube_audio_files:
-            youtube_audio_file = youtube_audio_files[0]
-            self.logger.debug(f"Youtube audio already exists, skipping download: {youtube_audio_file}")
+        yt_png_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.png")
+        yt_png_glob = glob.glob(yt_png_filename_pattern)
+
+        yt_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.wav")
+        yt_wav_glob = glob.glob(yt_wav_filename_pattern)
+
+        processed_track["youtube_video"] = None
+        processed_track["youtube_still_image"] = None
+        processed_track["youtube_audio"] = None
+
+        if yt_webm_glob and yt_png_glob and yt_wav_glob:
+            processed_track["youtube_video"] = yt_webm_glob[0]
+            processed_track["youtube_still_image"] = yt_png_glob[0]
+            processed_track["youtube_audio"] = yt_wav_glob[0]
+
+            self.logger.debug(f"YouTube output files already exist, skipping download: {processed_track['youtube_video']} + .wav + .png")
         else:
             if self.url is None:
                 self.logger.warn(f"No URL specified - the top result from YouTube will be used.")
@@ -197,15 +220,20 @@ class KaraokePrep:
                 self.logger.info("Parsing YouTube video ID from URL...")
                 youtube_id = self.url.split("watch?v=")[1]
             if youtube_id:
-                youtube_audio_file = os.path.join(track_output_dir, f"{artist_title} (YouTube {youtube_id})")
+                output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} (YouTube {youtube_id})")
 
-                self.logger.info("Downloading original audio from YouTube to filename {original_audio_filename}")
-                self.download_audio(youtube_id, youtube_audio_file)
-                youtube_audio_file = youtube_audio_file + ".wav"
+                self.logger.info("Downloading original video from YouTube...")
+                processed_track["youtube_video"] = self.download_video(youtube_id, output_filename_no_extension)
+
+                self.logger.info("Extracting still image from downloaded video...")
+                processed_track["youtube_still_image"] = self.extract_still_image_from_video(
+                    processed_track["youtube_video"], output_filename_no_extension
+                )
+
+                self.logger.info("Converting downloaded video to WAV for audio processing...")
+                processed_track["youtube_audio"] = self.convert_to_wav(processed_track["youtube_video"], output_filename_no_extension)
             else:
                 self.logger.warning(f"Skipping {title} by {artist} due to missing YouTube ID.")
-
-        processed_track["youtube_audio"] = youtube_audio_file
 
         lyrics_file = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
         if os.path.exists(lyrics_file):

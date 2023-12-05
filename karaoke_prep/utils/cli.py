@@ -120,7 +120,9 @@ def main():
 
     logger.info(f"")
     logger.info(f"Track: {track['artist']} - {track['title']}")
+    logger.info(f" YouTube Video: {track['youtube_video']}")
     logger.info(f" YouTube Audio: {track['youtube_audio']}")
+    logger.info(f" YouTube Still Image: {track['youtube_still_image']}")
     logger.info(f" Lyrics: {track['lyrics']}")
     logger.info(f" Instrumental: {track['instrumental_audio']}")
     logger.info(f" Vocals: {track['vocals_audio']}")
