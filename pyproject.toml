@@ -18,6 +18,7 @@ yt-dlp = "*"
 lyricsgenius = "^3"
 fetch-lyrics-from-genius = "^0.1"
 audio-separator = "^0.8"
+pillow = "^10.1.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23"
