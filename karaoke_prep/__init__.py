@@ -1,1 +1,1 @@
-from .requests_prep import KaraokePrep
+from .karaoke_prep import KaraokePrep

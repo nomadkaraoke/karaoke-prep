@@ -1,12 +1,9 @@
-import requests
 import os
 import re
 import glob
-from bs4 import BeautifulSoup
 import yt_dlp
 import logging
 import lyricsgenius
-from slugify import slugify
 
 
 class KaraokePrep:
@@ -27,6 +24,11 @@ class KaraokePrep:
         normalization_enabled=True,
         denoise_enabled=True,
         create_track_subfolders=False,
+        intro_background_color="#000000",
+        intro_background_image=None,
+        intro_font="Avenir-Next-Bold",
+        intro_artist_color="#ff7acc",
+        intro_title_color="#ffdf6b",
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -56,6 +58,11 @@ class KaraokePrep:
         self.normalization_enabled = normalization_enabled
         self.denoise_enabled = denoise_enabled
         self.create_track_subfolders = create_track_subfolders
+        self.intro_background_color = intro_background_color
+        self.intro_background_image = intro_background_image
+        self.intro_font = intro_font
+        self.intro_artist_color = intro_artist_color
+        self.intro_title_color = intro_title_color
 
         self.logger.debug(f"KaraokePrep output_format: {self.output_format}")
 
@@ -180,6 +187,7 @@ class KaraokePrep:
         return filename
 
     def separate_audio(self, audio_file, model_name, instrumental_path, vocals_path):
+        return
         if audio_file is None or not os.path.isfile(audio_file):
             raise Exception("Error: Invalid audio source provided.")
 
@@ -190,6 +198,7 @@ class KaraokePrep:
         )
 
         from audio_separator import Separator
+
         separator = Separator(
             audio_file,
             log_level=self.log_level,
@@ -217,6 +226,67 @@ class KaraokePrep:
             os.makedirs(track_output_dir)
 
         return track_output_dir, artist_title
+
+    def create_intro_video(self, artist, title, output_filename):
+        from moviepy.editor import ColorClip, ImageClip, TextClip, CompositeVideoClip
+        from PIL import Image
+        import numpy as np
+
+        duration = 5  # Duration in seconds
+        resolution = (3840, 2160)  # 4K resolution
+
+        self.logger.debug(f"Creating intro video clip with duration: {duration} and resolution: {resolution} to {output_filename}")
+
+        # Create a background clip
+        if self.intro_background_image:
+            self.logger.debug(f"Background image specified, using: {self.intro_background_image}")
+            pil_image = Image.open(self.intro_background_image)
+            pil_image_resized = pil_image.resize(resolution, Image.Resampling.LANCZOS)
+            background_clip = ImageClip(np.array(pil_image_resized), duration=duration)
+        else:
+            self.logger.debug(f"Background image not specified, using color: {self.intro_background_color}")
+            background_color_rgb = self.hex_to_rgb(self.intro_background_color)
+            background_clip = ColorClip(size=resolution, color=background_color_rgb, duration=duration)
+
+        # Determine font size
+        font_size = 400  # Adjust as needed to fill most of the screen
+
+        self.logger.debug(f"Rendering artist text with font size: {font_size} and color: {self.intro_artist_color}")
+        artist_text = (
+            TextClip(artist, fontsize=font_size, font=self.intro_font, color=self.intro_artist_color, size=resolution)
+            .set_duration(duration)
+            .set_position(("center", "center"), relative=True)  # Centered horizontally and vertically
+        )
+
+        self.logger.debug(f"Rendering title text with font size: {font_size} and color: {self.intro_title_color}")
+        title_text = (
+            TextClip(title, fontsize=font_size, font=self.intro_font, color=self.intro_title_color, size=resolution)
+            .set_duration(duration)
+            .set_position(("center", "center"), relative=True)  # Centered horizontally and vertically
+        )
+
+        # Adjust vertical position of text clips
+        artist_text_margin = int(font_size * 0.5)  # Adjust as needed
+        title_text_margin = int(font_size * 0.5)  # Adjust as needed
+        artist_text = artist_text.set_position(lambda t: ("center", resolution[1] / 2 - artist_text_margin))
+        title_text = title_text.set_position(lambda t: ("center", resolution[1] / 2 + title_text_margin))
+
+        # Composite the clips
+        video = CompositeVideoClip(
+            [
+                background_clip,
+                artist_text,
+                title_text,
+            ]
+        )
+
+        self.logger.debug(f"Writing composite video clip to {output_filename}")
+        video.write_videofile(output_filename, threads=8, fps=24)
+
+    def hex_to_rgb(self, hex_color):
+        """Convert hex color to RGB tuple."""
+        hex_color = hex_color.lstrip("#")
+        return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
 
     def prep_single_track(self):
         if self.artist is None or self.title is None:
@@ -286,6 +356,9 @@ class KaraokePrep:
             self.write_lyrics_from_genius(artist, title, lyrics_file)
 
         processed_track["lyrics"] = lyrics_file
+
+        intro_filename = os.path.join(track_output_dir, f"{artist_title} (Intro).mp4")
+        self.create_intro_video(artist, title, intro_filename)
 
         self.logger.info(f"Separating audio twice for track: {title} by {artist}")
 

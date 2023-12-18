@@ -93,6 +93,35 @@ def main():
         help="Optional: do NOT create a named subfolder for each track. Example: --no_track_subfolders",
     )
 
+    parser.add_argument(
+        "--intro_background_color",
+        default="black",
+        help="Optional: Background color for intro video (default: black). Example: --intro_background_color=#123456",
+    )
+
+    parser.add_argument(
+        "--intro_background_image",
+        help="Optional: Path to background image for intro video. Overrides background color if provided. Example: --intro_background_image=path/to/image.jpg",
+    )
+
+    parser.add_argument(
+        "--intro_font",
+        default="Avenir-Next-Bold",
+        help="Optional: Font for intro video (default: Avenir-Next-Bold). Example: --intro_font=Arial",
+    )
+
+    parser.add_argument(
+        "--intro_artist_color",
+        default="#ff7acc",
+        help="Optional: Font color for intro video artist text (default: #ff7acc). Example: --intro_artist_color=#123456",
+    )
+
+    parser.add_argument(
+        "--intro_title_color",
+        default="#ffdf6b",
+        help="Optional: Font color for intro video title text (default: #ffdf6b). Example: --intro_title_color=#123456",
+    )
+
     args = parser.parse_args()
 
     url, artist, title = None, None, None
@@ -137,6 +166,11 @@ def main():
         normalization_enabled=args.normalize,
         denoise_enabled=args.denoise,
         create_track_subfolders=args.no_track_subfolders,
+        intro_background_color=args.intro_background_color,
+        intro_background_image=args.intro_background_image,
+        intro_font=args.intro_font,
+        intro_artist_color=args.intro_artist_color,
+        intro_title_color=args.intro_title_color,
     )
 
     tracks = kprep.process()
