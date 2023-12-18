@@ -19,7 +19,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="Fetch audio and lyrics for a specified song, to prepare karaoke video creation.",
-        formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, max_help_position=50),
+        formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, max_help_position=54),
     )
 
     parser.add_argument(
