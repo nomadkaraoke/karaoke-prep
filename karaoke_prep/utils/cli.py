@@ -135,8 +135,10 @@ def main():
         if len(args.args) > 2:
             artist = args.args[1]
             title = args.args[2]
+        elif len(args.args) > 1:
+            artist = args.args[1]
         else:
-            logger.warn("URL provided without Artist and Title, these will be guessed from YouTube Title")
+            logger.warn("URL provided without Artist and Title, both will be guessed from YouTube Title")
 
     elif len(args.args) > 1:
         artist = args.args[0]

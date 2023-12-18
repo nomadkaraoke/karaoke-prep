@@ -231,8 +231,9 @@ class KaraokePrep:
     def create_intro_video(self, artist, title, output_filename):
         duration = 5  # Duration in seconds
         resolution = (3840, 2160)  # 4K resolution
-        font_size = 400  # Adjust as needed
+        font_size = 400  # Initial font size
         line_spacing = 50  # Adjust as needed
+        padding = 300  # Padding from edges
 
         # Load or create background image
         if self.intro_background_image:
@@ -246,20 +247,31 @@ class KaraokePrep:
         # Create an ImageDraw instance
         draw = ImageDraw.Draw(background)
 
-        # Check if the font file exists, if not use a default font
-        if os.path.exists(self.intro_font):
-            font = ImageFont.truetype(self.intro_font, size=font_size)
-        else:
-            self.logger.warning(f"Font file not found: {self.intro_font}. Using default font.")
-            font = ImageFont.load_default(size=font_size)
+        # Function to calculate text width
+        def calculate_text_width(font):
+            artist_text_width = draw.textlength(artist, font=font)
+            title_text_width = draw.textlength(title, font=font)
+            return max(artist_text_width, title_text_width)
 
-        # Calculate text width using the ImageDraw instance
-        artist_text_width = draw.textlength(artist, font=font)
-        title_text_width = draw.textlength(title, font=font)
+        # Adjust font size if necessary
+        while True:
+            if os.path.exists(self.intro_font):
+                font = ImageFont.truetype(self.intro_font, size=font_size)
+            else:
+                self.logger.warning(f"Font file not found: {self.intro_font}. Using default font.")
+                font = ImageFont.load_default(size=font_size)
+
+            max_text_width = calculate_text_width(font)
+            if max_text_width + padding * 2 > resolution[0]:
+                font_size -= 10  # Reduce font size
+                if font_size <= 0:
+                    raise ValueError("Cannot fit text within screen bounds.")
+            else:
+                break
 
         # Calculate text positions
-        artist_text_position = ((resolution[0] - artist_text_width) // 2, resolution[1] // 2 - font_size - line_spacing)
-        title_text_position = ((resolution[0] - title_text_width) // 2, resolution[1] // 2 + line_spacing)
+        artist_text_position = ((resolution[0] - calculate_text_width(font)) // 2, resolution[1] // 2 - font_size - line_spacing)
+        title_text_position = ((resolution[0] - calculate_text_width(font)) // 2, resolution[1] // 2 + line_spacing)
 
         # Draw text
         draw.text(artist_text_position, artist, fill=self.intro_artist_color, font=font)
@@ -268,29 +280,28 @@ class KaraokePrep:
         # Save to a temporary image file
         temp_image_path = "/tmp/temp_background.png"
         background.save(temp_image_path)
-        self.logger.warning(f"Temporarily saving background image to {temp_image_path}")
 
         # Use ffmpeg to create video
         ffmpeg_command = [
             "ffmpeg",
-            "-y",  # Overwrite output files without asking
-            "-loop",  # Loop the input image
-            "1",  # Loop the input image
-            "-i",  # Input file
-            temp_image_path,  # Input file
-            "-c:v",  # Video codec
-            "libx264",  # Video codec
-            "-t",  # Duration
-            str(duration),  # Duration
-            "-pix_fmt",  # Pixel format
-            "yuv420p",  # Pixel format
-            "-vf",  # Video filter
-            f"scale={resolution[0]}:{resolution[1]}",  # Video filter
-            output_filename,  # Output filename
+            "-y",
+            "-loop",
+            "1",
+            "-i",
+            temp_image_path,
+            "-c:v",
+            "libx264",
+            "-t",
+            str(duration),
+            "-pix_fmt",
+            "yuv420p",
+            "-vf",
+            f"scale={resolution[0]}:{resolution[1]}",
+            output_filename,
         ]
 
         subprocess.run(ffmpeg_command)
-        # os.remove(temp_image_path)
+        os.remove(temp_image_path)
 
     def hex_to_rgb(self, hex_color):
         """Convert hex color to RGB tuple."""
@@ -409,7 +420,8 @@ class KaraokePrep:
         """
         Processes all videos in a YouTube playlist.
         """
-        self.logger.debug("Querying playlist metadata from YouTube...")
+        self.logger.debug(f"Querying playlist metadata from YouTube, assuming consistent artist {self.artist}...")
+        persistent_artist = self.artist
         with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
             result = ydl.extract_info(self.url, download=False)
             if "entries" in result:
@@ -420,7 +432,7 @@ class KaraokePrep:
                     self.logger.info(f"Processing video: {video_url}")
                     self.url = video_url
                     track_results.append(self.prep_single_track())
-                    self.artist = None
+                    self.artist = persistent_artist
                     self.title = None
                 return track_results
 
