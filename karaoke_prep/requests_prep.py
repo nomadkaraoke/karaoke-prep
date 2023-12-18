@@ -7,7 +7,6 @@ import yt_dlp
 import logging
 import lyricsgenius
 from slugify import slugify
-from audio_separator import Separator
 
 
 class KaraokePrep:
@@ -65,10 +64,6 @@ class KaraokePrep:
             os.makedirs(self.output_dir)
         else:
             self.logger.debug(f"Overall output dir {self.output_dir} already exists")
-
-        if artist is None or title is None:
-            self.logger.warn(f"Artist or Title nor specified manually, guessing from YouTube metadata...")
-            self.extract_metadata_from_url()
 
     def extract_metadata_from_url(self):
         """
@@ -193,6 +188,8 @@ class KaraokePrep:
         self.logger.debug(
             f"instantiating Separator with model_name: {model_name} instrumental_path: {instrumental_path} and output_format: {self.output_format}"
         )
+
+        from audio_separator import Separator
         separator = Separator(
             audio_file,
             log_level=self.log_level,
@@ -221,7 +218,11 @@ class KaraokePrep:
 
         return track_output_dir, artist_title
 
-    def prep(self):
+    def prep_single_track(self):
+        if self.artist is None or self.title is None:
+            self.logger.warn(f"Artist or Title nor specified manually, guessing from YouTube metadata...")
+            self.extract_metadata_from_url()
+
         artist = self.artist
         title = self.title
 
@@ -313,3 +314,38 @@ class KaraokePrep:
         self.logger.info("Script finished, audio downloaded, lyrics fetched and audio separated!")
 
         return processed_track
+
+    def is_playlist_url(self):
+        """
+        Checks if the provided URL is a YouTube playlist URL.
+        """
+        if self.url and "playlist?list=" in self.url:
+            return True
+        return False
+
+    def process_playlist(self):
+        """
+        Processes all videos in a YouTube playlist.
+        """
+        self.logger.debug("Querying playlist metadata from YouTube...")
+        with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+            result = ydl.extract_info(self.url, download=False)
+            if "entries" in result:
+                track_results = []
+                self.logger.info(f"Found {len(result['entries'])} videos in playlist, processing each invididually...")
+                for video in result["entries"]:
+                    video_url = f"https://www.youtube.com/watch?v={video['id']}"
+                    self.logger.info(f"Processing video: {video_url}")
+                    self.url = video_url
+                    track_results.append(self.prep_single_track())
+                    self.artist = None
+                    self.title = None
+                return track_results
+
+    def process(self):
+        if self.is_playlist_url():
+            self.logger.info(f"Provided YouTube URL is a playlist, beginning batch operation")
+            return self.process_playlist()
+        else:
+            self.logger.info(f"Provided YouTube URL is NOT a playlist, processing single track")
+            return [self.prep_single_track()]

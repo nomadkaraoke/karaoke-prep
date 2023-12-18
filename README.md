@@ -15,6 +15,8 @@ This was created to make it easier for me to prepare the source audio, lyrics an
 - Easy Configuration: Control the tool's behavior using command-line arguments.
 - Organized Outputs: Creates structured output directories for easy access to generated tracks and lyrics.
 - Internet First: Completes operations which require internet first, in case user is preparing last-minute before a period of being offline!
+- Flexible Input: provide just a YouTube URL, just an artist and title, or both.
+- Playlist Processing: Capable of processing an entire YouTube playlist, extracting audio and lyrics for each track.
 
 ## Installation 🛠️
 
@@ -37,9 +39,7 @@ usage: karaoke-prep [-h] [-v] [--log_level LOG_LEVEL] [--model_name MODEL_NAME] 
 Fetch audio and lyrics for a specified song, to prepare karaoke video creation.
 
 positional arguments:
-  artist                           Artist name for the song to prep.
-  title                            Title of the song to prep.
-  url                              YouTube URL of the song to prep.
+  args                             [YouTube video or playlist URL] [Artist] [Title] of song to prep. If URL is provided, Artist and Title are optional but increase chance of fetching the correct lyrics. If Artist and Title are provided with no URL, the top YouTube search result will be fetched.
 
 options:
   -h, --help                       show this help message and exit
@@ -55,15 +55,42 @@ options:
   --no_track_subfolders            Optional:do NOT create a named subfolder for each track. Example: --no_track_subfolders
   ```
 
-  Example:
+
+### Only YouTube URL
+
+This will process the video at the given URL, *guessing the artist and title from the YouTube title*.
+⚠️ Be aware the downloaded lyrics may be incorrect if the video title doesn't match the standard "Artist - Title" format.
+
+```
+karaoke-prep "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
+```
+
+### Artist and Title Only
+
+If you don't have a specific YouTube URL, just provide the artist and title. Karaoke Prep will search for and download the top YouTube result.
 
 ```
 karaoke-prep "The Fray" "Never Say Never"
 ```
 
-This command will search YouTube for the specified song, download audio from the top result and lyrics from genius, then separate the audio to produce an instrumental track, ready for a karaoke video to be created by whatever process you prefer!
+### ⭐ YouTube URL with Artist and Title
 
-By default, you'll end up with files in the current folder, neatly organised e.g.
+For more precise control (and most consistent results), provide the YouTube URL along with the artist and title to avoid any guesswork.
+
+```
+karaoke-prep "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" "The Fray" "Never Say Never"
+```
+
+### YouTube Playlist URL
+
+To process a playlist, just provide the playlist URL. The script will process every video in the playlist.
+⚠️ Be aware the downloaded _lyrics_ for each track may be incorrect if the video titles don't match the standard "Artist - Title" format.
+
+```
+karaoke-prep "https://www.youtube.com/playlist?list=YOUR_PLAYLIST_ID"
+```
+
+By default, you'll end up with files in the current folder, neatly organised into folders for each track and files named consistently e.g.
 
 ```
 ├── Artist - Title (Instrumental UVR-MDX-NET-Inst_HQ_3).flac
