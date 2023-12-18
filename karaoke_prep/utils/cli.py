@@ -112,14 +112,14 @@ def main():
 
     parser.add_argument(
         "--intro_artist_color",
-        default="#ff7acc",
-        help="Optional: Font color for intro video artist text (default: #ff7acc). Example: --intro_artist_color=#123456",
+        default="#ffdf6b",
+        help="Optional: Font color for intro video artist text (default: #ffdf6b). Example: --intro_artist_color=#123456",
     )
 
     parser.add_argument(
         "--intro_title_color",
-        default="#ffdf6b",
-        help="Optional: Font color for intro video title text (default: #ffdf6b). Example: --intro_title_color=#123456",
+        default="#ffffff",
+        help="Optional: Font color for intro video title text (default: #ffffff). Example: --intro_title_color=#123456",
     )
 
     args = parser.parse_args()

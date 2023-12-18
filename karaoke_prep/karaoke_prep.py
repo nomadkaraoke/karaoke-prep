@@ -29,8 +29,8 @@ class KaraokePrep:
         intro_background_color="#000000",
         intro_background_image=None,
         intro_font="AvenirNext-Bold.ttf",
-        intro_artist_color="#ff7acc",
-        intro_title_color="#ffdf6b",
+        intro_artist_color="#ffffff",
+        intro_title_color="#ff7acc",
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -60,11 +60,15 @@ class KaraokePrep:
         self.normalization_enabled = normalization_enabled
         self.denoise_enabled = denoise_enabled
         self.create_track_subfolders = create_track_subfolders
-        self.intro_background_color = intro_background_color
-        self.intro_background_image = intro_background_image
-        self.intro_font = intro_font
-        self.intro_artist_color = intro_artist_color
-        self.intro_title_color = intro_title_color
+
+        self.title_format = {
+            "background_color": intro_background_color,
+            "background_image": intro_background_image,
+            "artist_font": intro_font,
+            "title_font": intro_font,
+            "artist_color": intro_artist_color,
+            "title_color": intro_title_color,
+        }
 
         self.logger.debug(f"KaraokePrep output_format: {self.output_format}")
 
@@ -230,18 +234,38 @@ class KaraokePrep:
 
         return track_output_dir, artist_title
 
-    def create_intro_video(self, artist, title, output_filename):
+    def calculate_text_size_and_position(self, draw, text, font_path, start_size, resolution, padding):
+        font_size = start_size
+        font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+
+        # Initial position for calculating the text bounding box
+        temp_position = (padding, padding)
+        bbox = draw.textbbox(temp_position, text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+
+        while text_width + 2 * padding > resolution[0] or text_height + 2 * padding > resolution[1]:
+            font_size -= 10
+            if font_size <= 0:
+                raise ValueError("Cannot fit text within screen bounds.")
+            font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+            bbox = draw.textbbox(temp_position, text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+
+        text_position = ((resolution[0] - text_width) // 2, (resolution[1] - text_height) // 2)
+        return font, text_position
+
+    def create_intro_video(self, artist, title, format, output_image_filepath, output_video_filepath):
         duration = 5  # Duration in seconds
         resolution = (3840, 2160)  # 4K resolution
-        font_size = 400  # Initial font size
-        line_spacing = 50  # Adjust as needed
-        padding = 300  # Padding from edges
 
         # Load or create background image
-        if self.intro_background_image:
-            background = Image.open(self.intro_background_image)
+        if format["background_image"] and os.path.exists(format["background_image"]):
+            self.logger.debug(f"Title screen background image file found: {format['background_image']}")
+            background = Image.open(format["background_image"])
         else:
-            background = Image.new("RGB", resolution, color=self.hex_to_rgb(self.intro_background_color))
+            background = Image.new("RGB", resolution, color=self.hex_to_rgb(format["background_color"]))
 
         # Resize background to match resolution
         background = background.resize(resolution)
@@ -249,39 +273,28 @@ class KaraokePrep:
         # Create an ImageDraw instance
         draw = ImageDraw.Draw(background)
 
-        # Function to calculate text width
-        def calculate_text_width(font):
-            artist_text_width = draw.textlength(artist, font=font)
-            title_text_width = draw.textlength(title, font=font)
-            return max(artist_text_width, title_text_width)
+        title = title.upper()
+        artist = artist.upper()
 
-        # Adjust font size if necessary
-        while True:
-            if os.path.exists(self.intro_font):
-                font = ImageFont.truetype(self.intro_font, size=font_size)
-            else:
-                self.logger.warning(f"Font file not found: {self.intro_font}. Using default font.")
-                font = ImageFont.load_default(size=font_size)
+        initial_font_size = 500
+        title_padding = 400
+        artist_padding = 700
+        second_row_vertical_offset = 450
 
-            max_text_width = calculate_text_width(font)
-            if max_text_width + padding * 2 > resolution[0]:
-                font_size -= 10  # Reduce font size
-                if font_size <= 0:
-                    raise ValueError("Cannot fit text within screen bounds.")
-            else:
-                break
+        title_font, title_text_position = self.calculate_text_size_and_position(
+            draw, title, format["title_font"], initial_font_size, resolution, title_padding
+        )
+        artist_font, artist_text_position = self.calculate_text_size_and_position(
+            draw, artist, format["artist_font"], initial_font_size, resolution, artist_padding
+        )
+        
+        artist_text_position = (artist_text_position[0], title_text_position[1] + second_row_vertical_offset)
 
-        # Calculate text positions
-        artist_text_position = ((resolution[0] - calculate_text_width(font)) // 2, resolution[1] // 2 - font_size - line_spacing)
-        title_text_position = ((resolution[0] - calculate_text_width(font)) // 2, resolution[1] // 2 + line_spacing)
+        draw.text(title_text_position, title, fill=format["title_color"], font=title_font)
+        draw.text(artist_text_position, artist, fill=format["artist_color"], font=artist_font)
 
-        # Draw text
-        draw.text(artist_text_position, artist, fill=self.intro_artist_color, font=font)
-        draw.text(title_text_position, title, fill=self.intro_title_color, font=font)
-
-        # Save to a temporary image file
-        temp_image_path = "/tmp/temp_background.png"
-        background.save(temp_image_path)
+        # Save static background image
+        background.save(output_image_filepath)
 
         # Use ffmpeg to create video
         ffmpeg_command = [
@@ -290,7 +303,7 @@ class KaraokePrep:
             "-loop",
             "1",
             "-i",
-            temp_image_path,
+            output_image_filepath,
             "-c:v",
             "libx264",
             "-t",
@@ -299,11 +312,10 @@ class KaraokePrep:
             "yuv420p",
             "-vf",
             f"scale={resolution[0]}:{resolution[1]}",
-            output_filename,
+            output_video_filepath,
         ]
 
         subprocess.run(ffmpeg_command)
-        os.remove(temp_image_path)
 
     def hex_to_rgb(self, hex_color):
         """Convert hex color to RGB tuple."""
@@ -325,6 +337,10 @@ class KaraokePrep:
             "artist": artist,
             "title": title,
         }
+
+        processed_track["title_image"] = os.path.join(track_output_dir, f"{artist_title} (Title).png")
+        processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
+        self.create_intro_video(artist, title, self.title_format, processed_track["title_image"], processed_track["title_video"])
 
         yt_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.webm")
         yt_webm_glob = glob.glob(yt_webm_filename_pattern)
@@ -378,9 +394,6 @@ class KaraokePrep:
             self.write_lyrics_from_genius(artist, title, lyrics_file)
 
         processed_track["lyrics"] = lyrics_file
-
-        intro_filename = os.path.join(track_output_dir, f"{artist_title} (Intro).mp4")
-        self.create_intro_video(artist, title, intro_filename)
 
         self.logger.info(f"Separating audio twice for track: {title} by {artist}")
 
@@ -440,7 +453,9 @@ class KaraokePrep:
     def process(self):
         if self.is_playlist_url():
             self.persistent_artist = self.artist
-            self.logger.info(f"Provided YouTube URL is a playlist, beginning batch operation with persistent artist: {self.persistent_artist}")
+            self.logger.info(
+                f"Provided YouTube URL is a playlist, beginning batch operation with persistent artist: {self.persistent_artist}"
+            )
             return self.process_playlist()
         else:
             self.logger.info(f"Provided YouTube URL is NOT a playlist, processing single track")
