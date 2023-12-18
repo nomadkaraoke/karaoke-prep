@@ -189,7 +189,6 @@ class KaraokePrep:
         return filename
 
     def separate_audio(self, audio_file, model_name, instrumental_path, vocals_path):
-        return
         if audio_file is None or not os.path.isfile(audio_file):
             raise Exception("Error: Invalid audio source provided.")
 
