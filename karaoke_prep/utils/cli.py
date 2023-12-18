@@ -106,8 +106,8 @@ def main():
 
     parser.add_argument(
         "--intro_font",
-        default="Avenir-Next-Bold",
-        help="Optional: Font for intro video (default: Avenir-Next-Bold). Example: --intro_font=Arial",
+        default="AvenirNext-Bold.ttf",
+        help="Optional: Font file for intro video (default: Avenir-Next-Bold). Example: --intro_font=AvenirNext-Bold.ttf",
     )
 
     parser.add_argument(

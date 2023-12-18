@@ -4,6 +4,8 @@ import glob
 import yt_dlp
 import logging
 import lyricsgenius
+import subprocess
+from PIL import Image, ImageDraw, ImageFont
 
 
 class KaraokePrep:
@@ -26,7 +28,7 @@ class KaraokePrep:
         create_track_subfolders=False,
         intro_background_color="#000000",
         intro_background_image=None,
-        intro_font="Avenir-Next-Bold",
+        intro_font="AvenirNext-Bold.ttf",
         intro_artist_color="#ff7acc",
         intro_title_color="#ffdf6b",
     ):
@@ -228,60 +230,68 @@ class KaraokePrep:
         return track_output_dir, artist_title
 
     def create_intro_video(self, artist, title, output_filename):
-        from moviepy.editor import ColorClip, ImageClip, TextClip, CompositeVideoClip
-        from PIL import Image
-        import numpy as np
-
         duration = 5  # Duration in seconds
         resolution = (3840, 2160)  # 4K resolution
+        font_size = 400  # Adjust as needed
+        line_spacing = 50  # Adjust as needed
 
-        self.logger.debug(f"Creating intro video clip with duration: {duration} and resolution: {resolution} to {output_filename}")
-
-        # Create a background clip
+        # Load or create background image
         if self.intro_background_image:
-            self.logger.debug(f"Background image specified, using: {self.intro_background_image}")
-            pil_image = Image.open(self.intro_background_image)
-            pil_image_resized = pil_image.resize(resolution, Image.Resampling.LANCZOS)
-            background_clip = ImageClip(np.array(pil_image_resized), duration=duration)
+            background = Image.open(self.intro_background_image)
         else:
-            self.logger.debug(f"Background image not specified, using color: {self.intro_background_color}")
-            background_color_rgb = self.hex_to_rgb(self.intro_background_color)
-            background_clip = ColorClip(size=resolution, color=background_color_rgb, duration=duration)
+            background = Image.new("RGB", resolution, color=self.hex_to_rgb(self.intro_background_color))
 
-        # Determine font size
-        font_size = 400  # Adjust as needed to fill most of the screen
+        # Resize background to match resolution
+        background = background.resize(resolution)
 
-        self.logger.debug(f"Rendering artist text with font size: {font_size} and color: {self.intro_artist_color}")
-        artist_text = (
-            TextClip(artist, fontsize=font_size, font=self.intro_font, color=self.intro_artist_color, size=resolution)
-            .set_duration(duration)
-            .set_position(("center", "center"), relative=True)  # Centered horizontally and vertically
-        )
+        # Create an ImageDraw instance
+        draw = ImageDraw.Draw(background)
 
-        self.logger.debug(f"Rendering title text with font size: {font_size} and color: {self.intro_title_color}")
-        title_text = (
-            TextClip(title, fontsize=font_size, font=self.intro_font, color=self.intro_title_color, size=resolution)
-            .set_duration(duration)
-            .set_position(("center", "center"), relative=True)  # Centered horizontally and vertically
-        )
+        # Check if the font file exists, if not use a default font
+        if os.path.exists(self.intro_font):
+            font = ImageFont.truetype(self.intro_font, size=font_size)
+        else:
+            self.logger.warning(f"Font file not found: {self.intro_font}. Using default font.")
+            font = ImageFont.load_default(size=font_size)
 
-        # Adjust vertical position of text clips
-        artist_text_margin = int(font_size * 0.5)  # Adjust as needed
-        title_text_margin = int(font_size * 0.5)  # Adjust as needed
-        artist_text = artist_text.set_position(lambda t: ("center", resolution[1] / 2 - artist_text_margin))
-        title_text = title_text.set_position(lambda t: ("center", resolution[1] / 2 + title_text_margin))
+        # Calculate text width using the ImageDraw instance
+        artist_text_width = draw.textlength(artist, font=font)
+        title_text_width = draw.textlength(title, font=font)
 
-        # Composite the clips
-        video = CompositeVideoClip(
-            [
-                background_clip,
-                artist_text,
-                title_text,
-            ]
-        )
+        # Calculate text positions
+        artist_text_position = ((resolution[0] - artist_text_width) // 2, resolution[1] // 2 - font_size - line_spacing)
+        title_text_position = ((resolution[0] - title_text_width) // 2, resolution[1] // 2 + line_spacing)
 
-        self.logger.debug(f"Writing composite video clip to {output_filename}")
-        video.write_videofile(output_filename, threads=8, fps=24)
+        # Draw text
+        draw.text(artist_text_position, artist, fill=self.intro_artist_color, font=font)
+        draw.text(title_text_position, title, fill=self.intro_title_color, font=font)
+
+        # Save to a temporary image file
+        temp_image_path = "/tmp/temp_background.png"
+        background.save(temp_image_path)
+        self.logger.warning(f"Temporarily saving background image to {temp_image_path}")
+
+        # Use ffmpeg to create video
+        ffmpeg_command = [
+            "ffmpeg",
+            "-y",  # Overwrite output files without asking
+            "-loop",  # Loop the input image
+            "1",  # Loop the input image
+            "-i",  # Input file
+            temp_image_path,  # Input file
+            "-c:v",  # Video codec
+            "libx264",  # Video codec
+            "-t",  # Duration
+            str(duration),  # Duration
+            "-pix_fmt",  # Pixel format
+            "yuv420p",  # Pixel format
+            "-vf",  # Video filter
+            f"scale={resolution[0]}:{resolution[1]}",  # Video filter
+            output_filename,  # Output filename
+        ]
+
+        subprocess.run(ffmpeg_command)
+        # os.remove(temp_image_path)
 
     def hex_to_rgb(self, hex_color):
         """Convert hex color to RGB tuple."""
