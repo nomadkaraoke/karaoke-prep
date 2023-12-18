@@ -17,9 +17,9 @@ def main():
         formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, max_help_position=50),
     )
 
-    parser.add_argument("artist", nargs="?", help="Artist name for the song to prep.", default=argparse.SUPPRESS)
-    parser.add_argument("title", nargs="?", help="Title of the song to prep.", default=argparse.SUPPRESS)
     parser.add_argument("url", nargs="?", help="YouTube URL of the song to prep.", default=None)
+    parser.add_argument("artist", nargs="?", help="Artist name for the song to prep.", default=None)
+    parser.add_argument("title", nargs="?", help="Title of the song to prep.", default=None)
 
     package_version = pkg_resources.get_distribution("karaoke-prep").version
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {package_version}")
@@ -92,10 +92,14 @@ def main():
     logger.setLevel(log_level)
 
     if not hasattr(args, "artist") or not hasattr(args, "title"):
-        parser.print_help()
-        exit(1)
+        if not args.url:
+            parser.print_help()
+            exit(1)
+        else:
+            # Proceed with only URL
+            logger.info("Artist and title will be guessed from the provided URL.")
 
-    logger.info(f"KaraokePrep beginning with artist: {args.artist} and title: {args.title} and url: {args.url}")
+    logger.info(f"KaraokePrep beginning with url: {args.url} artist: {args.artist} and title: {args.title}")
 
     kprep = KaraokePrep(
         artist=args.artist,

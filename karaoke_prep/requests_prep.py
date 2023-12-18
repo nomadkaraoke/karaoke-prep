@@ -67,7 +67,49 @@ class KaraokePrep:
             self.logger.debug(f"Overall output dir {self.output_dir} already exists")
 
         if artist is None or title is None:
-            raise Exception("Error: You must provide an artist and title.")
+            self.logger.warn(f"Artist or Title nor specified manually, guessing from YouTube metadata...")
+            self.extract_metadata_from_url()
+
+    def extract_metadata_from_url(self):
+        """
+        Extracts metadata from the YouTube URL.
+        """
+        if self.url:
+            with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+                info = ydl.extract_info(self.url, download=False)
+                self.artist, self.title = self.parse_metadata(info)
+                if self.artist and self.title:
+                    self.logger.info(f"Extracted artist: {self.artist}, title: {self.title}")
+                else:
+                    self.logger.error("Failed to extract artist and title from the YouTube URL.")
+
+    def parse_metadata(self, info):
+        """
+        Parses the metadata to extract artist and title.
+
+        :param info: The metadata information extracted from yt_dlp.
+        :return: A tuple containing the artist and title.
+        """
+        # Default values if parsing fails
+        artist = ""
+        title = ""
+
+        # Example: "Artist - Title"
+        if "title" in info and "-" in info["title"]:
+            artist, title = info["title"].split("-", 1)
+            artist = artist.strip()
+            title = title.strip()
+        elif "uploader" in info:
+            # Fallback to uploader as artist if title parsing fails
+            artist = info["uploader"]
+            if "title" in info:
+                title = info["title"].strip()
+
+        # If unable to parse, log an appropriate message
+        if not artist or not title:
+            self.logger.warning("Could not parse artist and title from the video metadata.")
+
+        return artist, title
 
     def get_youtube_id_for_top_search_result(self, query):
         ydl_opts = {"quiet": "True", "format": "bestaudio", "noplaylist": "True", "extract_flat": True}
