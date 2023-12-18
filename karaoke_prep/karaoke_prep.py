@@ -256,6 +256,14 @@ class KaraokePrep:
         text_position = ((resolution[0] - text_width) // 2, (resolution[1] - text_height) // 2)
         return font, text_position
 
+    def calculate_text_position(self, draw, text, font, resolution, vertical_offset):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        text_x = (resolution[0] - text_width) // 2
+        text_y = vertical_offset
+        return (text_x, text_y), text_height
+
     def create_intro_video(self, artist, title, format, output_image_filepath, output_video_filepath):
         duration = 5  # Duration in seconds
         resolution = (3840, 2160)  # 4K resolution
@@ -270,25 +278,28 @@ class KaraokePrep:
         # Resize background to match resolution
         background = background.resize(resolution)
 
-        # Create an ImageDraw instance
-        draw = ImageDraw.Draw(background)
-
         title = title.upper()
         artist = artist.upper()
 
         initial_font_size = 500
+        top_padding = 950
         title_padding = 400
         artist_padding = 700
-        second_row_vertical_offset = 450
+        fixed_gap = 150
 
-        title_font, title_text_position = self.calculate_text_size_and_position(
+        draw = ImageDraw.Draw(background)
+
+        # Calculate positions and sizes for title and artist
+        title_font, _ = self.calculate_text_size_and_position(
             draw, title, format["title_font"], initial_font_size, resolution, title_padding
         )
-        artist_font, artist_text_position = self.calculate_text_size_and_position(
+        artist_font, _ = self.calculate_text_size_and_position(
             draw, artist, format["artist_font"], initial_font_size, resolution, artist_padding
         )
         
-        artist_text_position = (artist_text_position[0], title_text_position[1] + second_row_vertical_offset)
+        # Calculate vertical positions with consistent gap
+        title_text_position, title_height = self.calculate_text_position(draw, title, title_font, resolution, top_padding)
+        artist_text_position, _ = self.calculate_text_position(draw, artist, artist_font, resolution, title_text_position[1] + title_height + fixed_gap)
 
         draw.text(title_text_position, title, fill=format["title_color"], font=title_font)
         draw.text(artist_text_position, artist, fill=format["artist_color"], font=artist_font)
