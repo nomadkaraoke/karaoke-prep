@@ -52,7 +52,12 @@ options:
   --use_coreml                     Optional: use Apple Silicon GPU with CoreML for separation (default: False). Example: --use_coreml=true
   --denoise DENOISE                Optional: enable or disable denoising during separation (default: True). Example: --denoise=False
   --normalize NORMALIZE            Optional: enable or disable normalization during separation (default: True). Example: --normalize=False
-  --no_track_subfolders            Optional:do NOT create a named subfolder for each track. Example: --no_track_subfolders
+  --no_track_subfolders                            Optional: do NOT create a named subfolder for each track. Example: --no_track_subfolders
+  --intro_background_color INTRO_BACKGROUND_COLOR  Optional: Background color for intro video (default: black). Example: --intro_background_color=#123456
+  --intro_background_image INTRO_BACKGROUND_IMAGE  Optional: Path to background image for intro video. Overrides background color if provided. Example: --intro_background_image=path/to/image.jpg
+  --intro_font INTRO_FONT                          Optional: Font file for intro video (default: Avenir-Next-Bold). Example: --intro_font=AvenirNext-Bold.ttf
+  --intro_artist_color INTRO_ARTIST_COLOR          Optional: Font color for intro video artist text (default: #ff7acc). Example: --intro_artist_color=#123456
+  --intro_title_color INTRO_TITLE_COLOR            Optional: Font color for intro video title text (default: #ffdf6b). Example: --intro_title_color=#123456
   ```
 
 

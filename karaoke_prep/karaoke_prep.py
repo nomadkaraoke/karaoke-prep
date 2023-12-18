@@ -82,6 +82,8 @@ class KaraokePrep:
             with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
                 info = ydl.extract_info(self.url, download=False)
                 self.artist, self.title = self.parse_metadata(info)
+                if self.persistent_artist:
+                    self.artist = self.persistent_artist
                 if self.artist and self.title:
                     self.logger.info(f"Extracted artist: {self.artist}, title: {self.title}")
                 else:
@@ -421,7 +423,6 @@ class KaraokePrep:
         Processes all videos in a YouTube playlist.
         """
         self.logger.debug(f"Querying playlist metadata from YouTube, assuming consistent artist {self.artist}...")
-        persistent_artist = self.artist
         with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
             result = ydl.extract_info(self.url, download=False)
             if "entries" in result:
@@ -432,13 +433,14 @@ class KaraokePrep:
                     self.logger.info(f"Processing video: {video_url}")
                     self.url = video_url
                     track_results.append(self.prep_single_track())
-                    self.artist = persistent_artist
+                    self.artist = self.persistent_artist
                     self.title = None
                 return track_results
 
     def process(self):
         if self.is_playlist_url():
-            self.logger.info(f"Provided YouTube URL is a playlist, beginning batch operation")
+            self.persistent_artist = self.artist
+            self.logger.info(f"Provided YouTube URL is a playlist, beginning batch operation with persistent artist: {self.persistent_artist}")
             return self.process_playlist()
         else:
             self.logger.info(f"Provided YouTube URL is NOT a playlist, processing single track")
