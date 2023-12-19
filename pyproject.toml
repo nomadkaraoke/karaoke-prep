@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "karaoke-prep"
-version = "0.5.1"
+version = "0.6.0"
 description = "Prepare for karaoke video creation, by downloading audio and lyrics for a specified song or youtube playlist and separatung audio stems."
 authors = ["Andrew Beveridge <andrew@beveridge.uk>"]
 license = "MIT"
@@ -24,7 +24,8 @@ pillow = "^10.1.0"
 black = "^23"
 
 [tool.poetry.scripts]
-karaoke-prep = 'karaoke_prep.utils.cli:main'
+karaoke-prep = 'karaoke_prep.utils.prep_cli:main'
+karaoke-finalise = 'karaoke_prep.utils.finalise_cli:main'
 
 [tool.black]
 line-length = 140
