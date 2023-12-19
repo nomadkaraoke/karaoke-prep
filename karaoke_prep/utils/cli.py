@@ -186,6 +186,7 @@ def main():
         logger.info(f" YouTube Audio: {track['youtube_audio']}")
         logger.info(f" YouTube Still Image: {track['youtube_still_image']}")
         logger.info(f" Lyrics: {track['lyrics']}")
+        logger.info(f" Processed Lyrics: {track['processed_lyrics']}")
         logger.info(f" Instrumental: {track['instrumental_audio']}")
         logger.info(f" Vocals: {track['vocals_audio']}")
 

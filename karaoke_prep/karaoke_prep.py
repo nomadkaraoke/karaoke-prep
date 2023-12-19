@@ -71,7 +71,7 @@ class KaraokePrep:
         }
 
         self.persistent_artist = None
-        
+
         self.logger.debug(f"KaraokePrep output_format: {self.output_format}")
 
         if not os.path.exists(self.output_dir):
@@ -171,6 +171,7 @@ class KaraokePrep:
                 f.write(lyrics)
 
             self.logger.info("Lyrics for %s by %s fetched successfully", title, artist)
+            return lyrics.split('\n')
         else:
             self.logger.warning("Could not find lyrics for %s by %s", title, artist)
 
@@ -186,6 +187,52 @@ class KaraokePrep:
         lyrics = re.sub(r".*?\[.*?\].*?", "", lyrics)  # Remove lines containing square brackets
         # add any additional cleaning rules here
         return lyrics
+
+    def find_best_split_point(self, line):
+        """
+        Find the best split point in a line based on the specified criteria.
+        """
+
+        self.logger.debug(f"Finding best_split_point for line: {line}")
+        words = line.split()
+        mid_word_index = len(words) // 2
+
+        # Check for a comma within one or two words of the middle word
+        if "," in line:
+            mid_point = len(" ".join(words[:mid_word_index]))
+            comma_indices = [i for i, char in enumerate(line) if char == ","]
+
+            for index in comma_indices:
+                if abs(mid_point - index) < 20:  # Roughly the length of two average words
+                    self.logger.debug(f"Found comma at index {index} which is within 20 characters of mid_point {mid_point}, accepting as split point")
+                    return index + 1  # Include the comma in the first line
+
+        # Check for 'and'
+        if " and " in line:
+            mid_point = len(line) // 2
+            and_indices = [m.start() for m in re.finditer(" and ", line)]
+            split_point = min(and_indices, key=lambda x: abs(x - mid_point))
+            self.logger.debug(f"Found 'and' at index {split_point} which is close to mid_point {mid_point}, accepting as split point")
+            return split_point + len(" and ")  # Include 'and' in the first line
+
+        # Split at the middle word
+        self.logger.debug(f"No comma or suitable 'and' found, using middle word as split point")
+        return len(" ".join(words[:mid_word_index]))
+
+    def write_processed_lyrics(self, lyrics, processed_lyrics_file):
+        self.logger.debug(f"Writing processed lyrics to {processed_lyrics_file}")
+
+        with open(processed_lyrics_file, "w") as outfile:
+            for line in lyrics:
+                line = line.strip()
+                if len(line) > 40:
+                    self.logger.debug(f"Line is longer than 40 characters, splitting at best split point: {line}")
+                    split_point = self.find_best_split_point(line)
+                    outfile.write(line[:split_point].strip() + "\n")
+                    outfile.write(line[split_point:].strip() + "\n")
+                else:
+                    self.logger.debug(f"Line is shorter than 40 characters, writing as-is: {line}")
+                    outfile.write(line + "\n")
 
     def sanitize_filename(self, filename):
         """Replace or remove characters that are unsafe for filenames."""
@@ -298,10 +345,12 @@ class KaraokePrep:
         artist_font, _ = self.calculate_text_size_and_position(
             draw, artist, format["artist_font"], initial_font_size, resolution, artist_padding
         )
-        
+
         # Calculate vertical positions with consistent gap
         title_text_position, title_height = self.calculate_text_position(draw, title, title_font, resolution, top_padding)
-        artist_text_position, _ = self.calculate_text_position(draw, artist, artist_font, resolution, title_text_position[1] + title_height + fixed_gap)
+        artist_text_position, _ = self.calculate_text_position(
+            draw, artist, artist_font, resolution, title_text_position[1] + title_height + fixed_gap
+        )
 
         draw.text(title_text_position, title, fill=format["title_color"], font=title_font)
         draw.text(artist_text_position, artist, fill=format["artist_color"], font=artist_font)
@@ -400,13 +449,16 @@ class KaraokePrep:
                 self.logger.warning(f"Skipping {title} by {artist} due to missing YouTube ID.")
 
         lyrics_file = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
+        processed_lyrics_file = os.path.join(track_output_dir, f"{artist_title} (Lyrics Processed).txt")
         if os.path.exists(lyrics_file):
             self.logger.debug(f"Lyrics file already exists, skipping fetch: {lyrics_file}")
         else:
             self.logger.info("Fetching lyrics from Genius...")
-            self.write_lyrics_from_genius(artist, title, lyrics_file)
+            lyrics = self.write_lyrics_from_genius(artist, title, lyrics_file)
+            self.write_processed_lyrics(lyrics, processed_lyrics_file)
 
         processed_track["lyrics"] = lyrics_file
+        processed_track["processed_lyrics"] = processed_lyrics_file
 
         self.logger.info(f"Separating audio twice for track: {title} by {artist}")
 
