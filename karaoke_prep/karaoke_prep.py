@@ -70,6 +70,8 @@ class KaraokePrep:
             "title_color": intro_title_color,
         }
 
+        self.persistent_artist = None
+        
         self.logger.debug(f"KaraokePrep output_format: {self.output_format}")
 
         if not os.path.exists(self.output_dir):
