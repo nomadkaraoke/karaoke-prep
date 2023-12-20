@@ -25,6 +25,26 @@ You can install Karaoke Prep using pip:
 
 `pip install karaoke-prep`
 
+If you aren't sure what `pip` is or how to use the command line, here are some YouTube tutorials which will probably help:
+
+- Install Python on Windows: https://www.youtube.com/watch?v=YKSpANU8jPE
+- Command Line basics Windows: https://www.youtube.com/watch?v=MBBWVgE0ewk
+- Install Python on Mac: https://www.youtube.com/watch?v=3-sPfR4JEQ8
+- Command Line basics Mac: https://www.youtube.com/watch?v=FfT8OfMpARM
+
+## Karaoke production guide using karaoke-prep and MidiCo
+
+- Run `karaoke-prep <Artist> <Title>` to fetch and prep the files above
+- Wait for it to output at least the WAV file and lyrics (you can leave it running in the background while you sync)
+- Open the WAV file in MidiCo: `(YouTube xxxxxxxxxxx).wav`
+- Copy/paste the lyrics into MidiCo: `(Lyrics Processed).txt`
+- Perform the lyrics sync (here's a [video](https://www.youtube.com/watch?v=63-Fk3mfZ7Q) showing me doing it) in MidiCo
+- Render the video to 4k using the MidiCo "Export Movie" feature, saving it as `Artist - Title (Karaoke).mov` in the same folder
+- Run `karaoke-finalise` to remux the instrumental audio and join the title clip to the start
+- Upload the resulting `Artist - Title (Final Karaoke).mp4` video to YouTube!
+
+Here's my [tutorial video with verbal explanation](https://www.youtube.com/watch?v=ZsROHgqAVHs) of the whole process, and here's a [normal speed demo](https://www.youtube.com/watch?v=63-Fk3mfZ7Q) of me doing it (8 minutes total for a single track).
+
 
 ## Usage 🚀
 
@@ -145,18 +165,6 @@ This will output some additional files:
 - `Artist - Title (Final Karaoke).mp4`
   - Final karaoke video with 5 second title screen intro, instrumental audio and converted to MP4 for compatibility and reduced file size. Upload this to YouTube!
 
-## Overall karaoke production guide / steps
-
-- Run `karaoke-prep <Artist> <Title>` to fetch and prep the files above
-- Wait for it to output at least the WAV file and lyrics (you can leave it running in the background while you sync)
-- Open the WAV file in MidiCo: `(YouTube xxxxxxxxxxx).wav`
-- Copy/paste the lyrics into MidiCo: `(Lyrics Processed).txt`
-- Perform the lyrics sync (here's a [video](https://www.youtube.com/watch?v=63-Fk3mfZ7Q) showing me doing it) in MidiCo
-- Render the video to 4k using the MidiCo "Export Movie" feature, saving it as `Artist - Title (Karaoke).mov` in the same folder
-- Run `karaoke-finalise` to remux the instrumental audio and join the title clip to the start
-- Upload the resulting `Artist - Title (Final Karaoke).mp4` video to YouTube!
-
-Here's my [tutorial video with verbal explanation](https://www.youtube.com/watch?v=ZsROHgqAVHs) of the whole process, and here's a [normal speed demo](https://www.youtube.com/watch?v=63-Fk3mfZ7Q) of me doing it (8 minutes total for a single track).
 
 ## Requirements 📋
 

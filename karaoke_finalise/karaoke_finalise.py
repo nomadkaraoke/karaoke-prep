@@ -28,15 +28,26 @@ class KaraokeFinalise:
 
         self.model_name = model_name
 
-    def process():
+    def process(self):
         tracks = []
 
-        for karaoke_file in filter(lambda f: "(Karaoke).mov" in f, os.listdir(".")):
-            base_name = karaoke_file.replace("(Karaoke).mov", "")
-            with_vocals_file = f"{base_name}(With Vocals).mov"
-            title_file = f"{base_name}(Title).mov"
-            instrumental_file = f"{base_name}(Instrumental UVR_MDXNET_KARA_2).MP3"
-            final_mp4_file = f"{base_name}(Final Karaoke).mp4"
+        for karaoke_file in filter(lambda f: " (Karaoke).mov" in f, os.listdir(".")):
+            base_name = karaoke_file.replace(" (Karaoke).mov", "")
+            artist = base_name.split(" - ")[0]
+            title = base_name.split(" - ")[1]
+
+            with_vocals_file = f"{base_name} (With Vocals).mov"
+            title_file = f"{base_name} (Title).mov"
+            instrumental_file = f"{base_name} (Instrumental {self.model_name}).MP3"
+            final_mp4_file = f"{base_name} (Final Karaoke).mp4"
+
+            track = {
+                "artist": artist,
+                "title": title,
+                "video_with_vocals": with_vocals_file,
+                "video_with_instrumental": karaoke_file,
+                "final_video": final_mp4_file,
+            }
 
             if os.path.isfile(title_file) and os.path.isfile(karaoke_file) and os.path.isfile(instrumental_file):
                 print("Renaming karaoke file to WithVocals")
@@ -69,5 +80,7 @@ class KaraokeFinalise:
                 os.remove(tmp_file_list.name)
             else:
                 print(f"Required files for '{base_name}' not found.")
-        
+
+            tracks.append(track)
+
         return tracks

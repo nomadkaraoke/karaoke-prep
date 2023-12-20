@@ -61,6 +61,13 @@ class KaraokePrep:
         self.denoise_enabled = denoise_enabled
         self.create_track_subfolders = create_track_subfolders
 
+        self.ffmpeg_base_command = "ffmpeg -hide_banner -nostats"
+
+        if self.log_level == logging.DEBUG:
+            self.ffmpeg_base_command += " -loglevel verbose"
+        else:
+            self.ffmpeg_base_command += " -loglevel fatal"
+
         self.title_format = {
             "background_color": intro_background_color,
             "background_image": intro_background_image,
@@ -151,14 +158,18 @@ class KaraokePrep:
 
     def extract_still_image_from_video(self, input_filename, output_filename_no_extension):
         output_filename = output_filename_no_extension + ".png"
-        self.logger.debug(f"Extracting still image from position 30s YouTube video to {output_filename}")
-        os.system(f'ffmpeg -i "{input_filename}" -ss 00:00:30 -vframes 1 "{output_filename}"')
+        self.logger.info(f"Extracting still image from position 30s YouTube video")
+        ffmpeg_command = f'{self.ffmpeg_base_command} -i "{input_filename}" -ss 00:00:30 -vframes 1 "{output_filename}"'
+        self.logger.debug(f"Running command: {ffmpeg_command}")
+        os.system(ffmpeg_command)
         return output_filename
 
     def convert_to_wav(self, input_filename, output_filename_no_extension):
         output_filename = output_filename_no_extension + ".wav"
-        self.logger.debug(f"Converting {input_filename} to WAV file {output_filename}")
-        os.system(f'ffmpeg -i "{input_filename}" "{output_filename}"')
+        self.logger.info(f"Converting input video to audio WAV file")
+        ffmpeg_command = f'{self.ffmpeg_base_command} -i "{input_filename}" "{output_filename}"'
+        self.logger.debug(f"Running command: {ffmpeg_command}")
+        os.system(ffmpeg_command)
         return output_filename
 
     def write_lyrics_from_genius(self, artist, title, filename):
@@ -315,15 +326,16 @@ class KaraokePrep:
         text_y = vertical_offset
         return (text_x, text_y), text_height
 
-    def create_intro_video(self, artist, title, format, output_image_filepath, output_video_filepath):
+    def create_title_video(self, artist, title, format, output_image_filepath, output_video_filepath):
         duration = 5  # Duration in seconds
         resolution = (3840, 2160)  # 4K resolution
 
         # Load or create background image
         if format["background_image"] and os.path.exists(format["background_image"]):
-            self.logger.debug(f"Title screen background image file found: {format['background_image']}")
+            self.logger.info(f"Using title screen background image file: {format['background_image']}")
             background = Image.open(format["background_image"])
         else:
+            self.logger.info(f"Using title screen background color: {format['background_color']}")
             background = Image.new("RGB", resolution, color=self.hex_to_rgb(format["background_color"]))
 
         # Resize background to match resolution
@@ -361,36 +373,12 @@ class KaraokePrep:
         background.save(output_image_filepath)
 
         # Use ffmpeg to create video
-        ffmpeg_command = [
-            "ffmpeg",
-            "-y",
-            "-loop",
-            "1",
-            "-framerate",
-            "30",
-            "-i",
-            output_image_filepath,
-            "-f",
-            "lavfi",
-            "-i",
-            "anullsrc",
-            "-c:v",
-            "libx264",
-            "-r",
-            "30",
-            "-t",
-            str(duration),
-            "-pix_fmt",
-            "yuv420p",
-            "-vf",
-            f"scale={resolution[0]}:{resolution[1]}",
-            "-c:a",
-            "aac",
-            "-shortest",
-            output_video_filepath,
-        ]
+        ffmpeg_command = f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath}" -f lavfi -i anullsrc '
+        ffmpeg_command += f'-c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p -vf scale={resolution[0]}:{resolution[1]} -c:a aac -shortest "{output_video_filepath}"'
 
-        subprocess.run(ffmpeg_command)
+        self.logger.info("Generating title video...")
+        self.logger.debug(f"Running command: {ffmpeg_command}")
+        os.system(ffmpeg_command)
 
     def hex_to_rgb(self, hex_color):
         """Convert hex color to RGB tuple."""
@@ -405,7 +393,7 @@ class KaraokePrep:
         artist = self.artist
         title = self.title
 
-        self.logger.info(f"Downloading inputs for track: {title} by {artist}")
+        self.logger.info(f"Preparing output path for track: {title} by {artist}")
         track_output_dir, artist_title = self.setup_output_paths(artist, title)
         processed_track = {
             "track_output_dir": track_output_dir,
@@ -413,9 +401,10 @@ class KaraokePrep:
             "title": title,
         }
 
+        self.logger.info(f"Creating title video...")
         processed_track["title_image"] = os.path.join(track_output_dir, f"{artist_title} (Title).png")
         processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
-        self.create_intro_video(artist, title, self.title_format, processed_track["title_image"], processed_track["title_video"])
+        self.create_title_video(artist, title, self.title_format, processed_track["title_image"], processed_track["title_video"])
 
         yt_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.webm")
         yt_webm_glob = glob.glob(yt_webm_filename_pattern)
