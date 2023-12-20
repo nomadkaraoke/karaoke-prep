@@ -95,7 +95,7 @@ def main():
 
     parser.add_argument(
         "--intro_background_color",
-        default="black",
+        default="#000000",
         help="Optional: Background color for intro video (default: black). Example: --intro_background_color=#123456",
     )
 

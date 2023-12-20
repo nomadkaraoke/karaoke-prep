@@ -17,6 +17,7 @@ This was created to make it easier for me to prepare the source audio, lyrics an
 - Internet First: Completes operations which require internet first, in case user is preparing last-minute before a period of being offline!
 - Flexible Input: provide just a YouTube URL, just an artist and title, or both.
 - Playlist Processing: Capable of processing an entire YouTube playlist, extracting audio and lyrics for each track.
+- Easy Finalisation: After manually performing your sync (e.g. using [MidiCo](https://www.midicokaraoke.com)), run `karaoke-finalise` to remux and add your title screen!
 
 ## Installation 🛠️
 
@@ -61,13 +62,12 @@ options:
   ```
 
 
-### Only YouTube URL
+### ⭐ YouTube URL with Artist and Title
 
-This will process the video at the given URL, *guessing the artist and title from the YouTube title*.
-⚠️ Be aware the downloaded lyrics may be incorrect if the video title doesn't match the standard "Artist - Title" format.
+For the most consistent results, provide a specific YouTube URL along with the artist and title like so:
 
 ```
-karaoke-prep "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
+karaoke-prep "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" "The Fray" "Never Say Never"
 ```
 
 ### Artist and Title Only
@@ -78,12 +78,13 @@ If you don't have a specific YouTube URL, just provide the artist and title. Kar
 karaoke-prep "The Fray" "Never Say Never"
 ```
 
-### ⭐ YouTube URL with Artist and Title
+### Only YouTube URL
 
-For more precise control (and most consistent results), provide the YouTube URL along with the artist and title to avoid any guesswork.
+This will process the video at the given URL, *guessing the artist and title from the YouTube title*.
+⚠️ Be aware the downloaded lyrics may be incorrect if the video title doesn't match the standard "Artist - Title" format.
 
 ```
-karaoke-prep "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" "The Fray" "Never Say Never"
+karaoke-prep "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
 ```
 
 ### YouTube Playlist URL
@@ -95,16 +96,67 @@ To process a playlist, just provide the playlist URL. The script will process ev
 karaoke-prep "https://www.youtube.com/playlist?list=YOUR_PLAYLIST_ID"
 ```
 
-By default, you'll end up with files in the current folder, neatly organised into folders for each track and files named consistently e.g.
+## Files produced by karaoke-prep and what to do with them
 
-```
-├── Artist - Title (Instrumental UVR-MDX-NET-Inst_HQ_3).flac
-├── Artist - Title (Instrumental UVR_MDXNET_KARA_2).flac
-├── Artist - Title (Lyrics).txt
-├── Artist - Title (Vocals UVR-MDX-NET-Inst_HQ_3).flac
-├── Artist - Title (Vocals UVR_MDXNET_KARA_2).flac
-└── Artist - Title (YouTube CNUgemJBLTw).wav
-```
+After running `karaoke-prep` you should have the following 11 files, grouped into folder(s) for each track:
+
+- `Artist - Title (YouTube xxxxxxxxxxx).webm`
+  - Original unmodified video, fetched from YouTube in the highest quality available
+  - You probably don't need this unless you're creating a custom request
+- `Artist - Title (YouTube xxxxxxxxxxx).png`
+  - A still image taken from 30 seconds into the video, in case that's useful for a custom background
+  - You probably don't need this unless you're creating a custom request
+- `Artist - Title (YouTube xxxxxxxxxxx).wav`
+  - Unmodified audio from the YouTube video, converted to WAV format for compatibility
+  - You should open this in MidiCo to begin syncing lyrics to make your karaoke video.
+- `Artist - Title (Lyrics).txt`
+  - Unmodified lyrics fetched from genius.com based on the artist/title provided
+  - Depending on the song, may have lines which are too long for one karaoke screen
+- `Artist - Title (Lyrics Processed).txt`
+  - Lyrics from genius, split into lines no longer than 40 characters
+  - You should open this and copy/paste the text into the MidiCo lyrics editor
+- `Artist - Title (Vocals UVR-MDX-NET-Inst_HQ_3).mp3`
+  - Vocal track from the audio, separated using the UVR Inst_HQ_3 model.
+  - You probably don't need this unless you're trying to tweak the backing track
+- `Artist - Title (Vocals UVR_MDXNET_KARA_2).mp3`
+  - Vocal track from the audio, separated using the UVR KARA_2 model.
+  - You probably don't need this unless you're trying to tweak the backing track
+- `Artist - Title (Instrumental UVR-MDX-NET-Inst_HQ_3).mp3`
+  - Instrumental track from the audio, separated using the UVR Inst_HQ_3 model.
+  - This is typically a safe bet for the instrumental track but will not include any backing vocals.
+- `Artist - Title (Instrumental UVR_MDXNET_KARA_2).mp3`
+  - Instrumental track from the audio, separated using the UVR KARA_2 model.
+  - This is the default choice for the finalisation step below as it usually does a good job of keeping backing vocals. However for some songs it includes far too much or is kinda glitchy, so you should check it before finalising and make a judgement call about using this vs. the Inst_HQ_3 one.
+- `Artist - Title (Title).png`
+  - Title screen static image; if you specify your own background image, font, color etc. this should give you a convenient way to add a title screen to the start of your video.
+- `Artist - Title (Title).mov`
+  - 5 second video clip version of the title screen image, ready to be joined by the finalisation step.
+
+
+## Finalisation 🎥
+
+After completing your manual sync process and rendering your `Artist - Title (Karaoke).mov` file (still using the original audio!) into the same folder, you can now run `karaoke-finalise`.
+
+This will output some additional files:
+- `Artist - Title (Karaoke).mov`
+  - Karaoke video without title screen, remuxed to use the instrumental audio
+- `Artist - Title (With Vocals).mov`
+  - Karaoke video without title screen, using the original audio (useful for practicing!)
+- `Artist - Title (Final Karaoke).mp4`
+  - Final karaoke video with 5 second title screen intro, instrumental audio and converted to MP4 for compatibility and reduced file size. Upload this to YouTube!
+
+## Overall karaoke production guide / steps
+
+- Run `karaoke-prep <Artist> <Title>` to fetch and prep the files above
+- Wait for it to output at least the WAV file and lyrics (you can leave it running in the background while you sync)
+- Open the WAV file in MidiCo: `(YouTube xxxxxxxxxxx).wav`
+- Copy/paste the lyrics into MidiCo: `(Lyrics Processed).txt`
+- Perform the lyrics sync (here's a [video](https://www.youtube.com/watch?v=63-Fk3mfZ7Q) showing me doing it) in MidiCo
+- Render the video to 4k using the MidiCo "Export Movie" feature, saving it as `Artist - Title (Karaoke).mov` in the same folder
+- Run `karaoke-finalise` to remux the instrumental audio and join the title clip to the start
+- Upload the resulting `Artist - Title (Final Karaoke).mp4` video to YouTube!
+
+Here's my [tutorial video with verbal explanation](https://www.youtube.com/watch?v=ZsROHgqAVHs) of the whole process, and here's a [normal speed demo](https://www.youtube.com/watch?v=63-Fk3mfZ7Q) of me doing it (8 minutes total for a single track).
 
 ## Requirements 📋
 
