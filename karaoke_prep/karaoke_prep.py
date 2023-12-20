@@ -171,7 +171,7 @@ class KaraokePrep:
                 f.write(lyrics)
 
             self.logger.info("Lyrics for %s by %s fetched successfully", title, artist)
-            return lyrics.split('\n')
+            return lyrics.split("\n")
         else:
             self.logger.warning("Could not find lyrics for %s by %s", title, artist)
 
@@ -204,7 +204,9 @@ class KaraokePrep:
 
             for index in comma_indices:
                 if abs(mid_point - index) < 20:  # Roughly the length of two average words
-                    self.logger.debug(f"Found comma at index {index} which is within 20 characters of mid_point {mid_point}, accepting as split point")
+                    self.logger.debug(
+                        f"Found comma at index {index} which is within 20 characters of mid_point {mid_point}, accepting as split point"
+                    )
                     return index + 1  # Include the comma in the first line
 
         # Check for 'and'
@@ -368,8 +370,10 @@ class KaraokePrep:
             "30",
             "-i",
             output_image_filepath,
-            "-f lavfi",
-            "-i anullsrc",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc",
             "-c:v",
             "libx264",
             "-r",
@@ -380,7 +384,8 @@ class KaraokePrep:
             "yuv420p",
             "-vf",
             f"scale={resolution[0]}:{resolution[1]}",
-            "-c:a aac",
+            "-c:a",
+            "aac",
             "-shortest",
             output_video_filepath,
         ]
