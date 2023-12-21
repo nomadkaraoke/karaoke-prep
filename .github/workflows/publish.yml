@@ -4,7 +4,7 @@ on: [push, workflow_dispatch]
 
 jobs:
   # Auto-publish when version is increased
-  publish-job:
+  publish-pypi:
     # Only publish on `main` branch
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -17,3 +17,19 @@ jobs:
           pypi-token: ${{ secrets.PYPI_API_TOKEN }}
           gh-token: ${{ secrets.GITHUB_TOKEN }}
           parse-changelog: false
+
+  publish-windows-executable:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Package Application
+      uses: JackMcKew/pyinstaller-action-windows@main
+      with:
+        path: .
+
+    - uses: actions/upload-artifact@v2
+      with:
+        name: windows-executable
+        path: dist/windows
