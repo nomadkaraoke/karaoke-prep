@@ -18,18 +18,27 @@ jobs:
           gh-token: ${{ secrets.GITHUB_TOKEN }}
           parse-changelog: false
 
-  publish-windows-executable:
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v2
 
-    - name: Package Application
-      uses: JackMcKew/pyinstaller-action-windows@main
+    - name: Set up Python
+      uses: actions/setup-python@v2
       with:
-        path: .
+        python-version: '3.9'
 
-    - uses: actions/upload-artifact@v2
+    - name: Install dependencies with Poetry
+      run: |
+        pip install poetry
+        poetry install
+
+    - name: Build EXE with PyInstaller
+      run: poetry run pyinstaller karaoke-prep.spec
+
+    - name: Upload EXE as Artifact
+      uses: actions/upload-artifact@v2
       with:
-        name: windows-executable
-        path: dist/windows
+        name: karaoke-prep-windows
+        path: dist/*.exe
