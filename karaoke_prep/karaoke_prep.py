@@ -144,18 +144,28 @@ class KaraokePrep:
 
     def download_video(self, youtube_id, output_filename_no_extension):
         self.logger.debug(f"Downloading YouTube video {youtube_id} to filename {output_filename_no_extension} + (as yet) unknown extension")
+
+        downloaded_file_name = output_filename_no_extension
+        actual_file_extension = None
+
+        def ydl_progress_hook(d):
+            nonlocal actual_file_extension
+            if d["status"] == "finished":
+                actual_file_extension = d["filename"].split(".")[-1]
+
         ydl_opts = {
-            "quiet": "True",
+            "quiet": True,
             "format": "bv*+ba/b",  # if a combined video + audio format is better than the best video-only format use the combined format
             "outtmpl": f"{output_filename_no_extension}",
+            "progress_hooks": [ydl_progress_hook],
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as youtube_dl_instance:
             youtube_dl_instance.download([f"https://www.youtube.com/watch?v={youtube_id}"])
-            self.logger.warn(f"Download finished, assuming hard-coded webm extension (!) and returning this filename")
-            # TODO: Replace hard-coded webm extension with the actual extension of the downloaded file using yt-dlp hooks / event callback
-            return output_filename_no_extension + ".webm"
+            downloaded_file_name += f".{actual_file_extension}"
+            self.logger.info(f"Download finished, returning downloaded filename: {downloaded_file_name}")
+            return downloaded_file_name
 
     def extract_still_image_from_video(self, input_filename, output_filename_no_extension):
         output_filename = output_filename_no_extension + ".png"
@@ -456,6 +466,7 @@ class KaraokePrep:
         processed_track["lyrics"] = lyrics_file
         processed_track["processed_lyrics"] = processed_lyrics_file
 
+        # WebM may not always be the output format from YouTubeDL, but it's the most common and this is just a convenience cache
         yt_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.webm")
         yt_webm_glob = glob.glob(yt_webm_filename_pattern)
 

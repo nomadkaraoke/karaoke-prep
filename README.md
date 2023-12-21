@@ -121,7 +121,7 @@ karaoke-prep "https://www.youtube.com/playlist?list=YOUR_PLAYLIST_ID"
 After running `karaoke-prep` you should have the following 11 files, grouped into folder(s) for each track:
 
 - `Artist - Title (YouTube xxxxxxxxxxx).webm`
-  - Original unmodified video, fetched from YouTube in the highest quality available
+  - Original unmodified video, fetched from YouTube in the highest quality available (may not always be WebM)
   - You probably don't need this unless you're creating a custom request
 - `Artist - Title (YouTube xxxxxxxxxxx).png`
   - A still image taken from 30 seconds into the video, in case that's useful for a custom background
