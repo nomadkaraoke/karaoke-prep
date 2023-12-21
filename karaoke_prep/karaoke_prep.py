@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import glob
 import yt_dlp
@@ -62,7 +63,10 @@ class KaraokePrep:
         self.denoise_enabled = denoise_enabled
         self.create_track_subfolders = create_track_subfolders
 
-        self.ffmpeg_base_command = "ffmpeg -hide_banner -nostats"
+        # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
+        ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
+
+        self.ffmpeg_base_command = f"{ffmpeg_path} -hide_banner -nostats"
 
         if self.log_level == logging.DEBUG:
             self.ffmpeg_base_command += " -loglevel verbose"
@@ -401,11 +405,9 @@ class KaraokePrep:
         draw = ImageDraw.Draw(background)
 
         # Accessing the font file from the package resources
-        with pkg_resources.path('karaoke_prep.resources', format['intro_font']) as font_path:
+        with pkg_resources.path("karaoke_prep.resources", format["intro_font"]) as font_path:
             # Calculate positions and sizes for title and artist
-            title_font, _ = self.calculate_text_size_and_position(
-                draw, title, str(font_path), initial_font_size, resolution, title_padding
-            )
+            title_font, _ = self.calculate_text_size_and_position(draw, title, str(font_path), initial_font_size, resolution, title_padding)
             artist_font, _ = self.calculate_text_size_and_position(
                 draw, artist, str(font_path), initial_font_size, resolution, artist_padding
             )

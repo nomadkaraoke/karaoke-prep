@@ -1,5 +1,5 @@
 import os
-import subprocess
+import sys
 import tempfile
 import logging
 
@@ -26,7 +26,10 @@ class KaraokeFinalise:
 
         self.logger.debug(f"KaraokeFinalise instantiating")
 
-        self.ffmpeg_base_command = "ffmpeg -hide_banner -nostats"
+        # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
+        ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
+
+        self.ffmpeg_base_command = f"{ffmpeg_path} -hide_banner -nostats"
 
         if self.log_level == logging.DEBUG:
             self.ffmpeg_base_command += " -loglevel verbose"
