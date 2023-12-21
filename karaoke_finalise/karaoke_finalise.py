@@ -26,11 +26,19 @@ class KaraokeFinalise:
 
         self.logger.debug(f"KaraokeFinalise instantiating")
 
+        self.ffmpeg_base_command = "ffmpeg -hide_banner -nostats"
+
+        if self.log_level == logging.DEBUG:
+            self.ffmpeg_base_command += " -loglevel verbose"
+        else:
+            self.ffmpeg_base_command += " -loglevel fatal"
+
         self.model_name = model_name
 
     def process(self):
         tracks = []
 
+        self.logger.info(f"Searching for files in current directory ending with (Karaoke).mov")
         for karaoke_file in filter(lambda f: " (Karaoke).mov" in f, os.listdir(".")):
             base_name = karaoke_file.replace(" (Karaoke).mov", "")
             artist = base_name.split(" - ")[0]
@@ -38,7 +46,8 @@ class KaraokeFinalise:
 
             with_vocals_file = f"{base_name} (With Vocals).mov"
             title_file = f"{base_name} (Title).mov"
-            instrumental_file = f"{base_name} (Instrumental {self.model_name}).MP3"
+            instrumental_file = f"{base_name} (Instrumental {self.model_name}).mp3"
+
             final_mp4_file = f"{base_name} (Final Karaoke).mp4"
 
             track = {
@@ -50,36 +59,30 @@ class KaraokeFinalise:
             }
 
             if os.path.isfile(title_file) and os.path.isfile(karaoke_file) and os.path.isfile(instrumental_file):
-                print("Renaming karaoke file to WithVocals")
+                self.logger.info(f"All 3 input files found for {base_name}, beginning finalisation")
+
+                self.logger.info(f"Output [With Vocals]: renaming synced video to: {with_vocals_file}")
                 os.rename(karaoke_file, with_vocals_file)
 
-                print(f"Remuxing karaoke video with instrumental audio to '{karaoke_file}'")
-                subprocess.run(
-                    ["ffmpeg", "-an", "-i", with_vocals_file, "-vn", "-i", instrumental_file, "-c:v", "copy", "-c:a", "aac", karaoke_file]
-                )
+                self.logger.info(f"Output [With Instrumental]: remuxing synced video with instrumental audio to: {karaoke_file}")
 
-                print(f"Joining '{title_file}' and '{karaoke_file}' into '{final_mp4_file}'")
+                ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" -vn -i "{instrumental_file}" -c:v copy -c:a aac "{karaoke_file}"'
+                self.logger.debug(f"Running command: {ffmpeg_command}")
+                os.system(ffmpeg_command)
+
+                self.logger.info(f"Output [Final Karaoke]: joining title video and instrumental video to produce: {final_mp4_file}")
+
                 with tempfile.NamedTemporaryFile(mode="w+", delete=False, dir="/tmp", suffix=".txt") as tmp_file_list:
                     tmp_file_list.write(f"file '{os.path.abspath(title_file)}'\n")
                     tmp_file_list.write(f"file '{os.path.abspath(karaoke_file)}'\n")
-                subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-f",
-                        "concat",
-                        "-safe",
-                        "0",
-                        "-i",
-                        tmp_file_list.name,
-                        "-vf",
-                        "settb=AVTB,setpts=N/30/TB,fps=30",
-                        final_mp4_file,
-                    ]
-                )
+
+                ffmpeg_command = f'{self.ffmpeg_base_command} -f concat -safe 0 -i "{tmp_file_list.name}" -vf settb=AVTB,setpts=N/30/TB,fps=30 "{final_mp4_file}"'
+                self.logger.debug(f"Running command: {ffmpeg_command}")
+                os.system(ffmpeg_command)
 
                 os.remove(tmp_file_list.name)
             else:
-                print(f"Required files for '{base_name}' not found.")
+                self.logger.error(f"Unable to find all 3 required input files:\n {title_file}\n {karaoke_file}\n {instrumental_file}")
 
             tracks.append(track)
 

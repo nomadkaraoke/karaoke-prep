@@ -2,6 +2,8 @@
 import argparse
 import logging
 import pkg_resources
+import tempfile
+import os
 from karaoke_prep import KaraokePrep
 
 
@@ -43,9 +45,11 @@ def main():
         help="Optional: model name to be used for separation (default: %(default)s). Example: --model_name=UVR-MDX-NET-Inst_HQ_3",
     )
 
+    # Use tempfile to get the platform-independent temp directory
+    default_model_dir = os.path.join(tempfile.gettempdir(), "audio-separator-models")
     parser.add_argument(
         "--model_file_dir",
-        default="/tmp/audio-separator-models/",
+        default=default_model_dir,
         help="Optional: model files directory (default: %(default)s). Example: --model_file_dir=/app/models",
     )
 
@@ -57,8 +61,8 @@ def main():
 
     parser.add_argument(
         "--output_format",
-        default="MP3",
-        help="Optional: output format for separated audio (default: MP3). Example: --output_format=FLAC",
+        default="mp3",
+        help="Optional: output format for separated audio (default: mp3). Example: --output_format=flac",
     )
 
     parser.add_argument(

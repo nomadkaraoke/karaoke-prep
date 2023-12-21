@@ -4,7 +4,7 @@ import glob
 import yt_dlp
 import logging
 import lyricsgenius
-import subprocess
+import tempfile
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -18,7 +18,7 @@ class KaraokePrep:
         log_formatter=None,
         model_name="UVR_MDXNET_KARA_2",
         model_name_2="UVR-MDX-NET-Inst_HQ_3",
-        model_file_dir="/tmp/audio-separator-models/",
+        model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
         output_dir=".",
         output_format="WAV",
         use_cuda=False,
@@ -145,6 +145,7 @@ class KaraokePrep:
     def download_video(self, youtube_id, output_filename_no_extension):
         self.logger.debug(f"Downloading YouTube video {youtube_id} to filename {output_filename_no_extension} + (as yet) unknown extension")
         ydl_opts = {
+            "quiet": "True",
             "format": "bv*+ba/b",  # if a combined video + audio format is better than the best video-only format use the combined format
             "outtmpl": f"{output_filename_no_extension}",
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
@@ -173,7 +174,7 @@ class KaraokePrep:
         return output_filename
 
     def write_lyrics_from_genius(self, artist, title, filename):
-        genius = lyricsgenius.Genius(os.environ["GENIUS_API_TOKEN"])
+        genius = lyricsgenius.Genius(access_token=os.environ["GENIUS_API_TOKEN"], verbose=False, remove_section_headers=True)
         song = genius.search_song(title, artist)
         if song:
             lyrics = self.clean_genius_lyrics(song.lyrics)
@@ -192,6 +193,10 @@ class KaraokePrep:
         lyrics = re.sub(
             r".*?Lyrics([A-Z])", r"\1", lyrics
         )  # Remove the song name and word "Lyrics" if this has a non-newline char at the start
+        lyrics = re.sub(r"^[0-9]* Contributors.*Lyrics", "", lyrics)  # Remove this example: 27 ContributorsSex Bomb Lyrics
+        lyrics = re.sub(
+            r"See.*Live.*Get tickets as low as \$[0-9]+", "", lyrics
+        )  # Remove this example: See Tom Jones LiveGet tickets as low as $71
         lyrics = re.sub(r"[0-9]+Embed$", "", lyrics)  # Remove the word "Embed" at end of line with preceding numbers if found
         lyrics = re.sub(r"(\S)Embed$", r"\1", lyrics)  # Remove the word "Embed" if it has been tacked onto a word at the end of a line
         lyrics = re.sub(r"^Embed$", r"", lyrics)  # Remove the word "Embed" if it has been tacked onto a word at the end of a line
@@ -232,20 +237,53 @@ class KaraokePrep:
         self.logger.debug(f"No comma or suitable 'and' found, using middle word as split point")
         return len(" ".join(words[:mid_word_index]))
 
+    def process_line(self, line):
+        """
+        Process a single line to ensure it's within the maximum length,
+        and handle parentheses.
+        """
+        processed_lines = []
+        while len(line) > 36:
+            # Check if the line contains parentheses
+            if "(" in line and ")" in line:
+                start_paren = line.find("(")
+                end_paren = line.find(")") + 1
+                if end_paren < len(line) and line[end_paren] == ",":
+                    end_paren += 1
+
+                if start_paren > 0:
+                    processed_lines.append(line[:start_paren].strip())
+                processed_lines.append(line[start_paren:end_paren].strip())
+                line = line[end_paren:].strip()
+            else:
+                split_point = self.find_best_split_point(line)
+                processed_lines.append(line[:split_point].strip())
+                line = line[split_point:].strip()
+
+        if line:  # Add the remaining part if not empty
+            processed_lines.append(line)
+
+        return processed_lines
+
     def write_processed_lyrics(self, lyrics, processed_lyrics_file):
         self.logger.debug(f"Writing processed lyrics to {processed_lyrics_file}")
 
         with open(processed_lyrics_file, "w") as outfile:
+            all_processed = False
+            while not all_processed:
+                all_processed = True
+                new_lyrics = []
+                for line in lyrics:
+                    line = line.strip()
+                    processed = self.process_line(line)
+                    new_lyrics.extend(processed)
+                    if any(len(l) > 36 for l in processed):
+                        all_processed = False
+                lyrics = new_lyrics
+
+            # Write the processed lyrics to file
             for line in lyrics:
-                line = line.strip()
-                if len(line) > 40:
-                    self.logger.debug(f"Line is longer than 40 characters, splitting at best split point: {line}")
-                    split_point = self.find_best_split_point(line)
-                    outfile.write(line[:split_point].strip() + "\n")
-                    outfile.write(line[split_point:].strip() + "\n")
-                else:
-                    self.logger.debug(f"Line is shorter than 40 characters, writing as-is: {line}")
-                    outfile.write(line + "\n")
+                outfile.write(line + "\n")
 
     def sanitize_filename(self, filename):
         """Replace or remove characters that are unsafe for filenames."""
@@ -406,6 +444,18 @@ class KaraokePrep:
         processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
         self.create_title_video(artist, title, self.title_format, processed_track["title_image"], processed_track["title_video"])
 
+        lyrics_file = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
+        processed_lyrics_file = os.path.join(track_output_dir, f"{artist_title} (Lyrics Processed).txt")
+        if os.path.exists(lyrics_file):
+            self.logger.debug(f"Lyrics file already exists, skipping fetch: {lyrics_file}")
+        else:
+            self.logger.info("Fetching lyrics from Genius...")
+            lyrics = self.write_lyrics_from_genius(artist, title, lyrics_file)
+            self.write_processed_lyrics(lyrics, processed_lyrics_file)
+
+        processed_track["lyrics"] = lyrics_file
+        processed_track["processed_lyrics"] = processed_lyrics_file
+
         yt_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.webm")
         yt_webm_glob = glob.glob(yt_webm_filename_pattern)
 
@@ -449,18 +499,6 @@ class KaraokePrep:
                 processed_track["youtube_audio"] = self.convert_to_wav(processed_track["youtube_video"], output_filename_no_extension)
             else:
                 self.logger.warning(f"Skipping {title} by {artist} due to missing YouTube ID.")
-
-        lyrics_file = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
-        processed_lyrics_file = os.path.join(track_output_dir, f"{artist_title} (Lyrics Processed).txt")
-        if os.path.exists(lyrics_file):
-            self.logger.debug(f"Lyrics file already exists, skipping fetch: {lyrics_file}")
-        else:
-            self.logger.info("Fetching lyrics from Genius...")
-            lyrics = self.write_lyrics_from_genius(artist, title, lyrics_file)
-            self.write_processed_lyrics(lyrics, processed_lyrics_file)
-
-        processed_track["lyrics"] = lyrics_file
-        processed_track["processed_lyrics"] = processed_lyrics_file
 
         self.logger.info(f"Separating audio twice for track: {title} by {artist}")
 

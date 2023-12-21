@@ -47,14 +47,17 @@ def main():
 
     tracks = kfinalise.process()
 
-    logger.info(f"Karaoke Finalisation complete! Output files:")
+    if len(tracks) == 0:
+        logger.error(f"No tracks found to process.")
+        return
 
+    logger.info(f"Karaoke finalisation processing complete! Output files:")
     for track in tracks:
         logger.info(f"")
         logger.info(f"Track: {track['artist']} - {track['title']}")
         logger.info(f" Video With Vocals: {track['video_with_vocals']}")
         logger.info(f" Video With Instrumental: {track['video_with_instrumental']}")
-        logger.info(f" Final Video with Title Screen: {track['final_video']}")
+        logger.info(f" Final Video with Title: {track['final_video']}")
 
 
 if __name__ == "__main__":
