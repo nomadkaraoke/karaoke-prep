@@ -2,7 +2,7 @@
 import argparse
 import logging
 import pkg_resources
-from karaoke_finalise import KaraokeFinalise
+from karaoke_prep.karaoke_finalise import KaraokeFinalise
 
 
 def main():
