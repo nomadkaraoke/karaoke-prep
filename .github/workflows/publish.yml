@@ -29,15 +29,13 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: wget
-      uses: wei/wget@v1
-      with:
-        args: -O platform/ffmpeg.exe https://github.com/karaokenerds/karaoke-prep/releases/download/v0.8.3/ffmpeg.exe
-
     - name: Install dependencies with Poetry
       run: |
         pip install poetry
         poetry install
+
+    - name: Download ffmpeg binary
+      run: python platform/download_ffmpeg.py
 
     - name: Build EXE with PyInstaller
       run: poetry run pyinstaller karaoke-prep.spec
