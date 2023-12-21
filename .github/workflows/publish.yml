@@ -35,10 +35,11 @@ jobs:
         poetry install
 
     - name: Build EXE with PyInstaller
-      run: poetry run pyinstaller karaoke-prep.spec
+      run: poetry run pyinstaller --onefile karaoke-prep.spec
 
     - name: Upload EXE as Artifact
       uses: actions/upload-artifact@v2
       with:
         name: karaoke-prep-windows
-        path: dist/*.exe
+        path: build/
+
