@@ -5,6 +5,7 @@ import yt_dlp
 import logging
 import lyricsgenius
 import tempfile
+import importlib.resources as pkg_resources
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -28,7 +29,7 @@ class KaraokePrep:
         create_track_subfolders=False,
         intro_background_color="#000000",
         intro_background_image=None,
-        intro_font="AvenirNext-Bold.ttf",
+        intro_font="Montserrat-Bold.ttf",
         intro_artist_color="#ffffff",
         intro_title_color="#ff7acc",
     ):
@@ -71,8 +72,7 @@ class KaraokePrep:
         self.title_format = {
             "background_color": intro_background_color,
             "background_image": intro_background_image,
-            "artist_font": intro_font,
-            "title_font": intro_font,
+            "intro_font": intro_font,
             "artist_color": intro_artist_color,
             "title_color": intro_title_color,
         }
@@ -400,13 +400,15 @@ class KaraokePrep:
 
         draw = ImageDraw.Draw(background)
 
-        # Calculate positions and sizes for title and artist
-        title_font, _ = self.calculate_text_size_and_position(
-            draw, title, format["title_font"], initial_font_size, resolution, title_padding
-        )
-        artist_font, _ = self.calculate_text_size_and_position(
-            draw, artist, format["artist_font"], initial_font_size, resolution, artist_padding
-        )
+        # Accessing the font file from the package resources
+        with pkg_resources.path('karaoke_prep.resources', format['intro_font']) as font_path:
+            # Calculate positions and sizes for title and artist
+            title_font, _ = self.calculate_text_size_and_position(
+                draw, title, str(font_path), initial_font_size, resolution, title_padding
+            )
+            artist_font, _ = self.calculate_text_size_and_position(
+                draw, artist, str(font_path), initial_font_size, resolution, artist_padding
+            )
 
         # Calculate vertical positions with consistent gap
         title_text_position, title_height = self.calculate_text_position(draw, title, title_font, resolution, top_padding)
