@@ -6,6 +6,7 @@ import yt_dlp
 import logging
 import lyricsgenius
 import tempfile
+import pyperclip
 import importlib.resources as pkg_resources
 from PIL import Image, ImageDraw, ImageFont
 
@@ -474,6 +475,12 @@ class KaraokePrep:
 
         processed_track["lyrics"] = lyrics_file
         processed_track["processed_lyrics"] = processed_lyrics_file
+
+        # Read processed lyrics and copy to clipboard
+        with open(processed_lyrics_file, "r") as lyrics_file:
+            lyrics_content = lyrics_file.read()
+            pyperclip.copy(lyrics_content)
+            self.logger.info(f"Lyrics copied to clipboard.")
 
         # WebM may not always be the output format from YouTubeDL, but it's the most common and this is just a convenience cache
         yt_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} (YouTube *.webm")

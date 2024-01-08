@@ -1723,6 +1723,16 @@ files = [
 diagrams = ["jinja2", "railroad-diagrams"]
 
 [[package]]
+name = "pyperclip"
+version = "1.8.2"
+description = "A cross-platform clipboard module for Python. (Only handles plain text for now.)"
+optional = false
+python-versions = "*"
+files = [
+    {file = "pyperclip-1.8.2.tar.gz", hash = "sha256:105254a8b04934f0bc84e9c24eb360a591aaf6535c9def5f29d92af107a9bf57"},
+]
+
+[[package]]
 name = "pyreadline3"
 version = "3.4.1"
 description = "A python implementation of GNU readline."
@@ -2334,4 +2344,4 @@ silicon = ["audio-separator"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "78df10db4d8847e8484bf60a91ccf41c448c57fa5993a575b43102df4353111d"
+content-hash = "ee877a78f4c43ed6723d5c9bee72bf648feab9ed0c8d15e7cefbc8a42294df72"
