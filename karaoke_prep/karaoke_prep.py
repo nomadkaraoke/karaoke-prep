@@ -22,7 +22,8 @@ class KaraokePrep:
         model_name_2="UVR-MDX-NET-Inst_HQ_3",
         model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
         output_dir=".",
-        output_format="WAV",
+        lossless_output_format="FLAC",
+        lossy_output_format="MP3",
         use_cuda=False,
         use_coreml=False,
         normalization_enabled=True,
@@ -56,7 +57,8 @@ class KaraokePrep:
         self.model_name_2 = model_name_2
         self.model_file_dir = model_file_dir
         self.output_dir = output_dir
-        self.output_format = output_format
+        self.lossless_output_format = lossless_output_format.lower()
+        self.lossy_output_format = lossy_output_format.lower()
         self.use_cuda = use_cuda
         self.use_coreml = use_coreml
         self.normalization_enabled = normalization_enabled
@@ -83,7 +85,7 @@ class KaraokePrep:
 
         self.persistent_artist = None
 
-        self.logger.debug(f"KaraokePrep output_format: {self.output_format}")
+        self.logger.debug(f"KaraokePrep lossless_output_format: {self.lossless_output_format}")
 
         if not os.path.exists(self.output_dir):
             self.logger.debug(f"Overall output dir {self.output_dir} did not exist, creating")
@@ -234,9 +236,9 @@ class KaraokePrep:
             comma_indices = [i for i, char in enumerate(line) if char == ","]
 
             for index in comma_indices:
-                if abs(mid_point - index) < 20:  # Roughly the length of two average words
+                if abs(mid_point - index) < 20 and len(line[: index + 1].strip()) <= 36:
                     self.logger.debug(
-                        f"Found comma at index {index} which is within 20 characters of mid_point {mid_point}, accepting as split point"
+                        f"Found comma at index {index} which is within 20 characters of mid_point {mid_point} and results in a suitable line length, accepting as split point"
                     )
                     return index + 1  # Include the comma in the first line
 
@@ -244,9 +246,10 @@ class KaraokePrep:
         if " and " in line:
             mid_point = len(line) // 2
             and_indices = [m.start() for m in re.finditer(" and ", line)]
-            split_point = min(and_indices, key=lambda x: abs(x - mid_point))
-            self.logger.debug(f"Found 'and' at index {split_point} which is close to mid_point {mid_point}, accepting as split point")
-            return split_point + len(" and ")  # Include 'and' in the first line
+            for index in sorted(and_indices, key=lambda x: abs(x - mid_point)):
+                if len(line[: index + len(" and ")].strip()) <= 36:
+                    self.logger.debug(f"Found 'and' at index {index} which results in a suitable line length, accepting as split point")
+                    return index + len(" and ")
 
         # Split at the middle word
         self.logger.debug(f"No comma or suitable 'and' found, using middle word as split point")
@@ -281,7 +284,7 @@ class KaraokePrep:
         return processed_lines
 
     def write_processed_lyrics(self, lyrics, processed_lyrics_file):
-        self.logger.debug(f"Writing processed lyrics to {processed_lyrics_file}")
+        self.logger.info(f"Writing processed lyrics to {processed_lyrics_file}")
 
         with open(processed_lyrics_file, "w") as outfile:
             all_processed = False
@@ -316,7 +319,7 @@ class KaraokePrep:
         self.logger.debug(f"audio_file is valid file: {audio_file}")
 
         self.logger.debug(
-            f"instantiating Separator with model_name: {model_name} instrumental_path: {instrumental_path} and output_format: {self.output_format}"
+            f"instantiating Separator with model_name: {model_name} instrumental_path: {instrumental_path} and lossless_output_format: {self.lossless_output_format}"
         )
 
         from audio_separator.separator import Separator
@@ -325,7 +328,7 @@ class KaraokePrep:
             log_level=self.log_level,
             log_formatter=self.log_formatter,
             model_file_dir=self.model_file_dir,
-            output_format=self.output_format,
+            output_format=self.lossless_output_format,
             primary_stem_path=instrumental_path,
             secondary_stem_path=vocals_path,
         )
@@ -491,7 +494,7 @@ class KaraokePrep:
             processed_track["youtube_still_image"] = yt_png_glob[0]
             processed_track["youtube_audio"] = yt_wav_glob[0]
 
-            self.logger.debug(f"YouTube output files already exist, skipping download: {processed_track['youtube_video']} + .wav + .png")
+            self.logger.info(f"YouTube output files already exist, skipping download: {processed_track['youtube_video']} + .wav + .png")
         else:
             if self.url is None:
                 self.logger.warn(f"No URL specified - the top result from YouTube will be used.")
@@ -519,31 +522,65 @@ class KaraokePrep:
 
         self.logger.info(f"Separating audio twice for track: {title} by {artist}")
 
-        instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental {self.model_name}).{self.output_format}")
-        vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name}).{self.output_format}")
+        instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental {self.model_name}).{self.lossless_output_format}")
+        vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name}).{self.lossless_output_format}")
+
+        instrumental_path_lossy = os.path.join(
+            track_output_dir, f"{artist_title} (Instrumental {self.model_name}).{self.lossy_output_format}"
+        )
+        vocals_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name}).{self.lossy_output_format}")
 
         if os.path.isfile(instrumental_path) and os.path.isfile(vocals_path):
             self.logger.debug(f"Separated audio files already exist in output paths, skipping separation: {instrumental_path}")
         else:
             self.separate_audio(processed_track["youtube_audio"], self.model_name, instrumental_path, vocals_path)
+            self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
+            self.convert_to_lossy(vocals_path, vocals_path_lossy)
 
         processed_track["instrumental_audio"] = instrumental_path
         processed_track["vocals_audio"] = vocals_path
 
-        instrumental_path_2 = os.path.join(track_output_dir, f"{artist_title} (Instrumental {self.model_name_2}).{self.output_format}")
-        vocals_path_2 = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name_2}).{self.output_format}")
+        processed_track["instrumental_audio_lossy"] = instrumental_path_lossy
+        processed_track["vocals_audio_lossy"] = vocals_path_lossy
+
+        instrumental_path_2 = os.path.join(
+            track_output_dir, f"{artist_title} (Instrumental {self.model_name_2}).{self.lossless_output_format}"
+        )
+        vocals_path_2 = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name_2}).{self.lossless_output_format}")
+
+        instrumental_path_2_lossy = os.path.join(
+            track_output_dir, f"{artist_title} (Instrumental {self.model_name_2}).{self.lossy_output_format}"
+        )
+        vocals_path_2_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name_2}).{self.lossy_output_format}")
 
         if os.path.isfile(instrumental_path_2) and os.path.isfile(vocals_path_2):
             self.logger.debug(f"Separated audio files already exist in output paths, skipping separation: {instrumental_path_2}")
         else:
             self.separate_audio(processed_track["youtube_audio"], self.model_name_2, instrumental_path_2, vocals_path_2)
+            self.convert_to_lossy(instrumental_path_2, instrumental_path_2_lossy)
+            self.convert_to_lossy(vocals_path_2, vocals_path_2_lossy)
 
         processed_track["instrumental_audio_2"] = instrumental_path_2
         processed_track["vocals_audio_2"] = vocals_path_2
 
+        processed_track["instrumental_audio_2_lossy"] = instrumental_path_2_lossy
+        processed_track["vocals_audio_2_lossy"] = vocals_path_2_lossy
+
         self.logger.info("Script finished, audio downloaded, lyrics fetched and audio separated!")
 
         return processed_track
+
+    def convert_to_lossy(self, input_filename, output_filename):
+        if input_filename is None or not os.path.isfile(input_filename):
+            raise Exception(f"Error: Invalid input file provided for convert_to_lossy: {input_filename}")
+
+        self.logger.info(f"Converting {self.lossless_output_format} audio to lossy {self.lossy_output_format} format")
+
+        ffmpeg_extras = "-q:a 0" if self.lossy_output_format == "mp3" else ""
+
+        ffmpeg_command = f'{self.ffmpeg_base_command} -i "{input_filename}" {ffmpeg_extras} "{output_filename}"'
+        self.logger.debug(f"Running command: {ffmpeg_command}")
+        os.system(ffmpeg_command)
 
     def is_playlist_url(self):
         """

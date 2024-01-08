@@ -60,9 +60,15 @@ def main():
     )
 
     parser.add_argument(
-        "--output_format",
-        default="mp3",
-        help="Optional: output format for separated audio (default: mp3). Example: --output_format=flac",
+        "--lossless_output_format",
+        default="FLAC",
+        help="Optional: lossless output format for separated audio (default: FLAC). Example: --lossless_output_format=WAV",
+    )
+
+    parser.add_argument(
+        "--lossy_output_format",
+        default="MP3",
+        help="Optional: lossy output format for separated audio (default: MP3). Example: --lossy_output_format=OGG",
     )
 
     parser.add_argument(
@@ -166,7 +172,8 @@ def main():
         model_name=args.model_name,
         model_file_dir=args.model_file_dir,
         output_dir=args.output_dir,
-        output_format=args.output_format,
+        lossless_output_format=args.lossless_output_format,
+        lossy_output_format=args.lossy_output_format,
         use_cuda=args.use_cuda,
         use_coreml=args.use_coreml,
         normalization_enabled=args.normalize,

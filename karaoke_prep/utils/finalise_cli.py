@@ -27,9 +27,45 @@ def main():
     )
 
     parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Optional: Enable dry run mode to print actions without executing them (default: disabled). Example: --dry_run",
+    )
+
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Optional: Force processing even if final output file exists (default: disabled). Example: --force",
+    )
+
+    parser.add_argument(
         "--model_name",
         default="UVR_MDXNET_KARA_2",
         help="Optional: model name to be used for separation (default: %(default)s). Example: --model_name=UVR-MDX-NET-Inst_HQ_3",
+    )
+
+    parser.add_argument(
+        "--brand_prefix",
+        default=None,
+        help="Optional: Your brand prefix to calculate the next sequential number and move the resulting folder. Example: --brand_prefix=BRAND",
+    )
+
+    parser.add_argument(
+        "--target_dir",
+        default=None,
+        help="Optional: Target directory where the processed folder will be moved after finalisation. Example: --target_dir='/path/to/Tracks-Organized'",
+    )
+
+    parser.add_argument(
+        "--public_share_dir",
+        default=None,
+        help="Optional: Public share directory where final MP4 and ZIP files will be copied. Example: --public_share_dir='/path/to/Tracks-PublicShare'",
+    )
+
+    parser.add_argument(
+        "--rclone_destination",
+        default=None,
+        help="Optional: Rclone destination to sync your public_share_dir to after adding files to it. Example: --rclone_destination='googledrive:YourBrandNameFolder'",
     )
 
     args = parser.parse_args()
@@ -42,7 +78,13 @@ def main():
     kfinalise = KaraokeFinalise(
         log_formatter=log_formatter,
         log_level=log_level,
+        dry_run=args.dry_run,
+        force=args.force,
         model_name=args.model_name,
+        brand_prefix=args.brand_prefix,
+        target_dir=args.target_dir,
+        public_share_dir=args.public_share_dir,
+        rclone_destination=args.rclone_destination,
     )
 
     tracks = kfinalise.process()
@@ -57,7 +99,8 @@ def main():
         logger.info(f"Track: {track['artist']} - {track['title']}")
         logger.info(f" Video With Vocals: {track['video_with_vocals']}")
         logger.info(f" Video With Instrumental: {track['video_with_instrumental']}")
-        logger.info(f" Final Video with Title: {track['final_video']}")
+        logger.info(f" Final CDG+MP3 ZIP: {track['final_video']}")
+        logger.info(f" Final Video with Title: {track['final_zip']}")
 
 
 if __name__ == "__main__":
