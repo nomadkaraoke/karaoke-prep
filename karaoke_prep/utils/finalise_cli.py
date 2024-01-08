@@ -45,6 +45,12 @@ def main():
     )
 
     parser.add_argument(
+        "--instrumental_format",
+        default="flac",
+        help="Optional: format / file extension for instrumental track to use for remux (default: %(default)s). Example: --instrumental_format=mp3",
+    )
+
+    parser.add_argument(
         "--brand_prefix",
         default=None,
         help="Optional: Your brand prefix to calculate the next sequential number and move the resulting folder. Example: --brand_prefix=BRAND",
@@ -93,6 +99,7 @@ def main():
         dry_run=args.dry_run,
         force=args.force,
         model_name=args.model_name,
+        instrumental_format=args.instrumental_format,
         brand_prefix=args.brand_prefix,
         target_dir=args.target_dir,
         public_share_dir=args.public_share_dir,
