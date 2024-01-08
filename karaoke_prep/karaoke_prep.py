@@ -152,10 +152,11 @@ class KaraokePrep:
         downloaded_file_name = output_filename_no_extension
         actual_file_extension = None
 
+        # TODO: fix file extension for example karaoke-prep --log_level debug "Ken Ashcorp" "Dare You To Love Me"
+        
         def ydl_progress_hook(d):
             nonlocal actual_file_extension
-            if d["status"] == "finished":
-                actual_file_extension = d["filename"].split(".")[-1]
+            actual_file_extension = d["filename"].split(".")[-1]
 
         ydl_opts = {
             "quiet": True,
@@ -318,7 +319,7 @@ class KaraokePrep:
             f"instantiating Separator with model_name: {model_name} instrumental_path: {instrumental_path} and output_format: {self.output_format}"
         )
 
-        from audio_separator import Separator
+        from audio_separator.separator import Separator
 
         separator = Separator(
             audio_file,
@@ -579,4 +580,5 @@ class KaraokePrep:
             return self.process_playlist()
         else:
             self.logger.info(f"Provided YouTube URL is NOT a playlist, processing single track")
+            # TODO: Add support for using karaoke-prep with an existing audio file in any format (e.g. FLAC), not just youtube
             return [self.prep_single_track()]
