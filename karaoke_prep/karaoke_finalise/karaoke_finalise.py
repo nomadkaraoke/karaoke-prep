@@ -6,6 +6,11 @@ import logging
 import zipfile
 import shutil
 import re
+import pickle
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.http import MediaFileUpload
 
 
 class KaraokeFinalise:
@@ -20,6 +25,8 @@ class KaraokeFinalise:
         brand_prefix=None,
         target_dir=None,
         public_share_dir=None,
+        youtube_client_secrets_file=None,
+        youtube_description_file=None,
         rclone_destination=None,
     ):
         self.logger = logging.getLogger(__name__)
@@ -57,7 +64,53 @@ class KaraokeFinalise:
         self.brand_prefix = brand_prefix
         self.target_dir = target_dir
         self.public_share_dir = public_share_dir
+        self.youtube_client_secrets_file = youtube_client_secrets_file
+        self.youtube_description_file = youtube_description_file
         self.rclone_destination = rclone_destination
+
+    def authenticate_youtube(self):
+        """Authenticate and return a YouTube service object."""
+        credentials = None
+        pickle_file = "/tmp/karaoke-finalise-token.pickle"
+
+        # Token file stores the user's access and refresh tokens.
+        if os.path.exists(pickle_file):
+            with open(pickle_file, "rb") as token:
+                credentials = pickle.load(token)
+
+        # If there are no valid credentials, let the user log in.
+        if not credentials or not credentials.valid:
+            if credentials and credentials.expired and credentials.refresh_token:
+                credentials.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    self.youtube_client_secrets_file, scopes=["https://www.googleapis.com/auth/youtube.upload"]
+                )
+                credentials = flow.run_local_server(port=0)  # This will open a browser for authentication
+
+            # Save the credentials for the next run
+            with open(pickle_file, "wb") as token:
+                pickle.dump(credentials, token)
+
+        return build("youtube", "v3", credentials=credentials)
+
+    def upload_to_youtube(self, video_file_path, title, description, category_id, keywords):
+        """Upload video to YouTube."""
+        youtube = self.authenticate_youtube()
+
+        body = {
+            "snippet": {"title": title, "description": description, "tags": keywords, "categoryId": category_id},
+            "status": {"privacyStatus": "public"},  # or 'private' or 'unlisted'
+        }
+
+        # Use MediaFileUpload to handle the video file
+        media_file = MediaFileUpload(video_file_path, mimetype="video/mp4", resumable=True)
+
+        # Call the API's videos.insert method to create and upload the video.
+        request = youtube.videos().insert(part="snippet,status", body=body, media_body=media_file)
+        response = request.execute()
+
+        self.logger.info(f"Uploaded video to YouTube: {response.get('id')}")
 
     def get_next_sequence_number(self):
         """
@@ -138,41 +191,44 @@ class KaraokeFinalise:
             )
 
             # Remux the synced video with the instrumental audio to produce an instrumental karaoke MOV file
-            self.logger.info(f"Output [With Instrumental]: remuxing synced video with instrumental audio to: {karaoke_mov_file}")
+            if not os.path.isfile(karaoke_mov_file):
+                self.logger.info(f"Output [With Instrumental]: remuxing synced video with instrumental audio to: {karaoke_mov_file}")
 
-            remux_ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" -vn -i "{instrumental_file}" -c:v copy -c:a aac "{karaoke_mov_file}"'
+                remux_ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" -vn -i "{instrumental_file}" -c:v copy -c:a aac "{karaoke_mov_file}"'
 
-            if self.dry_run:
-                self.logger.info(f"DRY RUN: Would run command: {remux_ffmpeg_command}")
-            else:
-                self.logger.info(f"Running command: {remux_ffmpeg_command}")
-                os.system(remux_ffmpeg_command)
+                if self.dry_run:
+                    self.logger.info(f"DRY RUN: Would run command: {remux_ffmpeg_command}")
+                else:
+                    self.logger.info(f"Running command: {remux_ffmpeg_command}")
+                    os.system(remux_ffmpeg_command)
 
             # Join the title video and the karaoke video and reencode with fixed 30 FPS to produce the final MP4
-            self.logger.info(f"Output [Final Karaoke]: joining title video and instrumental video to produce: {final_mp4_file}")
+            if not os.path.isfile(final_mp4_file):
+                self.logger.info(f"Output [Final Karaoke]: joining title video and instrumental video to produce: {final_mp4_file}")
 
-            with tempfile.NamedTemporaryFile(mode="w+", delete=False, dir="/tmp", suffix=".txt") as tmp_file_list:
-                tmp_file_list.write(f"file '{os.path.abspath(title_file)}'\n")
-                tmp_file_list.write(f"file '{os.path.abspath(karaoke_mov_file)}'\n")
+                with tempfile.NamedTemporaryFile(mode="w+", delete=False, dir="/tmp", suffix=".txt") as tmp_file_list:
+                    tmp_file_list.write(f"file '{os.path.abspath(title_file)}'\n")
+                    tmp_file_list.write(f"file '{os.path.abspath(karaoke_mov_file)}'\n")
 
-            join_ffmpeg_command = f'{self.ffmpeg_base_command} -f concat -safe 0 -i "{tmp_file_list.name}" -vf settb=AVTB,setpts=N/30/TB,fps=30 "{final_mp4_file}"'
+                join_ffmpeg_command = f'{self.ffmpeg_base_command} -f concat -safe 0 -i "{tmp_file_list.name}" -vf settb=AVTB,setpts=N/30/TB,fps=30 "{final_mp4_file}"'
 
-            if self.dry_run:
-                self.logger.info(f"DRY RUN: Would run command: {join_ffmpeg_command}")
-            else:
-                self.logger.info(f"Running command: {join_ffmpeg_command}")
-                os.system(join_ffmpeg_command)
-                os.remove(tmp_file_list.name)
+                if self.dry_run:
+                    self.logger.info(f"DRY RUN: Would run command: {join_ffmpeg_command}")
+                else:
+                    self.logger.info(f"Running command: {join_ffmpeg_command}")
+                    os.system(join_ffmpeg_command)
+                    os.remove(tmp_file_list.name)
 
             # Create the ZIP file containing the MP3 and CDG files
-            if self.dry_run:
-                self.logger.info(f"DRY RUN: Would create ZIP file: {final_zip_file}")
-            else:
-                self.logger.info(f"Creating ZIP file containing {mp3_file} and {cdg_file}")
-                with zipfile.ZipFile(final_zip_file, "w") as zipf:
-                    zipf.write(mp3_file, os.path.basename(mp3_file))
-                    zipf.write(cdg_file, os.path.basename(cdg_file))
-                self.logger.info(f"ZIP file created: {final_zip_file}")
+            if not os.path.isfile(final_zip_file):
+                if self.dry_run:
+                    self.logger.info(f"DRY RUN: Would create ZIP file: {final_zip_file}")
+                else:
+                    self.logger.info(f"Creating ZIP file containing {mp3_file} and {cdg_file}")
+                    with zipfile.ZipFile(final_zip_file, "w") as zipf:
+                        zipf.write(mp3_file, os.path.basename(mp3_file))
+                        zipf.write(cdg_file, os.path.basename(cdg_file))
+                    self.logger.info(f"ZIP file created: {final_zip_file}")
 
             # Create new folder in target folder and move all files to it
             new_track_prefix = None
@@ -217,6 +273,30 @@ class KaraokeFinalise:
                     self.logger.info(f"Final files copied to public share directory: {dest_mp4_file}, {dest_zip_file}")
             else:
                 self.logger.info(f"public_share_dir or new_track_prefix not specified, skipping copy to shared dir")
+
+            # Upload to YouTube
+            if self.youtube_client_secrets_file is not None:
+                src_mp4_file = os.path.join(new_dir_path, final_mp4_file)
+
+                if self.dry_run:
+                    self.logger.info(
+                        f"DRY RUN: Would upload {src_mp4_file} to YouTube using client secrets file: {self.youtube_client_secrets_file}"
+                    )
+                else:
+                    description = f"Karaoke version of {artist} - {title} created using karaoke-prep python package."
+                    if self.youtube_description_file is not None:
+                        with open(self.youtube_description_file, "r") as f:
+                            description = f.read()
+
+                    self.upload_to_youtube(
+                        src_mp4_file,
+                        f"{artist} - {title} (Karaoke)",
+                        description,
+                        "10",  # Category ID for Music
+                        ["karaoke", "music", "singing", "instrumental", "lyrics", artist, title],
+                    )
+            else:
+                self.logger.info(f"youtube_client_secrets_file not specified, skipping YouTube upload")
 
             # Sync with various cloud destinations using rclone
             if self.rclone_destination is not None and self.public_share_dir is not None:

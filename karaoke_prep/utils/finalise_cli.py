@@ -63,6 +63,18 @@ def main():
     )
 
     parser.add_argument(
+        "--youtube_client_secrets_file",
+        default=None,
+        help="Optional: File path to youtube client secrets file. Example: --youtube_client_secrets_file='/path/to/client_secret_1234567890_apps.googleusercontent.com.json'",
+    )
+
+    parser.add_argument(
+        "--youtube_description_file",
+        default=None,
+        help="Optional: File path to youtube video description text for uploaded videos. Example: --youtube_description_file='/path/to/youtube_description.txt'",
+    )
+
+    parser.add_argument(
         "--rclone_destination",
         default=None,
         help="Optional: Rclone destination to sync your public_share_dir to after adding files to it. Example: --rclone_destination='googledrive:YourBrandNameFolder'",
@@ -84,6 +96,8 @@ def main():
         brand_prefix=args.brand_prefix,
         target_dir=args.target_dir,
         public_share_dir=args.public_share_dir,
+        youtube_client_secrets_file=args.youtube_client_secrets_file,
+        youtube_description_file=args.youtube_description_file,
         rclone_destination=args.rclone_destination,
     )
 
