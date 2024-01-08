@@ -153,7 +153,7 @@ class KaraokePrep:
         actual_file_extension = None
 
         # TODO: fix file extension for example karaoke-prep --log_level debug "Ken Ashcorp" "Dare You To Love Me"
-        
+
         def ydl_progress_hook(d):
             nonlocal actual_file_extension
             actual_file_extension = d["filename"].split(".")[-1]
@@ -322,17 +322,18 @@ class KaraokePrep:
         from audio_separator.separator import Separator
 
         separator = Separator(
-            audio_file,
             log_level=self.log_level,
             log_formatter=self.log_formatter,
-            model_name=model_name,
             model_file_dir=self.model_file_dir,
             output_format=self.output_format,
             primary_stem_path=instrumental_path,
             secondary_stem_path=vocals_path,
         )
-        _, _ = separator.separate()
-        self.logger.debug(f"Separation complete!")
+
+        separator.load_model(model_name)
+        output_files = separator.separate(audio_file)
+
+        self.logger.info(f"Separation complete! Output file(s): {' '.join(output_files)}")
 
     def setup_output_paths(self, artist, title):
         sanitized_artist = self.sanitize_filename(artist)
