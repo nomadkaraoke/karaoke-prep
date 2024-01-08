@@ -27,7 +27,7 @@ def main():
     parser.add_argument(
         "args",
         nargs="*",
-        help="[YouTube video or playlist URL] [Artist] [Title] of song to prep. If URL is provided, Artist and Title are optional but increase chance of fetching the correct lyrics. If Artist and Title are provided with no URL, the top YouTube search result will be fetched.",
+        help="[Media or playlist URL] [Artist] [Title] of song to prep. If URL is provided, Artist and Title are optional but increase chance of fetching the correct lyrics. If Artist and Title are provided with no URL, the top YouTube search result will be fetched.",
     )
 
     package_version = pkg_resources.get_distribution("karaoke-prep").version
@@ -148,7 +148,7 @@ def main():
         elif len(args.args) > 1:
             artist = args.args[1]
         else:
-            logger.warn("URL provided without Artist and Title, both will be guessed from YouTube Title")
+            logger.warn("URL provided without Artist and Title, both will be guessed from title")
 
     elif len(args.args) > 1:
         artist = args.args[0]
@@ -193,9 +193,9 @@ def main():
     for track in tracks:
         logger.info(f"")
         logger.info(f"Track: {track['artist']} - {track['title']}")
-        logger.info(f" YouTube Video: {track['youtube_video']}")
-        logger.info(f" YouTube Audio: {track['youtube_audio']}")
-        logger.info(f" YouTube Still Image: {track['youtube_still_image']}")
+        logger.info(f" Input Media: {track['input_media']}")
+        logger.info(f" Input WAV Audio: {track['input_audio_wav']}")
+        logger.info(f" Input Still Image: {track['input_still_image']}")
         logger.info(f" Lyrics: {track['lyrics']}")
         logger.info(f" Processed Lyrics: {track['processed_lyrics']}")
         logger.info(f" Instrumental: {track['instrumental_audio']}")
