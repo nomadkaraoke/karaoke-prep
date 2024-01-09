@@ -177,29 +177,25 @@ class KaraokePrep:
     def download_video(self, url, output_filename_no_extension):
         self.logger.debug(f"Downloading media from URL {url} to filename {output_filename_no_extension} + (as yet) unknown extension")
 
-        downloaded_file_name = output_filename_no_extension
-        actual_file_extension = None
-
-        # TODO: fix file extension for this example: karaoke-prep --log_level debug "Ken Ashcorp" "Dare You To Love Me"
-
-        def ydl_progress_hook(d):
-            print(f"ydl_progress_hook fired, status: {d["status"]} filename: {d["filename"]} actual_file_extension: {actual_file_extension}")
-            nonlocal actual_file_extension
-            actual_file_extension = d["filename"].split(".")[-1]
-
         ydl_opts = {
             "quiet": True,
             "format": "bv*+ba/b",  # if a combined video + audio format is better than the best video-only format use the combined format
-            "outtmpl": f"{output_filename_no_extension}",
-            "progress_hooks": [ydl_progress_hook],
+            "outtmpl": f"{output_filename_no_extension}.%(ext)s",
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
         }
 
         with ydl(ydl_opts) as ydl_instance:
             ydl_instance.download([url])
-            downloaded_file_name += f".{actual_file_extension}"
-            self.logger.info(f"Download finished, returning downloaded filename: {downloaded_file_name}")
-            return downloaded_file_name
+
+            # Search for the file with any extension
+            downloaded_files = glob.glob(f"{output_filename_no_extension}.*")
+            if downloaded_files:
+                downloaded_file_name = downloaded_files[0]  # Assume the first match is the correct one
+                self.logger.info(f"Download finished, returning downloaded filename: {downloaded_file_name}")
+                return downloaded_file_name
+            else:
+                self.logger.error("No files found matching the download pattern.")
+                return None
 
     def extract_still_image_from_video(self, input_filename, output_filename_no_extension):
         output_filename = output_filename_no_extension + ".png"
@@ -257,6 +253,7 @@ class KaraokePrep:
         self.logger.debug(f"Finding best_split_point for line: {line}")
         words = line.split()
         mid_word_index = len(words) // 2
+        self.logger.debug(f"words: {words} mid_word_index: {mid_word_index}")
 
         # Check for a comma within one or two words of the middle word
         if "," in line:
@@ -279,9 +276,16 @@ class KaraokePrep:
                     self.logger.debug(f"Found 'and' at index {index} which results in a suitable line length, accepting as split point")
                     return index + len(" and ")
 
-        # Split at the middle word
-        self.logger.debug(f"No comma or suitable 'and' found, using middle word as split point")
-        return len(" ".join(words[:mid_word_index]))
+        if len(words) > 2 and mid_word_index > 0:
+            # Split at the middle word as a last resort
+            self.logger.debug(f"No better split point found, splitting at middle word index: {mid_word_index}")
+            return len(" ".join(words[:mid_word_index]))
+
+        # If no suitable split point is found, forcibly split at the maximum length
+        forced_split_point = 36
+        if len(line) > forced_split_point:
+            self.logger.debug(f"No suitable split point found, length: {len(line)}, forcibly splitting at position {forced_split_point}")
+            return forced_split_point
 
     def process_line(self, line):
         """
