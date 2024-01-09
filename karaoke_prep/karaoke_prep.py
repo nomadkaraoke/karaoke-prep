@@ -172,7 +172,8 @@ class KaraokePrep:
         if self.artist and self.title:
             self.logger.info(f"Extracted url: {self.url}, artist: {self.artist}, title: {self.title}")
         else:
-            self.logger.error("Failed to extract artist and title from the input media metadata.")
+            self.logger.debug(self.extracted_info)
+            raise Exception("Failed to extract artist and title from the input media metadata.")
 
     def download_video(self, url, output_filename_no_extension):
         self.logger.debug(f"Downloading media from URL {url} to filename {output_filename_no_extension} + (as yet) unknown extension")
@@ -208,7 +209,7 @@ class KaraokePrep:
     def convert_to_wav(self, input_filename, output_filename_no_extension):
         output_filename = output_filename_no_extension + ".wav"
         self.logger.info(f"Converting input video to audio WAV file")
-        ffmpeg_command = f'{self.ffmpeg_base_command} -i "{input_filename}" "{output_filename}"'
+        ffmpeg_command = f'{self.ffmpeg_base_command} -n -i "{input_filename}" "{output_filename}"'
         self.logger.debug(f"Running command: {ffmpeg_command}")
         os.system(ffmpeg_command)
         return output_filename
@@ -276,15 +277,17 @@ class KaraokePrep:
                     self.logger.debug(f"Found 'and' at index {index} which results in a suitable line length, accepting as split point")
                     return index + len(" and ")
 
+        # If no better split point is found, try splitting at the middle word
         if len(words) > 2 and mid_word_index > 0:
-            # Split at the middle word as a last resort
-            self.logger.debug(f"No better split point found, splitting at middle word index: {mid_word_index}")
-            return len(" ".join(words[:mid_word_index]))
+            split_at_middle = len(" ".join(words[:mid_word_index]))
+            if split_at_middle <= 36:
+                self.logger.debug(f"Splitting at middle word index: {mid_word_index}")
+                return split_at_middle
 
-        # If no suitable split point is found, forcibly split at the maximum length
+        # If the line is still too long, forcibly split at the maximum length
         forced_split_point = 36
         if len(line) > forced_split_point:
-            self.logger.debug(f"No suitable split point found, length: {len(line)}, forcibly splitting at position {forced_split_point}")
+            self.logger.debug(f"Line is still too long, forcibly splitting at position {forced_split_point}")
             return forced_split_point
 
     def process_line(self, line):
@@ -293,7 +296,14 @@ class KaraokePrep:
         and handle parentheses.
         """
         processed_lines = []
+        iteration_count = 0
+        max_iterations = 100  # Failsafe limit
+
         while len(line) > 36:
+            if iteration_count > max_iterations:
+                self.logger.error(f"Maximum iterations exceeded in process_line for line: {line}")
+                break
+
             # Check if the line contains parentheses
             if "(" in line and ")" in line:
                 start_paren = line.find("(")
@@ -310,6 +320,8 @@ class KaraokePrep:
                 processed_lines.append(line[:split_point].strip())
                 line = line[split_point:].strip()
 
+            iteration_count += 1
+
         if line:  # Add the remaining part if not empty
             processed_lines.append(line)
 
@@ -319,9 +331,16 @@ class KaraokePrep:
         self.logger.info(f"Writing processed lyrics to {processed_lyrics_file}")
 
         processed_lyrics_lines = ""
+        iteration_count = 0
+        max_iterations = 100  # Failsafe limit
+
         with open(processed_lyrics_file, "w") as outfile:
             all_processed = False
             while not all_processed:
+                if iteration_count > max_iterations:
+                    self.logger.error("Maximum iterations exceeded in write_processed_lyrics.")
+                    break
+
                 all_processed = True
                 new_lyrics = []
                 for line in lyrics:
@@ -331,6 +350,8 @@ class KaraokePrep:
                     if any(len(l) > 36 for l in processed):
                         all_processed = False
                 lyrics = new_lyrics
+
+                iteration_count += 1
 
             # Write the processed lyrics to file
             for line in lyrics:
@@ -535,23 +556,30 @@ class KaraokePrep:
             else:
                 self.logger.warning(f"Skipping download due to missing URL.")
 
-        lyrics_file = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
-        if os.path.exists(lyrics_file):
-            self.logger.debug(f"Lyrics file already exists, skipping fetch: {lyrics_file}")
+        processed_track["lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
+        if os.path.exists(processed_track["lyrics"]):
+            self.logger.debug(f"Lyrics file already exists, skipping fetch: {processed_track['lyrics']}")
         else:
             self.logger.info("Fetching lyrics from Genius...")
-            self.lyrics = self.write_lyrics_from_genius(self.artist, self.title, lyrics_file)
-            processed_track["lyrics"] = lyrics_file
+            self.lyrics = self.write_lyrics_from_genius(self.artist, self.title, processed_track["lyrics"])
 
-            processed_lyrics_file = os.path.join(track_output_dir, f"{artist_title} (Lyrics Processed).txt")
-            if self.lyrics is not None:
-                self.write_processed_lyrics(self.lyrics, processed_lyrics_file)
-                processed_track["processed_lyrics"] = processed_lyrics_file
+            processed_track["processed_lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics Processed).txt")
+            if self.lyrics is None:
+                processed_track["lyrics"] = None
+                processed_track["processed_lyrics"] = None
+            else:
+                self.write_processed_lyrics(self.lyrics, processed_track["processed_lyrics"])
 
-        self.logger.info(f"Creating title video...")
         processed_track["title_image"] = os.path.join(track_output_dir, f"{artist_title} (Title).png")
         processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
-        self.create_title_video(self.artist, self.title, self.title_format, processed_track["title_image"], processed_track["title_video"])
+
+        if os.path.exists(processed_track["title_video"]):
+            self.logger.debug(f"Title video already exists, skipping render: {processed_track['title_video']}")
+        else:
+            self.logger.info(f"Creating title video...")
+            self.create_title_video(
+                self.artist, self.title, self.title_format, processed_track["title_image"], processed_track["title_video"]
+            )
 
         self.logger.info(f"Separating audio twice for track: {self.title} by {self.artist}")
 
@@ -620,8 +648,8 @@ class KaraokePrep:
             track_results = []
             self.logger.info(f"Found {len(self.extracted_info['entries'])} entries in playlist, processing each invididually...")
             for entry in self.extracted_info["entries"]:
-                self.logger.info(f"Processing input URL: {entry['webpage_url']}")
-                self.url = entry["webpage_url"]
+                self.extracted_info = entry
+                self.logger.info(f"Processing playlist entry with title: {self.extracted_info['title']}")
                 track_results.append(self.prep_single_track())
                 self.artist = self.persistent_artist
                 self.title = None
