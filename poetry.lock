@@ -13,13 +13,13 @@ files = [
 
 [[package]]
 name = "audio-separator"
-version = "0.12.2"
+version = "0.13.0"
 description = "Easy to use vocal separation, using MDX-Net models from UVR trained by @Anjok07"
 optional = true
 python-versions = ">=3.9"
 files = [
-    {file = "audio_separator-0.12.2-py3-none-any.whl", hash = "sha256:26f46404b2f825d6ab650a058f5c427fb2b3a28db442e6db3d29329d29cb9514"},
-    {file = "audio_separator-0.12.2.tar.gz", hash = "sha256:81cb625c7e8461ab057afa7e22dbd3a8b4edf14a3af44be8d442221779ec7f43"},
+    {file = "audio_separator-0.13.0-py3-none-any.whl", hash = "sha256:3a3d9a503e7867aa3fe6c3ca8d57900de0e3c5a6dc7ff34e4ea6544ceb160764"},
+    {file = "audio_separator-0.13.0.tar.gz", hash = "sha256:382a6fe6856deb109b9aca54310b2194dcc30a2e24f0123dba06a2d1614e447d"},
 ]
 
 [package.dependencies]
@@ -587,13 +587,13 @@ grpcio-gcp = ["grpcio-gcp (>=0.2.2,<1.0.dev0)"]
 
 [[package]]
 name = "google-api-python-client"
-version = "2.112.0"
+version = "2.113.0"
 description = "Google API Client Library for Python"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "google-api-python-client-2.112.0.tar.gz", hash = "sha256:c3bcb5fd70d57f4c94b30c0dbeade53c216febfbf1d771eeb1a2fa74bd0d6756"},
-    {file = "google_api_python_client-2.112.0-py2.py3-none-any.whl", hash = "sha256:f5e45d9812376deb7e04cda8d8ca5233aa608038bdbf1253ad8f7edcb7f6d595"},
+    {file = "google-api-python-client-2.113.0.tar.gz", hash = "sha256:bcffbc8ffbad631f699cf85aa91993f3dc03060b234ca9e6e2f9135028bd9b52"},
+    {file = "google_api_python_client-2.113.0-py2.py3-none-any.whl", hash = "sha256:25659d488df6c8a69615b2a510af0e63b4c47ab2cb87d71c1e13b28715906e27"},
 ]
 
 [package.dependencies]
@@ -2344,4 +2344,4 @@ silicon = ["audio-separator"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "ee877a78f4c43ed6723d5c9bee72bf648feab9ed0c8d15e7cefbc8a42294df72"
+content-hash = "49a458208f44adbe6396a61f1b5254873e269dd9627ca6bcbf2699fcffd59232"
