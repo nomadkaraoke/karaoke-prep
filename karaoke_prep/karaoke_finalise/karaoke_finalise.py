@@ -236,7 +236,7 @@ class KaraokeFinalise:
             if self.brand_prefix is not None and self.target_dir is not None:
                 next_num = self.get_next_sequence_number()
                 new_track_prefix = f"{self.brand_prefix}-{next_num:04d}"
-                new_dir_name = f"{new_track_prefix} {artist} - {title}"
+                new_dir_name = f"{new_track_prefix} - {artist} - {title}"
                 new_dir_path = os.path.join(self.target_dir, new_dir_name)
 
                 if self.dry_run:
@@ -261,8 +261,17 @@ class KaraokeFinalise:
                 src_mp4_file = os.path.join(new_dir_path, final_mp4_file)
                 src_zip_file = os.path.join(new_dir_path, final_zip_file)
 
-                dest_mp4_file = os.path.join(self.public_share_dir, f"{new_track_prefix} {base_name} (Karaoke).mp4")
-                dest_zip_file = os.path.join(self.public_share_dir, f"{new_track_prefix} {base_name} (Karaoke).zip")
+                dest_mp4_dir = os.path.join(self.public_share_dir, "MP4")
+                dest_cdg_dir = os.path.join(self.public_share_dir, "CDG")
+
+                if not os.path.exists(dest_mp4_dir):
+                    os.makedirs(dest_mp4_dir)
+
+                if not os.path.exists(dest_cdg_dir):
+                    os.makedirs(dest_cdg_dir)
+
+                dest_mp4_file = os.path.join(dest_mp4_dir, f"{new_track_prefix} - {base_name}.mp4")
+                dest_zip_file = os.path.join(dest_cdg_dir, f"{new_track_prefix} - {base_name}.zip")
 
                 if self.dry_run:
                     self.logger.info(f"DRY RUN: Would copy {src_mp4_file} to {dest_mp4_file}")
