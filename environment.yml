@@ -6,7 +6,7 @@ channels:
   # be listed explicitly here.
   - nodefaults
 dependencies:
-  - python>=3.10  # or don't specify the version and use the latest stable Python
+  - python>=3.10,<3.12  # or don't specify the version and use the latest stable Python
   - mamba
   - pip  # pip must be mentioned explicitly, or conda-lock will fail
   - poetry

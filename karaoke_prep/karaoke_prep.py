@@ -106,7 +106,7 @@ class KaraokePrep:
             # If no URL is provided, use the query to search for the top result
             ydl_opts = {"quiet": "True", "format": "bestaudio", "noplaylist": "True", "extract_flat": True}
             with ydl(ydl_opts) as ydl_instance:
-                query = f"{input_artist} {input_title} topic"
+                query = f"{input_artist} {input_title}"
                 self.extracted_info = ydl_instance.extract_info(f"ytsearch1:{query}", download=False)["entries"][0]
                 if not self.extracted_info:
                     raise Exception(f"No search results found on YouTube for query: {input_artist} {input_title}")
@@ -442,7 +442,7 @@ class KaraokePrep:
         text_y = vertical_offset
         return (text_x, text_y), text_height
 
-    def create_title_video(self, artist, title, format, output_image_filepath, output_video_filepath):
+    def create_title_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
         duration = 5  # Duration in seconds
         resolution = (3840, 2160)  # 4K resolution
 
@@ -486,10 +486,14 @@ class KaraokePrep:
         draw.text(artist_text_position, artist, fill=format["artist_color"], font=artist_font)
 
         # Save static background image
-        background.save(output_image_filepath)
+        background.save(f"{output_image_filepath_noext}.png")
+
+        # Save static background image as JPG for smaller filesize to upload as YouTube thumbnail
+        background_rgb = background.convert('RGB')
+        background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
 
         # Use ffmpeg to create video
-        ffmpeg_command = f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath}" -f lavfi -i anullsrc '
+        ffmpeg_command = f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath_noext}.png" -f lavfi -i anullsrc '
         ffmpeg_command += f'-c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p -vf scale={resolution[0]}:{resolution[1]} -c:a aac -shortest "{output_video_filepath}"'
 
         self.logger.info("Generating title video...")
@@ -570,16 +574,16 @@ class KaraokePrep:
             else:
                 self.write_processed_lyrics(self.lyrics, processed_track["processed_lyrics"])
 
-        processed_track["title_image"] = os.path.join(track_output_dir, f"{artist_title} (Title).png")
+        output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
+        processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"
+        processed_track["title_image_jpg"] = f"{output_image_filepath_noext}.jpg"
         processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
 
         if os.path.exists(processed_track["title_video"]):
             self.logger.debug(f"Title video already exists, skipping render: {processed_track['title_video']}")
         else:
             self.logger.info(f"Creating title video...")
-            self.create_title_video(
-                self.artist, self.title, self.title_format, processed_track["title_image"], processed_track["title_video"]
-            )
+            self.create_title_video(self.artist, self.title, self.title_format, output_image_filepath_noext, processed_track["title_video"])
 
         self.logger.info(f"Separating audio twice for track: {self.title} by {self.artist}")
 

@@ -94,8 +94,8 @@ class KaraokeFinalise:
 
         return build("youtube", "v3", credentials=credentials)
 
-    def upload_to_youtube(self, video_file_path, title, description, category_id, keywords):
-        """Upload video to YouTube."""
+    def upload_to_youtube(self, video_file_path, thumbnail_file_path, title, description, category_id, keywords):
+        """Upload video to YouTube and set thumbnail."""
         youtube = self.authenticate_youtube()
 
         body = {
@@ -110,7 +110,14 @@ class KaraokeFinalise:
         request = youtube.videos().insert(part="snippet,status", body=body, media_body=media_file)
         response = request.execute()
 
-        self.logger.info(f"Uploaded video to YouTube: {response.get('id')}")
+        video_id = response.get("id")
+        self.logger.info(f"Uploaded video to YouTube: {video_id}")
+
+        # Uploading the thumbnail
+        if thumbnail_file_path:
+            media_thumbnail = MediaFileUpload(thumbnail_file_path, mimetype="image/jpeg")
+            youtube.thumbnails().set(videoId=video_id, media_body=media_thumbnail).execute()
+            self.logger.info(f"Uploaded thumbnail for video ID {video_id}")
 
     def get_next_sequence_number(self):
         """
@@ -147,6 +154,7 @@ class KaraokeFinalise:
 
             # Input files which should already exist after karaoke-prep and manual production process
             title_file = f"{base_name} (Title).mov"
+            thumbnail_file = f"{base_name} (Title).jpg"
             instrumental_file = f"{base_name} (Instrumental {self.model_name}).{self.instrumental_format}"
             cdg_file = f"{base_name} (Karaoke).cdg"
             mp3_file = f"{base_name} (Karaoke).mp3"
@@ -168,6 +176,10 @@ class KaraokeFinalise:
 
             if not os.path.isfile(title_file):
                 self.logger.error(f"Title file not found: {title_file}")
+                return []
+
+            if not os.path.isfile(thumbnail_file):
+                self.logger.error(f"Thumbnail file not found: {thumbnail_file}")
                 return []
 
             if not os.path.isfile(with_vocals_file):
@@ -286,10 +298,11 @@ class KaraokeFinalise:
             # Upload to YouTube
             if self.youtube_client_secrets_file is not None:
                 src_mp4_file = os.path.join(new_dir_path, final_mp4_file)
+                new_thumbnail_path = os.path.join(new_dir_path, thumbnail_file)
 
                 if self.dry_run:
                     self.logger.info(
-                        f"DRY RUN: Would upload {src_mp4_file} to YouTube using client secrets file: {self.youtube_client_secrets_file}"
+                        f"DRY RUN: Would upload {src_mp4_file} to YouTube with thumbnail {new_thumbnail_path} using client secrets file: {self.youtube_client_secrets_file}"
                     )
                 else:
                     description = f"Karaoke version of {artist} - {title} created using karaoke-prep python package."
@@ -299,6 +312,7 @@ class KaraokeFinalise:
 
                     self.upload_to_youtube(
                         src_mp4_file,
+                        new_thumbnail_path,
                         f"{artist} - {title} (Karaoke)",
                         description,
                         "10",  # Category ID for Music
