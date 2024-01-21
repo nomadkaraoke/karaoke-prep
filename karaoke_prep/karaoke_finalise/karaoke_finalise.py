@@ -323,7 +323,7 @@ class KaraokeFinalise:
 
             # Sync with various cloud destinations using rclone
             if self.rclone_destination is not None and self.public_share_dir is not None:
-                rclone_cmd = ["rclone", "sync", "-v", self.public_share_dir, self.rclone_destination]
+                rclone_cmd = ["rclone", "sync", "-v", "--exclude", '.*', self.public_share_dir, self.rclone_destination]
                 if self.dry_run:
                     self.logger.info(f"DRY RUN: Would sync {self.public_share_dir} to {self.rclone_destination} using rclone")
                 else:
