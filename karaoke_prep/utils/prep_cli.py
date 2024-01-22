@@ -12,6 +12,11 @@ def is_url(string):
     return string.startswith("http://") or string.startswith("https://")
 
 
+def is_file(string):
+    """Check if a string is a valid file."""
+    return os.path.isfile(string)
+
+
 def main():
     logger = logging.getLogger(__name__)
     log_handler = logging.StreamHandler()
@@ -134,26 +139,26 @@ def main():
 
     args = parser.parse_args()
 
-    url, artist, title = None, None, None
+    input_media, artist, title = None, None, None
 
     # Allow 3 forms of positional arguments:
-    # 1. URL only (may be single track URL or playlist URL)
+    # 1. URL or Media File only (may be single track URL, playlist URL, or local file)
     # 2. Artist and Title only
     # 3. URL, Artist, and Title
-    if args.args and is_url(args.args[0]):
-        url = args.args[0]
+    if args.args and (is_url(args.args[0]) or is_file(args.args[0])):
+        input_media = args.args[0]
         if len(args.args) > 2:
             artist = args.args[1]
             title = args.args[2]
         elif len(args.args) > 1:
             artist = args.args[1]
         else:
-            logger.warn("URL provided without Artist and Title, both will be guessed from title")
+            logger.warn("Input media provided without Artist and Title, both will be guessed from title")
 
     elif len(args.args) > 1:
         artist = args.args[0]
         title = args.args[1]
-        logger.warn(f"No URL provided, the top YouTube search result for {artist} - {title} will be used.")
+        logger.warn(f"No input media provided, the top YouTube search result for {artist} - {title} will be used.")
     else:
         parser.print_help()
         exit(1)
@@ -161,12 +166,12 @@ def main():
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
 
-    logger.info(f"KaraokePrep beginning with url: {url} artist: {artist} and title: {title}")
+    logger.info(f"KaraokePrep beginning with input_media: {input_media} artist: {artist} and title: {title}")
 
     kprep = KaraokePrep(
         artist=artist,
         title=title,
-        url=url,
+        input_media=input_media,
         log_formatter=log_formatter,
         log_level=log_level,
         model_name=args.model_name,

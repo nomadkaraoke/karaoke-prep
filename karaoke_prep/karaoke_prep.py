@@ -5,6 +5,7 @@ import glob
 import logging
 import lyricsgenius
 import tempfile
+import shutil
 import pyperclip
 import importlib.resources as pkg_resources
 import yt_dlp.YoutubeDL as ydl
@@ -14,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 class KaraokePrep:
     def __init__(
         self,
-        url=None,
+        input_media=None,
         artist=None,
         title=None,
         log_level=logging.DEBUG,
@@ -49,11 +50,12 @@ class KaraokePrep:
         self.log_handler.setFormatter(self.log_formatter)
         self.logger.addHandler(self.log_handler)
 
-        self.logger.debug(f"KaraokePrep instantiating with url: {url} artist: {artist} title: {title}")
+        self.logger.debug(f"KaraokePrep instantiating with input_media: {input_media} artist: {artist} title: {title}")
 
         self.extractor = None
         self.media_id = None
-        self.url = url
+        self.url = None
+        self.input_media = input_media
         self.artist = artist
         self.title = title
         self.model_name = model_name
@@ -86,6 +88,7 @@ class KaraokePrep:
             "title_color": intro_title_color,
         }
 
+        self.extracted_info = None
         self.persistent_artist = None
 
         self.logger.debug(f"KaraokePrep lossless_output_format: {self.lossless_output_format}")
@@ -174,6 +177,15 @@ class KaraokePrep:
         else:
             self.logger.debug(self.extracted_info)
             raise Exception("Failed to extract artist and title from the input media metadata.")
+
+    def copy_input_media(self, input_media, output_filename_no_extension):
+        self.logger.debug(f"Copying media from local path {input_media} to filename {output_filename_no_extension} + existing extension")
+
+        copied_file_name = output_filename_no_extension + os.path.splitext(input_media)[1]
+        self.logger.debug(f"Copying {input_media} to {copied_file_name}")
+        shutil.copy2(input_media, copied_file_name)
+        
+        return copied_file_name
 
     def download_video(self, url, output_filename_no_extension):
         self.logger.debug(f"Downloading media from URL {url} to filename {output_filename_no_extension} + (as yet) unknown extension")
@@ -489,7 +501,7 @@ class KaraokePrep:
         background.save(f"{output_image_filepath_noext}.png")
 
         # Save static background image as JPG for smaller filesize to upload as YouTube thumbnail
-        background_rgb = background.convert('RGB')
+        background_rgb = background.convert("RGB")
         background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
 
         # Use ffmpeg to create video
@@ -508,11 +520,15 @@ class KaraokePrep:
     def prep_single_track(self):
         self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
 
-        # Parses metadata in self.extracted_info to set vars: self.url, self.extractor, self.media_id, self.artist, self.title
-        self.parse_single_track_metadata(input_artist=self.artist, input_title=self.title)
+        if os.path.isfile(self.input_media):
+            self.extractor = "Local"
+        else:
+            # Parses metadata in self.extracted_info to set vars: self.url, self.extractor, self.media_id, self.artist, self.title
+            self.parse_single_track_metadata(input_artist=self.artist, input_title=self.title)
 
         self.logger.info(f"Preparing output path for track: {self.title} by {self.artist}")
         track_output_dir, artist_title = self.setup_output_paths(self.artist, self.title)
+
         processed_track = {
             "track_output_dir": track_output_dir,
             "artist": self.artist,
@@ -523,42 +539,62 @@ class KaraokePrep:
             "processed_lyrics": None,
         }
 
-        # WebM may not always be the output format from ytdlp, but it's common and this is just a convenience cache
-        input_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.webm")
-        input_webm_glob = glob.glob(input_webm_filename_pattern)
+        if os.path.isfile(self.input_media):
+            input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
+            input_wav_glob = glob.glob(input_wav_filename_pattern)
 
-        input_png_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.png")
-        input_png_glob = glob.glob(input_png_filename_pattern)
+            processed_track["input_audio_wav"] = None
 
-        input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
-        input_wav_glob = glob.glob(input_wav_filename_pattern)
+            if input_wav_glob:
+                processed_track["input_audio_wav"] = input_wav_glob[0]
 
-        processed_track["input_media"] = None
-        processed_track["input_still_image"] = None
-        processed_track["input_audio_wav"] = None
-
-        if input_webm_glob and input_png_glob and input_wav_glob:
-            processed_track["input_media"] = input_webm_glob[0]
-            processed_track["input_still_image"] = input_png_glob[0]
-            processed_track["input_audio_wav"] = input_wav_glob[0]
-
-            self.logger.info(f"Input media files already exist, skipping download: {processed_track['input_media']} + .wav + .png")
-        else:
-            if self.url:
-                output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} {self.media_id})")
-
-                self.logger.info(f"Downloading input media from {self.url}...")
-                processed_track["input_media"] = self.download_video(self.url, output_filename_no_extension)
-
-                self.logger.info("Extracting still image from downloaded media (if input is video)...")
-                processed_track["input_still_image"] = self.extract_still_image_from_video(
-                    processed_track["input_media"], output_filename_no_extension
-                )
-
-                self.logger.info("Converting downloaded video to WAV for audio processing...")
-                processed_track["input_audio_wav"] = self.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
+                self.logger.info(f"Input media WAV file already exists, skipping conversion: {processed_track['input_audio_wav']}")
             else:
-                self.logger.warning(f"Skipping download due to missing URL.")
+                output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor})")
+
+                self.logger.info(f"Copying input media from {self.input_media} to new directory...")
+                processed_track["input_media"] = self.copy_input_media(self.input_media, output_filename_no_extension)
+            
+                self.logger.info("Converting input media to WAV for audio processing...")
+                processed_track["input_audio_wav"] = self.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
+
+        else:
+            # WebM may not always be the output format from ytdlp, but it's common and this is just a convenience cache
+            input_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.webm")
+            input_webm_glob = glob.glob(input_webm_filename_pattern)
+
+            input_png_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.png")
+            input_png_glob = glob.glob(input_png_filename_pattern)
+
+            input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
+            input_wav_glob = glob.glob(input_wav_filename_pattern)
+
+            processed_track["input_media"] = None
+            processed_track["input_still_image"] = None
+            processed_track["input_audio_wav"] = None
+
+            if input_webm_glob and input_png_glob and input_wav_glob:
+                processed_track["input_media"] = input_webm_glob[0]
+                processed_track["input_still_image"] = input_png_glob[0]
+                processed_track["input_audio_wav"] = input_wav_glob[0]
+
+                self.logger.info(f"Input media files already exist, skipping download: {processed_track['input_media']} + .wav + .png")
+            else:
+                if self.url:
+                    output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} {self.media_id})")
+
+                    self.logger.info(f"Downloading input media from {self.url}...")
+                    processed_track["input_media"] = self.download_video(self.url, output_filename_no_extension)
+
+                    self.logger.info("Extracting still image from downloaded media (if input is video)...")
+                    processed_track["input_still_image"] = self.extract_still_image_from_video(
+                        processed_track["input_media"], output_filename_no_extension
+                    )
+
+                    self.logger.info("Converting downloaded video to WAV for audio processing...")
+                    processed_track["input_audio_wav"] = self.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
+                else:
+                    self.logger.warning(f"Skipping download due to missing URL.")
 
         processed_track["lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
         if os.path.exists(processed_track["lyrics"]):
@@ -662,15 +698,23 @@ class KaraokePrep:
             raise Exception(f"Failed to find 'entries' in playlist, cannot process")
 
     def process(self):
-        # Runs yt-dlp extract_info for input URL or artist/title search query to set var: self.extracted_info
-        # We do this first as the input URL may be a playlist
-        self.extract_info_for_online_media(input_url=self.url, input_artist=self.artist, input_title=self.title)
+        if os.path.isfile(self.input_media):
+            self.logger.info(f"Input media {self.input_media} is a local file, youtube logic will be skipped")
 
-        if self.extracted_info and "playlist_count" in self.extracted_info:
-            self.persistent_artist = self.artist
-            self.logger.info(f"Input URL is a playlist, beginning batch operation with persistent artist: {self.persistent_artist}")
-            return self.process_playlist()
-        else:
-            self.logger.info(f"Input URL is not a playlist, processing single track")
-            # TODO: Add support for using karaoke-prep with an existing audio file in any format (e.g. FLAC), not just youtube
+            if self.artist is None or self.title is None:
+                raise Exception("Error: Artist and Title are required for processing a local file.")
+
             return [self.prep_single_track()]
+        else:
+            self.url = self.input_media
+            # Runs yt-dlp extract_info for input URL or artist/title search query to set var: self.extracted_info
+            # We do this first as the input URL may be a playlist
+            self.extract_info_for_online_media(input_url=self.url, input_artist=self.artist, input_title=self.title)
+
+            if self.extracted_info and "playlist_count" in self.extracted_info:
+                self.persistent_artist = self.artist
+                self.logger.info(f"Input URL is a playlist, beginning batch operation with persistent artist: {self.persistent_artist}")
+                return self.process_playlist()
+            else:
+                self.logger.info(f"Input URL is not a playlist, processing single track")
+                return [self.prep_single_track()]
