@@ -89,6 +89,16 @@ class KaraokeFinalise:
 
         self.youtube_url_prefix = "https://www.youtube.com/watch?v="
 
+        self.youtube_url = None
+        self.brand_code = None
+        self.new_brand_code_dir_path = None
+
+    def prompt_user_confirmation(self, prompt_message, exit_message):
+        response = input(f"{prompt_message} y/[n]").strip().lower()
+        if response != "y":
+            self.logger.error(exit_message)
+            raise Exception(exit_message)
+
     def validate_input_parameters_for_features(self):
         # Enable youtube upload if client secrets file is provided and is valid JSON
         if self.youtube_client_secrets_file is not None and self.youtube_description_file is not None:
@@ -151,9 +161,10 @@ class KaraokeFinalise:
         self.logger.info(f" Public share copy: {self.public_share_copy_enabled}")
         self.logger.info(f" Public share rclone: {self.public_share_rclone_enabled}")
 
-        response = input(f"Confirm features enabled for finalisation? y/[n]: ").strip().lower()
-        if response != "y":
-            raise Exception(f"Exiting without processing due to user response to features prompt: {response}")
+        self.prompt_user_confirmation(
+            f"Confirm features enabled log messages above match your expectations for finalisation?",
+            "Refusing to proceed without user confirmation they're happy with enabled features.",
+        )
 
     def authenticate_youtube(self):
         """Authenticate and return a YouTube service object."""
@@ -217,17 +228,15 @@ class KaraokeFinalise:
             request = youtube.videos().insert(part="snippet,status", body=body, media_body=media_file)
             response = request.execute()
 
-            video_id = response.get("id")
-            youtube_url = f"{self.youtube_url_prefix}{video_id}"
-            self.logger.info(f"Uploaded video to YouTube: {youtube_url}")
+            self.youtube_video_id = response.get("id")
+            self.youtube_url = f"{self.youtube_url_prefix}{self.youtube_video_id}"
+            self.logger.info(f"Uploaded video to YouTube: {self.youtube_url}")
 
             # Uploading the thumbnail
             if input_files["title_jpg"]:
                 media_thumbnail = MediaFileUpload(input_files["title_jpg"], mimetype="image/jpeg")
-                youtube.thumbnails().set(videoId=video_id, media_body=media_thumbnail).execute()
-                self.logger.info(f"Uploaded thumbnail for video ID {video_id}")
-
-            return video_id
+                youtube.thumbnails().set(videoId=self.youtube_video_id, media_body=media_thumbnail).execute()
+                self.logger.info(f"Uploaded thumbnail for video ID {self.youtube_video_id}")
 
     def get_next_brand_code(self):
         """
@@ -267,13 +276,15 @@ class KaraokeFinalise:
             if karaoke_files:
                 for file in karaoke_files:
                     new_file = file.replace(self.suffixes["karaoke_mov"], self.suffixes["with_vocals_mov"])
-                    response = input(f"Found '{file}' but no '(With Vocals)', rename to use as vocal input? [y]/n: ").strip().lower()
-                    if response == "" or response == "y":
-                        os.rename(file, new_file)
-                        self.logger.info(f"Renamed '{file}' to '{new_file}'")
-                        return new_file
-                    else:
-                        self.logger.info("User chose not to rename the file. Skipping.")
+
+                    self.prompt_user_confirmation(
+                        f"Found '{file}' but no '(With Vocals)', rename to {new_file} for vocal input?",
+                        "Unable to proceed without With Vocals file or user confirmation of rename.",
+                    )
+
+                    os.rename(file, new_file)
+                    self.logger.info(f"Renamed '{file}' to '{new_file}'")
+                    return new_file
             else:
                 raise Exception("No suitable files found for processing.")
         else:
@@ -358,15 +369,19 @@ class KaraokeFinalise:
 
     def remux_and_encode_output_video_files(self, with_vocals_file, input_files, output_files):
         # Check if output files already exists, if so, prompt user to overwrite or cancel
+
+        # User confirmation before overwriting an existing file
         if os.path.isfile(output_files["karaoke_mov_file"]):
-            response = input(f"Found existing Karaoke MOV file: {output_files['karaoke_mov_file']}, overwrite? y/[n]: ").strip().lower()
-            if response != "y":
-                raise Exception(f"Exiting without processing due to existing Karaoke MOV file: {output_files['karaoke_mov_file']}")
+            self.prompt_user_confirmation(
+                f"Karaoke MOV file already exists: {output_files['karaoke_mov_file']}. Overwrite?",
+                "Refusing to overwrite existing Karaoke MOV file.",
+            )
 
         if os.path.isfile(output_files["final_mp4_file"]):
-            response = input(f"Found existing Final MP4 file: {output_files['final_mp4_file']}, overwrite? y/[n]: ").strip().lower()
-            if response != "y":
-                raise Exception(f"Exiting without processing due to existing Final MP4 file: {output_files['final_mp4_file']}")
+            self.prompt_user_confirmation(
+                f"Found existing Final MP4 file: {output_files['final_mp4_file']}. Overwrite?",
+                "Refusing to overwrite existing Final MP4 file.",
+            )
 
         # Remux the synced video with the instrumental audio to produce an instrumental karaoke MOV file
         remux_ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" -vn -i "{input_files["instrumental_audio"]}" -c:v copy -c:a aac "{output_files["karaoke_mov_file"]}"'
@@ -389,9 +404,10 @@ class KaraokeFinalise:
                 os.remove(tmp_file_list.name)
 
         # Prompt user to check final MP4 file before proceeding
-        response = input(f"Final MP4 file created: {output_files['final_mp4_file']}, please check it! Proceed? y/[n]: ").strip().lower()
-        if response != "y":
-            raise Exception(f"Exiting without processing due to user response to final MP4 prompt: {response}")
+        self.prompt_user_confirmation(
+            f"Final MP4 file created: {output_files['final_mp4_file']}, please check it! Proceed?",
+            "Refusing to proceed without user confirmation they're happy with the Final MP4.",
+        )
 
     def create_cdg_zip_file(self, input_files, output_files):
         # Check if CDG file already exists, if so, throw exception
@@ -413,17 +429,22 @@ class KaraokeFinalise:
             self.logger.info(f"CDG ZIP file created: {output_files['final_zip_file']}")
 
     def move_files_to_brand_code_folder(self, brand_code, artist, title, output_files):
-        new_brand_code_dir_path = os.path.join(self.organised_dir, f"{brand_code} - {artist} - {title}")
+        self.new_brand_code_dir_path = os.path.join(self.organised_dir, f"{brand_code} - {artist} - {title}")
+
+        self.prompt_user_confirmation(
+            f"Move files to new brand-prefixed directory {self.new_brand_code_dir_path} and delete current dir?",
+            "Refusing to move files without user confirmation of move.",
+        )
 
         if self.dry_run:
-            self.logger.info(f"DRY RUN: Would move files to new directory: {new_brand_code_dir_path}")
+            self.logger.info(f"DRY RUN: Would move files to new directory: {self.new_brand_code_dir_path}")
         else:
-            os.makedirs(new_brand_code_dir_path, exist_ok=True)
-            for file in output_files.values():
-                shutil.move(file, new_brand_code_dir_path)
-            self.logger.info(f"Moved files to: {new_brand_code_dir_path}")
+            for file in os.listdir("."):
+                src_file = os.path.join(".", file)
+                dest_file = os.path.join(self.new_brand_code_dir_path, file)
+                shutil.move(src_file, dest_file)
 
-        return new_brand_code_dir_path
+            self.logger.info(f"Moved all files to: {self.new_brand_code_dir_path}")
 
     def copy_final_files_to_public_share_dirs(self, brand_code, base_name, output_files):
         # Validate public_share_dir is a valid folder with MP4 and CDG subdirectories
@@ -458,14 +479,32 @@ class KaraokeFinalise:
         rclone_cmd = ["rclone", "sync", "-v", self.public_share_dir, self.rclone_destination]
         self.execute_command(rclone_cmd, "Syncing with cloud destination")
 
-    def post_discord_notification(self, youtube_url):
+    def post_discord_notification(self):
         if self.dry_run:
             self.logger.info(
-                f"DRY RUN: Would post Discord notification for youtube URL {youtube_url} using webhook URL: {self.discord_webhook_url}"
+                f"DRY RUN: Would post Discord notification for youtube URL {self.youtube_url} using webhook URL: {self.discord_webhook_url}"
             )
         else:
-            discord_message = f"New upload: {youtube_url}"
+            discord_message = f"New upload: {self.youtube_url}"
             self.post_discord_message(discord_message, self.discord_webhook_url)
+
+    def execute_optional_features(self, artist, title, base_name, input_files, output_files):
+        if self.youtube_upload_enabled:
+            self.upload_final_mp4_to_youtube_with_title_thumbnail(artist, title, input_files, output_files)
+
+            if self.discord_notication_enabled:
+                self.post_discord_notification(self.youtube_url)
+
+        if self.folder_organisation_enabled:
+            self.brand_code = self.get_next_brand_code()
+
+            if self.public_share_copy_enabled:
+                self.copy_final_files_to_public_share_dirs(self.brand_code, base_name, output_files)
+
+            if self.public_share_rclone_enabled:
+                self.sync_public_share_dir_to_rclone_destination()
+
+            self.move_files_to_brand_code_folder(self.brand_code, artist, title, output_files)
 
     def process(self):
         if self.dry_run:
@@ -488,36 +527,8 @@ class KaraokeFinalise:
         output_files = self.prepare_output_filenames(base_name)
 
         self.create_cdg_zip_file(input_files, output_files)
-
         self.remux_and_encode_output_video_files(with_vocals_file, input_files, output_files)
-
-        youtube_url = None
-        if self.youtube_upload_enabled:
-            youtube_video_id = self.upload_final_mp4_to_youtube_with_title_thumbnail(artist, title, input_files, output_files)
-            youtube_url = f"{self.youtube_url_prefix}{youtube_video_id}"
-
-            if self.discord_notication_enabled:
-                self.post_discord_notification(youtube_url)
-
-        brand_code = None
-        new_brand_code_dir_path = None
-        if self.folder_organisation_enabled:
-            brand_code = self.get_next_brand_code()
-
-            if self.public_share_copy_enabled:
-                self.copy_final_files_to_public_share_dirs(brand_code, base_name, output_files)
-
-            if self.public_share_rclone_enabled:
-                self.sync_public_share_dir_to_rclone_destination()
-
-            # Prompt user if they want to move files to a new brand-prefixed directory
-            response = (
-                input(f"Move files to new brand-prefixed directory {new_brand_code_dir_path} and delete current dir? [y]/n: ")
-                .strip()
-                .lower()
-            )
-            if response == "y" or response == "":
-                new_brand_code_dir_path = self.move_files_to_brand_code_folder(brand_code, artist, title, output_files)
+        self.execute_optional_features(artist, title, base_name, input_files, output_files)
 
         return {
             "artist": artist,
@@ -526,7 +537,7 @@ class KaraokeFinalise:
             "video_with_instrumental": output_files["karaoke_mov_file"],
             "final_video": output_files["final_mp4_file"],
             "final_zip": output_files["final_zip_file"],
-            "youtube_url": youtube_url,
-            "brand_code": brand_code,
-            "new_brand_code_dir_path": new_brand_code_dir_path,
+            "youtube_url": self.youtube_url,
+            "brand_code": self.brand_code,
+            "new_brand_code_dir_path": self.new_brand_code_dir_path,
         }
