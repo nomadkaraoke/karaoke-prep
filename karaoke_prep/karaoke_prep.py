@@ -539,15 +539,16 @@ class KaraokePrep:
             "processed_lyrics": None,
         }
 
+        processed_track["input_media"] = None
+        processed_track["input_still_image"] = None
+        processed_track["input_audio_wav"] = None
+
         if os.path.isfile(self.input_media):
             input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
             input_wav_glob = glob.glob(input_wav_filename_pattern)
 
-            processed_track["input_audio_wav"] = None
-
             if input_wav_glob:
                 processed_track["input_audio_wav"] = input_wav_glob[0]
-
                 self.logger.info(f"Input media WAV file already exists, skipping conversion: {processed_track['input_audio_wav']}")
             else:
                 output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor})")
@@ -568,10 +569,6 @@ class KaraokePrep:
 
             input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
             input_wav_glob = glob.glob(input_wav_filename_pattern)
-
-            processed_track["input_media"] = None
-            processed_track["input_still_image"] = None
-            processed_track["input_audio_wav"] = None
 
             if input_webm_glob and input_png_glob and input_wav_glob:
                 processed_track["input_media"] = input_webm_glob[0]
