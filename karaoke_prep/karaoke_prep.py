@@ -220,7 +220,7 @@ class KaraokePrep:
 
     def convert_to_wav(self, input_filename, output_filename_no_extension):
         output_filename = output_filename_no_extension + ".wav"
-        self.logger.info(f"Converting input video to audio WAV file")
+        self.logger.info(f"Converting input media to audio WAV file")
         ffmpeg_command = f'{self.ffmpeg_base_command} -n -i "{input_filename}" "{output_filename}"'
         self.logger.debug(f"Running command: {ffmpeg_command}")
         os.system(ffmpeg_command)

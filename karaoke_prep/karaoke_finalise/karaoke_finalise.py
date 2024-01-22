@@ -268,6 +268,14 @@ class KaraokeFinalise:
         else:
             return False
 
+    def truncate_to_nearest_word(self, title, max_length):
+        if len(title) <= max_length:
+            return title
+        truncated_title = title[:max_length].rsplit(" ", 1)[0]
+        if len(truncated_title) < max_length:
+            truncated_title += " ..."
+        return truncated_title
+
     def upload_final_mp4_to_youtube_with_title_thumbnail(self, artist, title, input_files, output_files):
         self.logger.info(f"Uploading final MP4 to YouTube with title thumbnail...")
         if self.dry_run:
@@ -276,6 +284,10 @@ class KaraokeFinalise:
             )
         else:
             youtube_title = f"{artist} - {title} (Karaoke)"
+
+            # Truncate title to the nearest whole word and add ellipsis if needed
+            max_length = 95
+            youtube_title = self.truncate_to_nearest_word(youtube_title, max_length)
 
             if self.check_if_video_title_exists_on_youtube_channel(youtube_title):
                 self.logger.warning(f"Video already exists on YouTube, skipping upload: {self.youtube_url}")
@@ -396,6 +408,9 @@ class KaraokeFinalise:
 
         if len(instrumental_audio_files) == 1:
             return instrumental_audio_files[0]
+
+        # TODO: If there are FLAC and MP3 versions of the same instrumental, only show the FLAC options
+        # TODO: Sort the remaining instrumental options alphabetically so they're always consistent, for convenient 1/2 choice
 
         self.logger.info(f"Found multiple files containing {search_string}:")
         for i, file in enumerate(instrumental_audio_files):
