@@ -448,10 +448,14 @@ class KaraokeFinalise:
 
         tmp_file_list = None
         try:
-            # Create a temporary file
+            # Create a temporary file with the file paths for ffmpeg concat
             tmp_file_list = tempfile.NamedTemporaryFile(mode="w+", delete=False, dir="/tmp", suffix=".txt")
-            tmp_file_list.write(f"file '{os.path.abspath(input_files['title_mov'])}'\n")
-            tmp_file_list.write(f"file '{os.path.abspath(output_files['karaoke_mov'])}'\n")
+
+            title_mov_path = os.path.abspath(input_files["title_mov"]).replace("'", "'\\''")
+            karaoke_mov_path = os.path.abspath(output_files["karaoke_mov"]).replace("'", "'\\''")
+
+            tmp_file_list.write(f"file '{title_mov_path}'\n")
+            tmp_file_list.write(f"file '{karaoke_mov_path}'\n")
             tmp_file_list.flush()
 
             # Join the title video and the karaoke video to produce the final MP4
