@@ -2,6 +2,7 @@
 import argparse
 import logging
 import pkg_resources
+import os
 from karaoke_prep.karaoke_finalise import KaraokeFinalise
 
 
@@ -33,15 +34,9 @@ def main():
     )
 
     parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Optional: Force processing even if final output file exists (default: disabled). Example: --force",
-    )
-
-    parser.add_argument(
         "--model_name",
-        default="UVR_MDXNET_KARA_2",
-        help="Optional: model name to be used for separation (default: %(default)s). Example: --model_name=UVR-MDX-NET-Inst_HQ_3",
+        default=None,
+        help="Optional: specific model name to be used for separation (default: interactive prompt). Example: --model_name=UVR-MDX-NET-Inst_HQ_3",
     )
 
     parser.add_argument(
@@ -57,9 +52,9 @@ def main():
     )
 
     parser.add_argument(
-        "--target_dir",
+        "--organised_dir",
         default=None,
-        help="Optional: Target directory where the processed folder will be moved after finalisation. Example: --target_dir='/path/to/Tracks-Organized'",
+        help="Optional: Target directory where the processed folder will be moved after finalisation. Example: --organised_dir='/path/to/Tracks-Organized'",
     )
 
     parser.add_argument(
@@ -97,31 +92,29 @@ def main():
         log_formatter=log_formatter,
         log_level=log_level,
         dry_run=args.dry_run,
-        force=args.force,
         model_name=args.model_name,
         instrumental_format=args.instrumental_format,
         brand_prefix=args.brand_prefix,
-        target_dir=args.target_dir,
+        organised_dir=args.organised_dir,
         public_share_dir=args.public_share_dir,
         youtube_client_secrets_file=args.youtube_client_secrets_file,
         youtube_description_file=args.youtube_description_file,
         rclone_destination=args.rclone_destination,
+        discord_webhook_url=os.environ.get("DISCORD_WEBHOOK_URL"),
     )
 
-    tracks = kfinalise.process()
-
-    if len(tracks) == 0:
-        logger.error(f"No tracks found to process.")
-        return
+    track = kfinalise.process()
 
     logger.info(f"Karaoke finalisation processing complete! Output files:")
-    for track in tracks:
-        logger.info(f"")
-        logger.info(f"Track: {track['artist']} - {track['title']}")
-        logger.info(f" Video With Vocals: {track['video_with_vocals']}")
-        logger.info(f" Video With Instrumental: {track['video_with_instrumental']}")
-        logger.info(f" Final CDG+MP3 ZIP: {track['final_video']}")
-        logger.info(f" Final Video with Title: {track['final_zip']}")
+    logger.info(f"")
+    logger.info(f"Track: {track['artist']} - {track['title']}")
+    logger.info(f" Video With Vocals: {track['video_with_vocals']}")
+    logger.info(f" Video With Instrumental: {track['video_with_instrumental']}")
+    logger.info(f" Final CDG+MP3 ZIP: {track['final_video']}")
+    logger.info(f" Final Video with Title: {track['final_zip']}")
+    logger.info(f" YouTube URL: {track['youtube_url']}")
+    logger.info(f" Brand Code: {track['brand_code']}")
+    logger.info(f" New Brand Code Directory: {track['new_brand_code_dir_path']}")
 
 
 if __name__ == "__main__":
