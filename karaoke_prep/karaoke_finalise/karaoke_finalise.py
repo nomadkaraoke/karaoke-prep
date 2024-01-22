@@ -93,13 +93,48 @@ class KaraokeFinalise:
         self.brand_code = None
         self.new_brand_code_dir_path = None
 
-    def prompt_user_confirmation(self, prompt_message, exit_message):
-        response = input(f"{prompt_message} y/[n]").strip().lower()
-        if response != "y":
+    def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
+        self.logger.info(f"Checking required input files exist...")
+
+        input_files = {
+            "title_mov": f"{base_name}{self.suffixes['title_mov']}",
+            "title_jpg": f"{base_name}{self.suffixes['title_jpg']}",
+            "karaoke_cdg": f"{base_name}{self.suffixes['karaoke_cdg']}",
+            "karaoke_mp3": f"{base_name}{self.suffixes['karaoke_mp3']}",
+            "instrumental_audio": instrumental_audio_file,
+            "with_vocals_mov": with_vocals_file,
+        }
+
+        for key, file_path in input_files.items():
+            if not os.path.isfile(file_path):
+                raise Exception(f"Input file {key} not found: {file_path}")
+
+            self.logger.info(f" Input file {key} found: {file_path}")
+
+        return input_files
+
+    def prepare_output_filenames(self, base_name):
+        return {
+            "karaoke_mov": f"{base_name}{self.suffixes['karaoke_mov']}",
+            "final_karaoke_mp4": f"{base_name}{self.suffixes['final_karaoke_mp4']}",
+            "final_karaoke_zip": f"{base_name}{self.suffixes['final_karaoke_zip']}",
+        }
+
+    def prompt_user_confirmation(self, prompt_message, exit_message, allow_empty=False):
+        options_string = "[y]/n" if allow_empty else "y/[n]"
+        accept_responses = ["y", "yes"]
+        if allow_empty:
+            accept_responses.append("")
+
+        print()
+        response = input(f"{prompt_message} {options_string} ").strip().lower()
+        if response not in accept_responses:
             self.logger.error(exit_message)
             raise Exception(exit_message)
 
     def validate_input_parameters_for_features(self):
+        self.logger.info(f"Validating input parameters for enabled features...")
+
         # Enable youtube upload if client secrets file is provided and is valid JSON
         if self.youtube_client_secrets_file is not None and self.youtube_description_file is not None:
             if not os.path.isfile(self.youtube_client_secrets_file):
@@ -164,6 +199,7 @@ class KaraokeFinalise:
         self.prompt_user_confirmation(
             f"Confirm features enabled log messages above match your expectations for finalisation?",
             "Refusing to proceed without user confirmation they're happy with enabled features.",
+            allow_empty=True,
         )
 
     def authenticate_youtube(self):
@@ -193,9 +229,10 @@ class KaraokeFinalise:
         return build("youtube", "v3", credentials=credentials)
 
     def upload_final_mp4_to_youtube_with_title_thumbnail(self, artist, title, input_files, output_files):
+        self.logger.info(f"Uploading final MP4 to YouTube with title thumbnail...")
         if self.dry_run:
             self.logger.info(
-                f'DRY RUN: Would upload {output_files["final_mp4_file"]} to YouTube with thumbnail {input_files["title_jpg"]} using client secrets file: {self.youtube_client_secrets_file}'
+                f'DRY RUN: Would upload {output_files["final_karaoke_mp4"]} to YouTube with thumbnail {input_files["title_jpg"]} using client secrets file: {self.youtube_client_secrets_file}'
             )
             return "dummy_video_id"
         else:
@@ -222,7 +259,7 @@ class KaraokeFinalise:
             }
 
             # Use MediaFileUpload to handle the video file
-            media_file = MediaFileUpload(output_files["final_mp4_file"], mimetype="video/mp4", resumable=True)
+            media_file = MediaFileUpload(output_files["final_karaoke_mp4"], mimetype="video/mp4", resumable=True)
 
             # Call the API's videos.insert method to create and upload the video.
             request = youtube.videos().insert(part="snippet,status", body=body, media_body=media_file)
@@ -267,8 +304,8 @@ class KaraokeFinalise:
         response.raise_for_status()  # This will raise an exception if the request failed
         self.logger.info("Message posted to Discord")
 
-    def check_and_rename_with_vocals_file(self):
-        self.logger.info("Searching for files in current directory ending with (With Vocals).mov")
+    def find_with_vocals_mov_file(self):
+        self.logger.info("Finding input file in current directory ending (With Vocals).mov")
 
         with_vocals_files = [f for f in os.listdir(".") if self.suffixes["with_vocals_mov"] in f]
         if not with_vocals_files:
@@ -280,6 +317,7 @@ class KaraokeFinalise:
                     self.prompt_user_confirmation(
                         f"Found '{file}' but no '(With Vocals)', rename to {new_file} for vocal input?",
                         "Unable to proceed without With Vocals file or user confirmation of rename.",
+                        allow_empty=True,
                     )
 
                     os.rename(file, new_file)
@@ -291,6 +329,8 @@ class KaraokeFinalise:
             return with_vocals_files[0]  # Assuming only one such file is expected
 
     def choose_instrumental_audio_file(self, base_name):
+        self.logger.info(f"Choosing instrumental audio file to use as karaoke audio...")
+
         # If model name and instrumental format are provided, check for instrumental file with suffix and use it
         if self.model_name is not None and self.instrumental_format is not None:
             self.logger.debug(f"Model name and instrumental format provided, checking instrumental file exists")
@@ -317,6 +357,7 @@ class KaraokeFinalise:
         for i, file in enumerate(instrumental_audio_files):
             self.logger.info(f" {i+1}: {file}")
 
+        print()
         response = input(f"Choose instrumental audio file to use as karaoke audio: [1]/{len(instrumental_audio_files)}: ").strip().lower()
         if response == "":
             response = "1"
@@ -332,32 +373,11 @@ class KaraokeFinalise:
         return instrumental_audio_files[response - 1]
 
     def get_names_from_withvocals(self, with_vocals_file):
+        self.logger.info(f"Getting artist and title from {with_vocals_file}")
+
         base_name = with_vocals_file.replace(self.suffixes["with_vocals_mov"], "")
         artist, title = base_name.split(" - ", 1)
         return base_name, artist, title
-
-    def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
-        input_files = {
-            "title_mov": f"{base_name} {self.suffixes['title_mov']}",
-            "title_jpg": f"{base_name} {self.suffixes['title_jpg']}",
-            "karaoke_cdg": f"{base_name} {self.suffixes['karaoke_cdg']}",
-            "karaoke_mp3": f"{base_name} {self.suffixes['karaoke_mp3']}",
-            "instrumental_audio": instrumental_audio_file,
-            "with_vocals_mov": with_vocals_file,
-        }
-
-        for key, file_path in input_files.items():
-            if not os.path.isfile(file_path):
-                raise Exception(f"Required input file not found: {key} ({file_path})")
-
-        return input_files
-
-    def prepare_output_filenames(self, base_name):
-        return {
-            "karaoke_mov": f"{base_name} {self.suffixes['karaoke_mov']}",
-            "final_karaoke_mp4": f"{base_name} {self.suffixes['final_karaoke_mp4']}",
-            "final_karaoke_zip": f"{base_name} {self.suffixes['final_karaoke_zip']}",
-        }
 
     def execute_command(self, command, description):
         self.logger.info(description)
@@ -368,35 +388,35 @@ class KaraokeFinalise:
             os.system(command)
 
     def remux_and_encode_output_video_files(self, with_vocals_file, input_files, output_files):
-        # Check if output files already exists, if so, prompt user to overwrite or cancel
+        self.logger.info(f"Remuxing and encoding output video files...")
 
         # User confirmation before overwriting an existing file
-        if os.path.isfile(output_files["karaoke_mov_file"]):
+        if os.path.isfile(output_files["karaoke_mov"]):
             self.prompt_user_confirmation(
-                f"Karaoke MOV file already exists: {output_files['karaoke_mov_file']}. Overwrite?",
+                f"Karaoke MOV file already exists: {output_files['karaoke_mov']}. Overwrite?",
                 "Refusing to overwrite existing Karaoke MOV file.",
             )
 
-        if os.path.isfile(output_files["final_mp4_file"]):
+        if os.path.isfile(output_files["final_karaoke_mp4"]):
             self.prompt_user_confirmation(
-                f"Found existing Final MP4 file: {output_files['final_mp4_file']}. Overwrite?",
+                f"Found existing Final MP4 file: {output_files['final_karaoke_mp4']}. Overwrite?",
                 "Refusing to overwrite existing Final MP4 file.",
             )
 
         # Remux the synced video with the instrumental audio to produce an instrumental karaoke MOV file
-        remux_ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" -vn -i "{input_files["instrumental_audio"]}" -c:v copy -c:a aac "{output_files["karaoke_mov_file"]}"'
+        remux_ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" -vn -i "{input_files["instrumental_audio"]}" -c:v copy -c:a aac "{output_files["karaoke_mov"]}"'
         self.execute_command(remux_ffmpeg_command, "Remuxing video with instrumental audio")
 
         tmp_file_list = None
         try:
             # Create a temporary file
             tmp_file_list = tempfile.NamedTemporaryFile(mode="w+", delete=False, dir="/tmp", suffix=".txt")
-            tmp_file_list.write(f"file '{os.path.abspath(input_files['title_file'])}'\n")
-            tmp_file_list.write(f"file '{os.path.abspath(output_files['karaoke_mov_file'])}'\n")
+            tmp_file_list.write(f"file '{os.path.abspath(input_files['title_mov'])}'\n")
+            tmp_file_list.write(f"file '{os.path.abspath(output_files['karaoke_mov'])}'\n")
             tmp_file_list.flush()
 
             # Join the title video and the karaoke video to produce the final MP4
-            join_ffmpeg_command = f'{self.ffmpeg_base_command} -f concat -safe 0 -i "{tmp_file_list.name}" -vf settb=AVTB,setpts=N/30/TB,fps=30 "{output_files["final_mp4_file"]}"'
+            join_ffmpeg_command = f'{self.ffmpeg_base_command} -f concat -safe 0 -i "{tmp_file_list.name}" -vf settb=AVTB,setpts=N/30/TB,fps=30 "{output_files["final_karaoke_mp4"]}"'
             self.execute_command(join_ffmpeg_command, "Joining title and instrumental videos")
         finally:
             # Ensure the temporary file is deleted
@@ -405,35 +425,41 @@ class KaraokeFinalise:
 
         # Prompt user to check final MP4 file before proceeding
         self.prompt_user_confirmation(
-            f"Final MP4 file created: {output_files['final_mp4_file']}, please check it! Proceed?",
+            f"Final MP4 file created: {output_files['final_karaoke_mp4']}, please check it! Proceed?",
             "Refusing to proceed without user confirmation they're happy with the Final MP4.",
+            allow_empty=True,
         )
 
     def create_cdg_zip_file(self, input_files, output_files):
+        self.logger.info(f"Creating CDG ZIP file...")
+
         # Check if CDG file already exists, if so, throw exception
-        if os.path.isfile(output_files["final_zip_file"]):
-            raise Exception(f"Final CDG ZIP file already exists: {output_files['final_zip_file']}")
+        if os.path.isfile(output_files["final_karaoke_zip"]):
+            raise Exception(f"Final CDG ZIP file already exists: {output_files['final_karaoke_zip']}")
 
         # Create the ZIP file containing the MP3 and CDG files
         if self.dry_run:
-            self.logger.info(f"DRY RUN: Would create CDG ZIP file: {output_files['final_zip_file']}")
+            self.logger.info(f"DRY RUN: Would create CDG ZIP file: {output_files['final_karaoke_zip']}")
         else:
             self.logger.info(f"Creating ZIP file containing {input_files['karaoke_mp3']} and {input_files['karaoke_cdg']}")
-            with zipfile.ZipFile(output_files["final_zip_file"], "w") as zipf:
+            with zipfile.ZipFile(output_files["final_karaoke_zip"], "w") as zipf:
                 zipf.write(input_files["karaoke_mp3"], os.path.basename(input_files["karaoke_mp3"]))
                 zipf.write(input_files["karaoke_cdg"], os.path.basename(input_files["karaoke_cdg"]))
 
-            if not os.path.isfile(output_files["final_zip_file"]):
-                raise Exception(f"Failed to create CDG ZIP file: {output_files['final_zip_file']}")
+            if not os.path.isfile(output_files["final_karaoke_zip"]):
+                raise Exception(f"Failed to create CDG ZIP file: {output_files['final_karaoke_zip']}")
 
-            self.logger.info(f"CDG ZIP file created: {output_files['final_zip_file']}")
+            self.logger.info(f"CDG ZIP file created: {output_files['final_karaoke_zip']}")
 
     def move_files_to_brand_code_folder(self, brand_code, artist, title, output_files):
+        self.logger.info(f"Moving files to new brand-prefixed directory...")
+
         self.new_brand_code_dir_path = os.path.join(self.organised_dir, f"{brand_code} - {artist} - {title}")
 
         self.prompt_user_confirmation(
             f"Move files to new brand-prefixed directory {self.new_brand_code_dir_path} and delete current dir?",
             "Refusing to move files without user confirmation of move.",
+            allow_empty=True,
         )
 
         if self.dry_run:
@@ -447,6 +473,8 @@ class KaraokeFinalise:
             self.logger.info(f"Moved all files to: {self.new_brand_code_dir_path}")
 
     def copy_final_files_to_public_share_dirs(self, brand_code, base_name, output_files):
+        self.logger.info(f"Copying final MP4 and ZIP to public share directory...")
+
         # Validate public_share_dir is a valid folder with MP4 and CDG subdirectories
         if not os.path.isdir(self.public_share_dir):
             raise Exception(f"Public share directory does not exist: {self.public_share_dir}")
@@ -471,15 +499,19 @@ class KaraokeFinalise:
         if self.dry_run:
             self.logger.info(f"DRY RUN: Would copy final MP4 and ZIP to {dest_mp4_file} + .cdg")
         else:
-            shutil.copy2(output_files["final_mp4_file"], dest_mp4_file)
-            shutil.copy2(output_files["final_zip_file"], dest_zip_file)
+            shutil.copy2(output_files["final_karaoke_mp4"], dest_mp4_file)
+            shutil.copy2(output_files["final_karaoke_zip"], dest_zip_file)
             self.logger.info(f"Copied final files to public share directory")
 
     def sync_public_share_dir_to_rclone_destination(self):
+        self.logger.info(f"Syncing public share directory to rclone destination...")
+
         rclone_cmd = ["rclone", "sync", "-v", self.public_share_dir, self.rclone_destination]
         self.execute_command(rclone_cmd, "Syncing with cloud destination")
 
     def post_discord_notification(self):
+        self.logger.info(f"Posting Discord notification...")
+
         if self.dry_run:
             self.logger.info(
                 f"DRY RUN: Would post Discord notification for youtube URL {self.youtube_url} using webhook URL: {self.discord_webhook_url}"
@@ -489,11 +521,13 @@ class KaraokeFinalise:
             self.post_discord_message(discord_message, self.discord_webhook_url)
 
     def execute_optional_features(self, artist, title, base_name, input_files, output_files):
+        self.logger.info(f"Executing optional features...")
+
         if self.youtube_upload_enabled:
             self.upload_final_mp4_to_youtube_with_title_thumbnail(artist, title, input_files, output_files)
 
             if self.discord_notication_enabled:
-                self.post_discord_notification(self.youtube_url)
+                self.post_discord_notification()
 
         if self.folder_organisation_enabled:
             self.brand_code = self.get_next_brand_code()
@@ -513,17 +547,12 @@ class KaraokeFinalise:
         # Check required input files and parameters exist, get user to confirm features before proceeding
         self.validate_input_parameters_for_features()
 
-        with_vocals_file = self.check_and_rename_with_vocals_file()
+        with_vocals_file = self.find_with_vocals_mov_file()
         base_name, artist, title = self.get_names_from_withvocals(with_vocals_file)
 
         instrumental_audio_file = self.choose_instrumental_audio_file(base_name)
 
         input_files = self.check_input_files_exist(base_name, with_vocals_file, instrumental_audio_file)
-
-        self.logger.info(f"All input files found for {base_name}:")
-        for file in input_files.items():
-            self.logger.debug(f" {file}")
-
         output_files = self.prepare_output_filenames(base_name)
 
         self.create_cdg_zip_file(input_files, output_files)
@@ -534,9 +563,9 @@ class KaraokeFinalise:
             "artist": artist,
             "title": title,
             "video_with_vocals": with_vocals_file,
-            "video_with_instrumental": output_files["karaoke_mov_file"],
-            "final_video": output_files["final_mp4_file"],
-            "final_zip": output_files["final_zip_file"],
+            "video_with_instrumental": output_files["karaoke_mov"],
+            "final_video": output_files["final_karaoke_mp4"],
+            "final_zip": output_files["final_karaoke_zip"],
             "youtube_url": self.youtube_url,
             "brand_code": self.brand_code,
             "new_brand_code_dir_path": self.new_brand_code_dir_path,

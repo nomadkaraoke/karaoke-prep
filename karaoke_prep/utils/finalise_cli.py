@@ -3,6 +3,7 @@ import argparse
 import logging
 import pkg_resources
 import os
+import sys
 from karaoke_prep.karaoke_finalise import KaraokeFinalise
 
 
@@ -29,8 +30,9 @@ def main():
 
     parser.add_argument(
         "--dry_run",
+        "-n",
         action="store_true",
-        help="Optional: Enable dry run mode to print actions without executing them (default: disabled). Example: --dry_run",
+        help="Optional: Enable dry run mode to print actions without executing them (default: disabled). Example: -n or --dry_run",
     )
 
     parser.add_argument(
@@ -86,7 +88,7 @@ def main():
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
 
-    logger.info(f"KaraokeFinalise beginning with model_name: {args.model_name}")
+    logger.info(f"KaraokeFinalise CLI beginning initialisation...")
 
     kfinalise = KaraokeFinalise(
         log_formatter=log_formatter,
@@ -103,7 +105,11 @@ def main():
         discord_webhook_url=os.environ.get("DISCORD_WEBHOOK_URL"),
     )
 
-    track = kfinalise.process()
+    try:
+        track = kfinalise.process()
+    except Exception as e:
+        logger.error(f"An error occurred during finalisation, see stack trace below: {str(e)}")
+        raise e
 
     logger.info(f"Karaoke finalisation processing complete! Output files:")
     logger.info(f"")
