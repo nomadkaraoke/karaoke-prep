@@ -397,40 +397,38 @@ class KaraokeFinalise:
     def choose_instrumental_audio_file(self, base_name):
         self.logger.info(f"Choosing instrumental audio file to use as karaoke audio...")
 
-        # If model name and instrumental format are provided, check for instrumental file with suffix and use it
-        if self.model_name is not None and self.instrumental_format is not None:
-            self.logger.debug(f"Model name and instrumental format provided, checking instrumental file exists")
-            instrumental_suffix = f" (Instrumental {self.model_name}).{self.instrumental_format}"
-
-            if any(instrumental_suffix in f for f in os.listdir(".")):
-                self.logger.debug(f"Instrumental file found: {instrumental_suffix}")
-                return f"{base_name} {instrumental_suffix}"
-            else:
-                raise Exception(f"Instrumental file not found with suffix: {instrumental_suffix}")
-
         search_string = " (Instrumental "
         self.logger.info(f"Searching for files in current directory containing {search_string}")
 
-        instrumental_audio_files = [f for f in os.listdir(".") if search_string in f]
-        if not instrumental_audio_files:
-            raise Exception(f"Could not find any files containing {search_string}, exiting.")
+        all_instrumental_files = [f for f in os.listdir(".") if search_string in f]
+        flac_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.endswith(".flac"))
+        mp3_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.endswith(".mp3"))
 
-        if len(instrumental_audio_files) == 1:
-            return instrumental_audio_files[0]
+        self.logger.debug(f"FLAC files found: {flac_files}")
+        self.logger.debug(f"MP3 files found: {mp3_files}")
 
-        # Filter out MP3 files if FLAC files are available
-        flac_files = set(f.replace(".mp3", ".flac") for f in instrumental_audio_files if f.endswith(".mp3"))
-        instrumental_audio_files = [f for f in instrumental_audio_files if f.endswith(".flac") or f not in flac_files]
+        # Filter out MP3 files if their FLAC counterpart exists
+        filtered_files = [
+            f for f in all_instrumental_files if f.endswith(".flac") or (f.endswith(".mp3") and f.rsplit(".", 1)[0] not in flac_files)
+        ]
+
+        self.logger.debug(f"Filtered instrumental files: {filtered_files}")
+
+        if not filtered_files:
+            raise Exception(f"No instrumental audio files found containing {search_string}")
+
+        if len(filtered_files) == 1:
+            return filtered_files[0]
 
         # Sort the remaining instrumental options alphabetically
-        instrumental_audio_files.sort()
+        filtered_files.sort(reverse=True)
 
         self.logger.info(f"Found multiple files containing {search_string}:")
-        for i, file in enumerate(instrumental_audio_files):
+        for i, file in enumerate(filtered_files):
             self.logger.info(f" {i+1}: {file}")
 
         print()
-        response = input(f"Choose instrumental audio file to use as karaoke audio: [1]/{len(instrumental_audio_files)}: ").strip().lower()
+        response = input(f"Choose instrumental audio file to use as karaoke audio: [1]/{len(filtered_files)}: ").strip().lower()
         if response == "":
             response = "1"
 
@@ -439,10 +437,10 @@ class KaraokeFinalise:
         except ValueError:
             raise Exception(f"Invalid response to instrumental audio file choice prompt: {response}")
 
-        if response < 1 or response > len(instrumental_audio_files):
+        if response < 1 or response > len(filtered_files):
             raise Exception(f"Invalid response to instrumental audio file choice prompt: {response}")
 
-        return instrumental_audio_files[response - 1]
+        return filtered_files[response - 1]
 
     def get_names_from_withvocals(self, with_vocals_file):
         self.logger.info(f"Getting artist and title from {with_vocals_file}")
