@@ -311,7 +311,8 @@ class KaraokeFinalise:
             youtube_category_id = "10"  # Category ID for Music
             youtube_keywords = ["karaoke", "music", "singing", "instrumental", "lyrics", artist, title]
 
-            """Upload video to YouTube and set thumbnail."""
+            self.logger.info(f"Authenticating with YouTube...")
+            # Upload video to YouTube and set thumbnail.
             youtube = self.authenticate_youtube()
 
             body = {
@@ -328,6 +329,7 @@ class KaraokeFinalise:
             media_file = MediaFileUpload(output_files["final_karaoke_mp4"], mimetype="video/mp4", resumable=True)
 
             # Call the API's videos.insert method to create and upload the video.
+            self.logger.info(f"Uploading final MP4 to YouTube...")
             request = youtube.videos().insert(part="snippet,status", body=body, media_body=media_file)
             response = request.execute()
 
