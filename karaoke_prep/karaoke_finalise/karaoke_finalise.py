@@ -8,6 +8,7 @@ import shutil
 import re
 import requests
 import pickle
+from thefuzz import fuzz
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -253,20 +254,29 @@ class KaraokeFinalise:
         youtube = self.authenticate_youtube()
         channel_id = self.get_channel_id()
 
-        # Search for videos with the given title in the channel
-        request = youtube.search().list(part="snippet", channelId=channel_id, q=youtube_title, type="video", maxResults=1)
+        self.logger.info(f"Searching YouTube channel {channel_id} for title: {youtube_title}")
+        request = youtube.search().list(part="snippet", channelId=channel_id, q=youtube_title, type="video", maxResults=10)
         response = request.execute()
 
         # Check if any videos were found
-        if "items" in response:
-            if len(response["items"]) > 0:
-                self.logger.info(f"Found existing video on YouTube channel with title {youtube_title}")
-                self.youtube_video_id = response["items"][0]["id"]["videoId"]
-                self.youtube_url = f"{self.youtube_url_prefix}{self.youtube_video_id}"
-                self.skip_notifications = True
-                return True
-        else:
-            return False
+        if "items" in response and len(response["items"]) > 0:
+            for item in response["items"]:
+                found_title = item["snippet"]["title"]
+                similarity_score = fuzz.ratio(youtube_title.lower(), found_title.lower())
+                if similarity_score >= 70:  # 70% similarity
+                    found_id = item["id"]["videoId"]
+                    self.logger.info(
+                        f"Potential match found on YouTube channel with ID: {found_id} and title: {found_title} (similarity: {similarity_score}%)"
+                    )
+                    confirmation = input(f"Is '{found_title}' the video you are finalising? (y/n): ").strip().lower()
+                    if confirmation == "y":
+                        self.youtube_video_id = found_id
+                        self.youtube_url = f"{self.youtube_url_prefix}{self.youtube_video_id}"
+                        self.skip_notifications = True
+                        return True
+
+        self.logger.info(f"No matching video found with title: {youtube_title}")
+        return False
 
     def truncate_to_nearest_word(self, title, max_length):
         if len(title) <= max_length:
@@ -399,7 +409,6 @@ class KaraokeFinalise:
                 raise Exception(f"Instrumental file not found with suffix: {instrumental_suffix}")
 
         search_string = " (Instrumental "
-        # Check for files containing search string and prompt user to choose one, return filename
         self.logger.info(f"Searching for files in current directory containing {search_string}")
 
         instrumental_audio_files = [f for f in os.listdir(".") if search_string in f]
@@ -409,8 +418,12 @@ class KaraokeFinalise:
         if len(instrumental_audio_files) == 1:
             return instrumental_audio_files[0]
 
-        # TODO: If there are FLAC and MP3 versions of the same instrumental, only show the FLAC options
-        # TODO: Sort the remaining instrumental options alphabetically so they're always consistent, for convenient 1/2 choice
+        # Filter out MP3 files if FLAC files are available
+        flac_files = set(f.replace(".mp3", ".flac") for f in instrumental_audio_files if f.endswith(".mp3"))
+        instrumental_audio_files = [f for f in instrumental_audio_files if f.endswith(".flac") or f not in flac_files]
+
+        # Sort the remaining instrumental options alphabetically
+        instrumental_audio_files.sort()
 
         self.logger.info(f"Found multiple files containing {search_string}:")
         for i, file in enumerate(instrumental_audio_files):
@@ -597,7 +610,15 @@ class KaraokeFinalise:
         self.logger.info(f"Executing optional features...")
 
         if self.youtube_upload_enabled:
-            self.upload_final_mp4_to_youtube_with_title_thumbnail(artist, title, input_files, output_files)
+            try:
+                self.upload_final_mp4_to_youtube_with_title_thumbnail(artist, title, input_files, output_files)
+            except Exception as e:
+                self.logger.error(f"Failed to upload video to YouTube: {e}")
+                print("Please manually upload the video to YouTube.")
+                print()
+                self.youtube_video_id = input("Enter the manually uploaded YouTube video ID: ").strip()
+                self.youtube_url = f"{self.youtube_url_prefix}{self.youtube_video_id}"
+                self.logger.info(f"Using manually provided YouTube video ID: {self.youtube_video_id}")
 
             if self.discord_notication_enabled:
                 self.post_discord_notification()
