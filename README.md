@@ -21,9 +21,25 @@ This was created to make it easier for me to prepare the source audio, lyrics an
 
 ## Installation 🛠️
 
+You'll need Python version 3.9, 3.10 or 3.11 (newer versions aren't supported by PyTorch or ONNX Runtime yet).
+
 You can install Karaoke Prep using pip:
 
 `pip install karaoke-prep`
+
+You'll then also need to install a version of `audio-separator` for your hardware:
+
+- Mac with Apple Silicon: `pip install audio-separator[silicon]`
+- Linux/Windows with CUDA GPU: `pip install audio-separator[gpu]`
+- Anything else: `pip install audio-separator[cpu]`
+
+#### UnicodeEncodeError
+
+If you encounter this error: `UnicodeEncodeError: 'charmap' codec can't encode character`
+
+Try setting the Python I/O encoding in your environment: `export PYTHONIOENCODING=utf-8`
+
+#### Command-line newbie?
 
 If you aren't sure what `pip` is or how to use the command line, here are some YouTube tutorials which will probably help:
 
