@@ -33,6 +33,12 @@ You'll then also need to install a version of `audio-separator` for your hardwar
 - Linux/Windows with CUDA GPU: `pip install audio-separator[gpu]`
 - Anything else: `pip install audio-separator[cpu]`
 
+#### Install PyTorch with CUDA support
+
+If you're trying to use CUDA for GPU acceleration, you'll also need to ensure the version of PyTorch you have installed is compatible with the CUDA version you have installed.
+
+While PyTorch should get installed as a dependency of `karaoke-prep` anyway, you may need to install PyTorch for your CUDA version by running the installation command provided by the official install wizard: https://pytorch.org/get-started/locally/ 
+
 #### UnicodeEncodeError
 
 If you encounter this error: `UnicodeEncodeError: 'charmap' codec can't encode character`
