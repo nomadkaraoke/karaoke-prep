@@ -45,9 +45,10 @@ def main():
     )
 
     parser.add_argument(
-        "--model_name",
-        default="UVR_MDXNET_KARA_2",
-        help="Optional: model name to be used for separation (default: %(default)s). Example: --model_name=UVR-MDX-NET-Inst_HQ_3",
+        "--model_names",
+        nargs="+",
+        default=["UVR-MDX-NET-Inst_HQ_3.onnx", "UVR_MDXNET_KARA_2.onnx", "6_HP-Karaoke-UVR.pth"],
+        help="Optional: list of model names to be used for separation (default: %(default)s). Example: --model_names UVR_MDXNET_KARA_2.onnx UVR-MDX-NET-Inst_HQ_3.onnx",
     )
 
     # Use tempfile to get the platform-independent temp directory
@@ -174,7 +175,7 @@ def main():
         input_media=input_media,
         log_formatter=log_formatter,
         log_level=log_level,
-        model_name=args.model_name,
+        model_names=args.model_names,
         model_file_dir=args.model_file_dir,
         output_dir=args.output_dir,
         lossless_output_format=args.lossless_output_format,
@@ -203,8 +204,12 @@ def main():
         logger.info(f" Input Still Image: {track['input_still_image']}")
         logger.info(f" Lyrics: {track['lyrics']}")
         logger.info(f" Processed Lyrics: {track['processed_lyrics']}")
-        logger.info(f" Instrumental: {track['instrumental_audio']}")
-        logger.info(f" Vocals: {track['vocals_audio']}")
+
+        for model_name in args.model_names:
+            logger.info(f" Instrumental: {track['separated_audio'][model_name]['instrumental']}")
+            logger.info(f" Instrumental (Lossy): {track['separated_audio'][model_name]['instrumental_lossy']}")
+            logger.info(f" Vocals: {track['separated_audio'][model_name]['vocals']}")
+            logger.info(f" Vocals (Lossy): {track['separated_audio'][model_name]['vocals_lossy']}")
 
 
 if __name__ == "__main__":

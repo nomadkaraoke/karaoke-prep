@@ -20,8 +20,7 @@ class KaraokePrep:
         title=None,
         log_level=logging.DEBUG,
         log_formatter=None,
-        model_name="UVR_MDXNET_KARA_2",
-        model_name_2="UVR-MDX-NET-Inst_HQ_3",
+        model_names=["UVR_MDXNET_KARA_2.onnx", "UVR-MDX-NET-Inst_HQ_3.onnx"],
         model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
         output_dir=".",
         lossless_output_format="FLAC",
@@ -58,8 +57,7 @@ class KaraokePrep:
         self.input_media = input_media
         self.artist = artist
         self.title = title
-        self.model_name = model_name
-        self.model_name_2 = model_name_2
+        self.model_names = model_names
         self.model_file_dir = model_file_dir
         self.output_dir = output_dir
         self.lossless_output_format = lossless_output_format.lower()
@@ -400,8 +398,8 @@ class KaraokePrep:
             log_formatter=self.log_formatter,
             model_file_dir=self.model_file_dir,
             output_format=self.lossless_output_format,
-            primary_stem_path=instrumental_path,
-            secondary_stem_path=vocals_path,
+            primary_stem_output_path=instrumental_path,
+            secondary_stem_output_path=vocals_path,
         )
 
         separator.load_model(model_name)
@@ -537,6 +535,7 @@ class KaraokePrep:
             "extracted_info": self.extracted_info,
             "lyrics": None,
             "processed_lyrics": None,
+            "separated_audio": {}
         }
 
         processed_track["input_media"] = None
@@ -618,51 +617,27 @@ class KaraokePrep:
             self.logger.info(f"Creating title video...")
             self.create_title_video(self.artist, self.title, self.title_format, output_image_filepath_noext, processed_track["title_video"])
 
-        self.logger.info(f"Separating audio twice for track: {self.title} by {self.artist}")
+        self.logger.info(f"Separating audio for track: {self.title} by {self.artist} using models: {', '.join(self.model_names)}")
 
-        instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental {self.model_name}).{self.lossless_output_format}")
-        vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name}).{self.lossless_output_format}")
+        for model_name in self.model_names:
+            processed_track[f"separated_audio"][model_name] = {}
+            
+            instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossless_output_format}")
+            vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossless_output_format}")
 
-        instrumental_path_lossy = os.path.join(
-            track_output_dir, f"{artist_title} (Instrumental {self.model_name}).{self.lossy_output_format}"
-        )
-        vocals_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name}).{self.lossy_output_format}")
+            instrumental_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossy_output_format}")
+            vocals_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossy_output_format}")
 
-        if os.path.isfile(instrumental_path) and os.path.isfile(vocals_path):
-            self.logger.debug(f"Separated audio files already exist in output paths, skipping separation: {instrumental_path}")
-        else:
-            self.separate_audio(processed_track["input_audio_wav"], self.model_name, instrumental_path, vocals_path)
-            self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
-            self.convert_to_lossy(vocals_path, vocals_path_lossy)
+            if not (os.path.isfile(instrumental_path) and os.path.isfile(vocals_path)):
+                self.separate_audio(processed_track["input_audio_wav"], model_name, instrumental_path, vocals_path)
+                self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
+                self.convert_to_lossy(vocals_path, vocals_path_lossy)
 
-        processed_track["instrumental_audio"] = instrumental_path
-        processed_track["vocals_audio"] = vocals_path
+            processed_track[f"separated_audio"][model_name]["instrumental"] = instrumental_path
+            processed_track[f"separated_audio"][model_name]["vocals"] = vocals_path
 
-        processed_track["instrumental_audio_lossy"] = instrumental_path_lossy
-        processed_track["vocals_audio_lossy"] = vocals_path_lossy
-
-        instrumental_path_2 = os.path.join(
-            track_output_dir, f"{artist_title} (Instrumental {self.model_name_2}).{self.lossless_output_format}"
-        )
-        vocals_path_2 = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name_2}).{self.lossless_output_format}")
-
-        instrumental_path_2_lossy = os.path.join(
-            track_output_dir, f"{artist_title} (Instrumental {self.model_name_2}).{self.lossy_output_format}"
-        )
-        vocals_path_2_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {self.model_name_2}).{self.lossy_output_format}")
-
-        if os.path.isfile(instrumental_path_2) and os.path.isfile(vocals_path_2):
-            self.logger.debug(f"Separated audio files already exist in output paths, skipping separation: {instrumental_path_2}")
-        else:
-            self.separate_audio(processed_track["input_audio_wav"], self.model_name_2, instrumental_path_2, vocals_path_2)
-            self.convert_to_lossy(instrumental_path_2, instrumental_path_2_lossy)
-            self.convert_to_lossy(vocals_path_2, vocals_path_2_lossy)
-
-        processed_track["instrumental_audio_2"] = instrumental_path_2
-        processed_track["vocals_audio_2"] = vocals_path_2
-
-        processed_track["instrumental_audio_2_lossy"] = instrumental_path_2_lossy
-        processed_track["vocals_audio_2_lossy"] = vocals_path_2_lossy
+            processed_track[f"separated_audio"][model_name]["instrumental_lossy"] = instrumental_path_lossy
+            processed_track[f"separated_audio"][model_name]["vocals_lossy"] = vocals_path_lossy
 
         self.logger.info("Script finished, audio downloaded, lyrics fetched and audio separated!")
 
@@ -715,3 +690,4 @@ class KaraokePrep:
             else:
                 self.logger.info(f"Input URL is not a playlist, processing single track")
                 return [self.prep_single_track()]
+
