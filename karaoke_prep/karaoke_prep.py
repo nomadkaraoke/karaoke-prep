@@ -518,7 +518,7 @@ class KaraokePrep:
     def prep_single_track(self):
         self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
 
-        if os.path.isfile(self.input_media):
+        if self.input_media is not None and os.path.isfile(self.input_media):
             self.extractor = "Local"
         else:
             # Parses metadata in self.extracted_info to set vars: self.url, self.extractor, self.media_id, self.artist, self.title
@@ -542,7 +542,7 @@ class KaraokePrep:
         processed_track["input_still_image"] = None
         processed_track["input_audio_wav"] = None
 
-        if os.path.isfile(self.input_media):
+        if self.input_media is not None and os.path.isfile(self.input_media):
             input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
             input_wav_glob = glob.glob(input_wav_filename_pattern)
 
@@ -670,7 +670,7 @@ class KaraokePrep:
             raise Exception(f"Failed to find 'entries' in playlist, cannot process")
 
     def process(self):
-        if os.path.isfile(self.input_media):
+        if self.input_media is not None and os.path.isfile(self.input_media):
             self.logger.info(f"Input media {self.input_media} is a local file, youtube logic will be skipped")
 
             if self.artist is None or self.title is None:
