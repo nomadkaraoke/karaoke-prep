@@ -387,8 +387,8 @@ class KaraokePrep:
 
         self.logger.debug(f"audio_file is valid file: {audio_file}")
 
-        self.logger.debug(
-            f"instantiating Separator with model_name: {model_name} instrumental_path: {instrumental_path} and lossless_output_format: {self.lossless_output_format}"
+        self.logger.info(
+            f"instantiating Separator with model_file_dir: {self.model_file_dir}, model_name: {model_name} instrumental_path: {instrumental_path} and lossless_output_format: {self.lossless_output_format}"
         )
 
         from audio_separator.separator import Separator

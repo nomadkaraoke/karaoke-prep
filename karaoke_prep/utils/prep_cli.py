@@ -47,12 +47,17 @@ def main():
     parser.add_argument(
         "--model_names",
         nargs="+",
-        default=["UVR-MDX-NET-Inst_HQ_3.onnx", "UVR_MDXNET_KARA_2.onnx", "6_HP-Karaoke-UVR.pth"],
+        default=["UVR-MDX-NET-Inst_HQ_3.onnx", "UVR_MDXNET_KARA_2.onnx", "2_HP-UVR.pth", "6_HP-Karaoke-UVR.pth"],
         help="Optional: list of model names to be used for separation (default: %(default)s). Example: --model_names UVR_MDXNET_KARA_2.onnx UVR-MDX-NET-Inst_HQ_3.onnx",
     )
 
-    # Use tempfile to get the platform-independent temp directory
-    default_model_dir = os.path.join(tempfile.gettempdir(), "audio-separator-models")
+    default_model_dir_unix = "/tmp/audio-separator-models/"
+    if os.name == "posix" and os.path.exists(default_model_dir_unix):
+        default_model_dir = default_model_dir_unix
+    else:
+        # Use tempfile to get the platform-independent temp directory
+        default_model_dir = os.path.join(tempfile.gettempdir(), "audio-separator-models")
+
     parser.add_argument(
         "--model_file_dir",
         default=default_model_dir,

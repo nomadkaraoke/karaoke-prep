@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "karaoke-prep"
-version = "0.15.7"
+version = "0.15.8"
 description = "Prepare for karaoke video creation, by downloading audio and lyrics for a specified song or playlist from youtube and separating audio stems. After syncing, finalise the video with a title screen!"
 authors = ["Andrew Beveridge <andrew@beveridge.uk>"]
 license = "MIT"
@@ -25,7 +25,7 @@ google-auth-oauthlib = "*"
 google-auth-httplib2 = "*"
 pyperclip = ">=1.8"
 thefuzz = ">=0.22"
-audio-separator = { version = ">=0.14", extras = ["cpu"] }
+audio-separator = { version = ">=0.15", extras = ["cpu"] }
 
 [tool.poetry.group.dev.dependencies]
 black = ">=23"
