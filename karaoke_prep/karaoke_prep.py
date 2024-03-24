@@ -378,7 +378,7 @@ class KaraokePrep:
         for char in ["\\", "/", ":", "*", "?", '"', "<", ">", "|"]:
             filename = filename.replace(char, "_")
         # Remove any trailing periods or spaces
-        filename = filename.rstrip(". ")
+        filename = filename.rstrip(" ")
         return filename
 
     def separate_audio(self, audio_file, model_name, instrumental_path, vocals_path):
