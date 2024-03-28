@@ -182,7 +182,7 @@ class KaraokePrep:
         copied_file_name = output_filename_no_extension + os.path.splitext(input_media)[1]
         self.logger.debug(f"Copying {input_media} to {copied_file_name}")
         shutil.copy2(input_media, copied_file_name)
-        
+
         return copied_file_name
 
     def download_video(self, url, output_filename_no_extension):
@@ -388,7 +388,7 @@ class KaraokePrep:
         self.logger.debug(f"audio_file is valid file: {audio_file}")
 
         self.logger.info(
-            f"instantiating Separator with model_file_dir: {self.model_file_dir}, model_name: {model_name} instrumental_path: {instrumental_path} and lossless_output_format: {self.lossless_output_format}"
+            f"instantiating Separator with model_file_dir: {self.model_file_dir}, model_filename: {model_name} output_format: {self.lossless_output_format}"
         )
 
         from audio_separator.separator import Separator
@@ -398,14 +398,18 @@ class KaraokePrep:
             log_formatter=self.log_formatter,
             model_file_dir=self.model_file_dir,
             output_format=self.lossless_output_format,
-            primary_stem_output_path=instrumental_path,
-            secondary_stem_output_path=vocals_path,
         )
 
-        separator.load_model(model_name)
+        separator.load_model(model_filename=model_name)
         output_files = separator.separate(audio_file)
 
-        self.logger.info(f"Separation complete! Output file(s): {' '.join(output_files)}")
+        for file in output_files:
+            if "(Vocals)" in file:
+                os.rename(file, vocals_path)
+            elif "(Instrumental)" in file:
+                os.rename(file, instrumental_path)
+
+        self.logger.info(f"Separation complete! Output file(s): {vocals_path} {instrumental_path}")
 
     def setup_output_paths(self, artist, title):
         sanitized_artist = self.sanitize_filename(artist)
@@ -535,7 +539,7 @@ class KaraokePrep:
             "extracted_info": self.extracted_info,
             "lyrics": None,
             "processed_lyrics": None,
-            "separated_audio": {}
+            "separated_audio": {},
         }
 
         processed_track["input_media"] = None
@@ -554,7 +558,7 @@ class KaraokePrep:
 
                 self.logger.info(f"Copying input media from {self.input_media} to new directory...")
                 processed_track["input_media"] = self.copy_input_media(self.input_media, output_filename_no_extension)
-            
+
                 self.logger.info("Converting input media to WAV for audio processing...")
                 processed_track["input_audio_wav"] = self.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
 
@@ -621,11 +625,13 @@ class KaraokePrep:
 
         for model_name in self.model_names:
             processed_track[f"separated_audio"][model_name] = {}
-            
+
             instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossless_output_format}")
             vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossless_output_format}")
 
-            instrumental_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossy_output_format}")
+            instrumental_path_lossy = os.path.join(
+                track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossy_output_format}"
+            )
             vocals_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossy_output_format}")
 
             if not (os.path.isfile(instrumental_path) and os.path.isfile(vocals_path)):
@@ -690,4 +696,3 @@ class KaraokePrep:
             else:
                 self.logger.info(f"Input URL is not a playlist, processing single track")
                 return [self.prep_single_track()]
-
