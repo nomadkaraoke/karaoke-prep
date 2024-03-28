@@ -47,7 +47,7 @@ def main():
     parser.add_argument(
         "--model_names",
         nargs="+",
-        default=["UVR-MDX-NET-Inst_HQ_4.onnx", "UVR_MDXNET_KARA_2.onnx", "9_HP2-UVR.pth", "MDX23C-8KFFT-InstVoc_HQ_2.ckpt"],
+        default=["UVR-MDX-NET-Inst_HQ_4.onnx", "UVR_MDXNET_KARA_2.onnx", "2_HP-UVR.pth", "MDX23C-8KFFT-InstVoc_HQ_2.ckpt"],
         help="Optional: list of model names to be used for separation (default: %(default)s). Example: --model_names UVR_MDXNET_KARA_2.onnx UVR-MDX-NET-Inst_HQ_4.onnx",
     )
 
