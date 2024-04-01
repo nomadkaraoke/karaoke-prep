@@ -18,6 +18,8 @@ class KaraokePrep:
         input_media=None,
         artist=None,
         title=None,
+        filename_pattern=None,
+        dry_run=False,
         log_level=logging.DEBUG,
         log_formatter=None,
         model_names=["UVR_MDXNET_KARA_2.onnx", "UVR-MDX-NET-Inst_HQ_3.onnx"],
@@ -51,12 +53,15 @@ class KaraokePrep:
 
         self.logger.debug(f"KaraokePrep instantiating with input_media: {input_media} artist: {artist} title: {title}")
 
+        self.dry_run = dry_run
+
         self.extractor = None
         self.media_id = None
         self.url = None
         self.input_media = input_media
         self.artist = artist
         self.title = title
+        self.filename_pattern = filename_pattern
         self.model_names = model_names
         self.model_file_dir = model_file_dir
         self.output_dir = output_dir
@@ -221,7 +226,8 @@ class KaraokePrep:
         self.logger.info(f"Converting input media to audio WAV file")
         ffmpeg_command = f'{self.ffmpeg_base_command} -n -i "{input_filename}" "{output_filename}"'
         self.logger.debug(f"Running command: {ffmpeg_command}")
-        os.system(ffmpeg_command)
+        if not self.dry_run:
+            os.system(ffmpeg_command)
         return output_filename
 
     def write_lyrics_from_genius(self, artist, title, filename):
@@ -230,8 +236,9 @@ class KaraokePrep:
         if song:
             lyrics = self.clean_genius_lyrics(song.lyrics)
 
-            with open(filename, "w") as f:
-                f.write(lyrics)
+            if not self.dry_run:
+                with open(filename, "w") as f:
+                    f.write(lyrics)
 
             self.logger.info("Lyrics for %s by %s fetched successfully", title, artist)
             return lyrics.split("\n")
@@ -344,32 +351,35 @@ class KaraokePrep:
         iteration_count = 0
         max_iterations = 100  # Failsafe limit
 
-        with open(processed_lyrics_file, "w") as outfile:
-            all_processed = False
-            while not all_processed:
-                if iteration_count > max_iterations:
-                    self.logger.error("Maximum iterations exceeded in write_processed_lyrics.")
-                    break
+        if not self.dry_run:
+            with open(processed_lyrics_file, "w") as outfile:
+                all_processed = False
+                while not all_processed:
+                    if iteration_count > max_iterations:
+                        self.logger.error("Maximum iterations exceeded in write_processed_lyrics.")
+                        break
 
-                all_processed = True
-                new_lyrics = []
+                    all_processed = True
+                    new_lyrics = []
+                    for line in lyrics:
+                        line = line.strip()
+                        processed = self.process_line(line)
+                        new_lyrics.extend(processed)
+                        if any(len(l) > 36 for l in processed):
+                            all_processed = False
+                    lyrics = new_lyrics
+
+                    iteration_count += 1
+
+                # Write the processed lyrics to file
                 for line in lyrics:
-                    line = line.strip()
-                    processed = self.process_line(line)
-                    new_lyrics.extend(processed)
-                    if any(len(l) > 36 for l in processed):
-                        all_processed = False
-                lyrics = new_lyrics
+                    outfile.write(line + "\n")
+                    processed_lyrics_lines += line + "\n"
 
-                iteration_count += 1
+        if not self.dry_run:
+            pyperclip.copy(processed_lyrics_lines)
+            self.logger.info(f"Processed lyrics copied to clipboard.")
 
-            # Write the processed lyrics to file
-            for line in lyrics:
-                outfile.write(line + "\n")
-                processed_lyrics_lines += line + "\n"
-
-        pyperclip.copy(processed_lyrics_lines)
-        self.logger.info(f"Processed lyrics copied to clipboard.")
         return processed_lyrics_lines
 
     def sanitize_filename(self, filename):
@@ -529,6 +539,9 @@ class KaraokePrep:
             self.parse_single_track_metadata(input_artist=self.artist, input_title=self.title)
 
         self.logger.info(f"Preparing output path for track: {self.title} by {self.artist}")
+        if self.dry_run:
+            return None
+
         track_output_dir, artist_title = self.setup_output_paths(self.artist, self.title)
 
         processed_track = {
@@ -662,25 +675,73 @@ class KaraokePrep:
         os.system(ffmpeg_command)
 
     def process_playlist(self):
+        if self.artist is None or self.title is None:
+            raise Exception("Error: Artist and Title are required for processing a local file.")
+
         if "entries" in self.extracted_info:
             track_results = []
             self.logger.info(f"Found {len(self.extracted_info['entries'])} entries in playlist, processing each invididually...")
             for entry in self.extracted_info["entries"]:
                 self.extracted_info = entry
                 self.logger.info(f"Processing playlist entry with title: {self.extracted_info['title']}")
-                track_results.append(self.prep_single_track())
+                if not self.dry_run:
+                    track_results.append(self.prep_single_track())
                 self.artist = self.persistent_artist
                 self.title = None
             return track_results
         else:
             raise Exception(f"Failed to find 'entries' in playlist, cannot process")
 
-    def process(self):
-        if self.input_media is not None and os.path.isfile(self.input_media):
-            self.logger.info(f"Input media {self.input_media} is a local file, youtube logic will be skipped")
+    def process_folder(self):
+        if self.filename_pattern is None or self.artist is None:
+            raise Exception("Error: Filename pattern and artist are required for processing a folder.")
 
-            if self.artist is None or self.title is None:
-                raise Exception("Error: Artist and Title are required for processing a local file.")
+        folder_path = self.input_media
+        output_folder_path = os.path.join(os.getcwd(), os.path.basename(folder_path))
+
+        if not os.path.exists(output_folder_path):
+            if not self.dry_run:
+                self.logger.info(f"DRY RUN: Would create output folder: {output_folder_path}")
+                os.makedirs(output_folder_path)
+        else:
+            self.logger.info(f"Output folder already exists: {output_folder_path}")
+
+        pattern = re.compile(self.filename_pattern)
+        tracks = []
+
+        for filename in sorted(os.listdir(folder_path)):
+            match = pattern.match(filename)
+            if match:
+                title = match.group("title")
+                file_path = os.path.join(folder_path, filename)
+                self.input_media = file_path
+                self.title = title
+
+                track_index = match.group("index") if "index" in match.groupdict() else None
+
+                self.logger.info(f"Processing track: {track_index} with title: {title} from file: {filename}")
+
+                track_output_dir = os.path.join(output_folder_path, f"{track_index} - {self.artist} - {title}")
+
+                if not self.dry_run:
+                    track = self.prep_single_track()
+                    tracks.append(track)
+
+                    # Move the track folder to the output folder
+                    track_folder = track["track_output_dir"]
+                    shutil.move(track_folder, track_output_dir)
+                else:
+                    self.logger.info(f"DRY RUN: Would move track folder to: {os.path.basename(track_output_dir)}")
+
+        return tracks
+
+    def process(self):
+        if self.input_media is not None and os.path.isdir(self.input_media):
+            self.logger.info(f"Input media {self.input_media} is a local folder, processing each file individually...")
+
+            return self.process_folder()
+        elif self.input_media is not None and os.path.isfile(self.input_media):
+            self.logger.info(f"Input media {self.input_media} is a local file, youtube logic will be skipped")
 
             return [self.prep_single_track()]
         else:

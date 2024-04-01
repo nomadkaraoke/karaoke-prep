@@ -45,6 +45,17 @@ def main():
     )
 
     parser.add_argument(
+        "--filename_pattern",
+        help="Required if processing a folder: Python regex pattern to extract track names from filenames. Must contain a named group 'title'. Example: --filename_pattern='(?P<index>\\d+) - (?P<title>.+).mp3'",
+    )
+
+    parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Optional: perform a dry run without making any changes (default: %(default)s). Example: --dry_run=true",
+    )
+
+    parser.add_argument(
         "--model_names",
         nargs="+",
         default=["UVR-MDX-NET-Inst_HQ_4.onnx", "UVR_MDXNET_KARA_2.onnx", "2_HP-UVR.pth", "MDX23C-8KFFT-InstVoc_HQ_2.ckpt"],
@@ -145,7 +156,7 @@ def main():
 
     args = parser.parse_args()
 
-    input_media, artist, title = None, None, None
+    input_media, artist, title, filename_pattern = None, None, None, None
 
     # Allow 3 forms of positional arguments:
     # 1. URL or Media File only (may be single track URL, playlist URL, or local file)
@@ -161,10 +172,23 @@ def main():
         else:
             logger.warn("Input media provided without Artist and Title, both will be guessed from title")
 
+    elif os.path.isdir(args.args[0]):
+        if not args.filename_pattern:
+            logger.error("Filename pattern is required when processing a folder.")
+            exit(1)
+        if len(args.args) <= 1:
+            logger.error("Second parameter provided must be Artist name; Artist is required when processing a folder.")
+            exit(1)
+
+        input_media = args.args[0]
+        artist = args.args[1]
+        filename_pattern = args.filename_pattern
+
     elif len(args.args) > 1:
         artist = args.args[0]
         title = args.args[1]
         logger.warn(f"No input media provided, the top YouTube search result for {artist} - {title} will be used.")
+
     else:
         parser.print_help()
         exit(1)
@@ -178,6 +202,8 @@ def main():
         artist=artist,
         title=title,
         input_media=input_media,
+        filename_pattern=filename_pattern,
+        dry_run=args.dry_run,
         log_formatter=log_formatter,
         log_level=log_level,
         model_names=args.model_names,
