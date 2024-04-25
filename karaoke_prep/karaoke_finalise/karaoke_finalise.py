@@ -1,7 +1,7 @@
 import os
 import sys
 import json
-import tempfile
+import shlex
 import logging
 import zipfile
 import shutil
@@ -474,25 +474,15 @@ class KaraokeFinalise:
         remux_ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" -vn -i "{input_files["instrumental_audio"]}" -c:v copy -c:a aac "{output_files["karaoke_mov"]}"'
         self.execute_command(remux_ffmpeg_command, "Remuxing video with instrumental audio")
 
-        tmp_file_list = None
-        try:
-            # Create a temporary file with the file paths for ffmpeg concat
-            tmp_file_list = tempfile.NamedTemporaryFile(mode="w+", delete=False, dir="/tmp", suffix=".txt")
+        # Quote file paths to handle special characters
+        title_mov_file = shlex.quote(os.path.abspath(input_files["title_mov"]))
+        karaoke_mov_file = shlex.quote(os.path.abspath(output_files["karaoke_mov"]))
+        output_final_mp4_file = shlex.quote(output_files["final_karaoke_mp4"])
 
-            title_mov_path = os.path.abspath(input_files["title_mov"]).replace("'", "'\\''")
-            karaoke_mov_path = os.path.abspath(output_files["karaoke_mov"]).replace("'", "'\\''")
-
-            tmp_file_list.write(f"file '{title_mov_path}'\n")
-            tmp_file_list.write(f"file '{karaoke_mov_path}'\n")
-            tmp_file_list.flush()
-
-            # Join the title video and the karaoke video to produce the final MP4
-            join_ffmpeg_command = f'{self.ffmpeg_base_command} -f concat -safe 0 -i "{tmp_file_list.name}" -vf settb=AVTB,setpts=N/30/TB,fps=30 "{output_files["final_karaoke_mp4"]}"'
-            self.execute_command(join_ffmpeg_command, "Joining title and instrumental videos")
-        finally:
-            # Ensure the temporary file is deleted
-            if tmp_file_list is not None:
-                os.remove(tmp_file_list.name)
+        # Use ffmpeg concat filter to join the title video and the karaoke video to produce the final MP4
+        join_ffmpeg_command = f'{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mov_file} -filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]" -map "[outv]" -map "[outa]" -c:v libx264 -c:a aac_at -q:a 14 {output_final_mp4_file}'
+        self.logger.debug(f"Running command: {join_ffmpeg_command}")
+        self.execute_command(join_ffmpeg_command, "Joining title and instrumental videos")
 
         # Prompt user to check final MP4 file before proceeding
         self.prompt_user_confirmation_or_raise_exception(
