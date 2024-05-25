@@ -22,7 +22,7 @@ class KaraokePrep:
         dry_run=False,
         log_level=logging.DEBUG,
         log_formatter=None,
-        model_names=["UVR_MDXNET_KARA_2.onnx", "UVR-MDX-NET-Inst_HQ_3.onnx"],
+        model_names=["UVR_MDXNET_KARA_2.onnx", "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt"],
         model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
         output_dir=".",
         lossless_output_format="FLAC",
