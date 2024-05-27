@@ -23,6 +23,10 @@ This was created to make it easier for me to prepare the source audio, lyrics an
 
 You'll need Python version 3.9, 3.10 or 3.11 (newer versions aren't supported by PyTorch or ONNX Runtime yet).
 
+### Windows Prerequisites
+- [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+- [FFmpeg](https://ffmpeg.org/download.html)
+
 You can install Karaoke Prep using pip:
 
 `pip install karaoke-prep`
@@ -56,6 +60,7 @@ If you aren't sure what `pip` is or how to use the command line, here are some Y
 
 ## Karaoke production guide using karaoke-prep and MidiCo
 
+- Get a Genius API Access Token ([docs](https://docs.genius.com/)) and set it as an environment variable named `GENIUS_API_TOKEN`
 - Run `karaoke-prep <Artist> <Title>` to fetch and prep the files above
 - Wait for it to output at least the WAV file and lyrics (you can leave it running in the background while you sync)
 - Open the WAV file in MidiCo: `(YouTube xxxxxxxxxxx).wav`
