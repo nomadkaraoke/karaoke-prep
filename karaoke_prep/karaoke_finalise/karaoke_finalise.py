@@ -30,6 +30,7 @@ class KaraokeFinalise:
         youtube_description_file=None,
         rclone_destination=None,
         discord_webhook_url=None,
+        skip_cdg=False,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -69,6 +70,7 @@ class KaraokeFinalise:
         self.youtube_description_file = youtube_description_file
         self.rclone_destination = rclone_destination
         self.discord_webhook_url = discord_webhook_url
+        self.skip_cdg = skip_cdg
 
         self.youtube_upload_enabled = False
         self.discord_notication_enabled = False
@@ -101,11 +103,13 @@ class KaraokeFinalise:
         input_files = {
             "title_mov": f"{base_name}{self.suffixes['title_mov']}",
             "title_jpg": f"{base_name}{self.suffixes['title_jpg']}",
-            "karaoke_cdg": f"{base_name}{self.suffixes['karaoke_cdg']}",
-            "karaoke_mp3": f"{base_name}{self.suffixes['karaoke_mp3']}",
             "instrumental_audio": instrumental_audio_file,
             "with_vocals_mov": with_vocals_file,
         }
+
+        if not self.skip_cdg:
+            input_files["karaoke_cdg"] = f"{base_name}{self.suffixes['karaoke_cdg']}"
+            input_files["karaoke_mp3"] = f"{base_name}{self.suffixes['karaoke_mp3']}"
 
         for key, file_path in input_files.items():
             if not os.path.isfile(file_path):
@@ -116,11 +120,15 @@ class KaraokeFinalise:
         return input_files
 
     def prepare_output_filenames(self, base_name):
-        return {
+        output_files = {
             "karaoke_mov": f"{base_name}{self.suffixes['karaoke_mov']}",
             "final_karaoke_mp4": f"{base_name}{self.suffixes['final_karaoke_mp4']}",
-            "final_karaoke_zip": f"{base_name}{self.suffixes['final_karaoke_zip']}",
         }
+
+        if not self.skip_cdg:
+            output_files["final_karaoke_zip"] = f"{base_name}{self.suffixes['final_karaoke_zip']}"
+
+        return output_files
 
     def prompt_user_confirmation_or_raise_exception(self, prompt_message, exit_message, allow_empty=False):
         if not self.prompt_user_bool(prompt_message, allow_empty=allow_empty):
@@ -198,6 +206,7 @@ class KaraokeFinalise:
 
         # Tell user which features are enabled, prompt them to confirm before proceeding
         self.logger.info(f"Enabled features:")
+        self.logger.info(f" CDG ZIP creation: {not self.skip_cdg}")
         self.logger.info(f" YouTube upload: {self.youtube_upload_enabled}")
         self.logger.info(f" Discord notifications: {self.discord_notication_enabled}")
         self.logger.info(f" Folder organisation: {self.folder_organisation_enabled}")
@@ -639,19 +648,25 @@ class KaraokeFinalise:
         input_files = self.check_input_files_exist(base_name, with_vocals_file, instrumental_audio_file)
         output_files = self.prepare_output_filenames(base_name)
 
-        self.create_cdg_zip_file(input_files, output_files)
+        if not self.skip_cdg:
+            self.create_cdg_zip_file(input_files, output_files)
+
         self.remux_and_encode_output_video_files(with_vocals_file, input_files, output_files)
 
         self.execute_optional_features(artist, title, base_name, input_files, output_files)
 
-        return {
+        result = {
             "artist": artist,
             "title": title,
             "video_with_vocals": with_vocals_file,
             "video_with_instrumental": output_files["karaoke_mov"],
             "final_video": output_files["final_karaoke_mp4"],
-            "final_zip": output_files["final_karaoke_zip"],
             "youtube_url": self.youtube_url,
             "brand_code": self.brand_code,
             "new_brand_code_dir_path": self.new_brand_code_dir_path,
         }
+
+        if not self.skip_cdg:
+            result["final_zip"] = output_files["final_karaoke_zip"]
+
+        return result

@@ -83,6 +83,12 @@ def main():
         help="Optional: Rclone destination to sync your public_share_dir to after adding files to it. Example: --rclone_destination='googledrive:YourBrandNameFolder'",
     )
 
+    parser.add_argument(
+        "--skip_cdg",
+        action="store_true",
+        help="Optional: Skip CDG ZIP generation during finalisation (default: disabled). Example: --skip_cdg",
+    )
+
     args = parser.parse_args()
 
     log_level = getattr(logging, args.log_level.upper())
@@ -103,6 +109,7 @@ def main():
         youtube_description_file=args.youtube_description_file,
         rclone_destination=args.rclone_destination,
         discord_webhook_url=os.environ.get("DISCORD_WEBHOOK_URL"),
+        skip_cdg=args.skip_cdg,
     )
 
     try:
