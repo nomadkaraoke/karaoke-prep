@@ -3,6 +3,7 @@ import sys
 import re
 import glob
 import logging
+import unicodedata
 import lyricsgenius
 import tempfile
 import shutil
@@ -363,6 +364,14 @@ class KaraokePrep:
                     new_lyrics = []
                     for line in lyrics:
                         line = line.strip()
+
+                        # Check for abnormal space characters and replace them
+                        abnormal_spaces = [chr(i) for i in range(sys.maxunicode) if unicodedata.category(chr(i)) == "Zs" and chr(i) != " "]
+                        if any(space in line for space in abnormal_spaces):
+                            self.logger.warning(f"Replacing abnormal space characters found in line: {line}")
+                            for space in abnormal_spaces:
+                                line = line.replace(space, " ")
+
                         processed = self.process_line(line)
                         new_lyrics.extend(processed)
                         if any(len(l) > 36 for l in processed):
