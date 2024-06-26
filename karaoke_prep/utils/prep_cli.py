@@ -159,6 +159,16 @@ def main():
         help="Optional: Font color for intro video title text (default: #ffffff). Example: --intro_title_color=#123456",
     )
 
+    parser.add_argument(
+        "--existing_instrumental",
+        help="Optional: Path to an existing instrumental audio file. If provided, audio separation will be skipped.",
+    )
+
+    parser.add_argument(
+        "--existing_title_image",
+        help="Optional: Path to an existing title image file. If provided, title image generation will be skipped.",
+    )
+
     args = parser.parse_args()
 
     input_media, artist, title, filename_pattern = None, None, None, None
@@ -205,6 +215,9 @@ def main():
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
 
+    if args.existing_instrumental:
+        args.model_names = ["Custom"]
+
     logger.info(f"KaraokePrep beginning with input_media: {input_media} artist: {artist} and title: {title}")
 
     kprep = KaraokePrep(
@@ -230,6 +243,8 @@ def main():
         intro_font=args.intro_font,
         intro_artist_color=args.intro_artist_color,
         intro_title_color=args.intro_title_color,
+        existing_instrumental=args.existing_instrumental,
+        existing_title_image=args.existing_title_image,
     )
 
     tracks = kprep.process()

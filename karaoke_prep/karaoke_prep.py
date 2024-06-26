@@ -38,6 +38,8 @@ class KaraokePrep:
         intro_font="Montserrat-Bold.ttf",
         intro_artist_color="#ffffff",
         intro_title_color="#ff7acc",
+        existing_instrumental=None,
+        existing_title_image=None,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -73,6 +75,8 @@ class KaraokePrep:
         self.normalization_enabled = normalization_enabled
         self.denoise_enabled = denoise_enabled
         self.create_track_subfolders = create_track_subfolders
+        self.existing_instrumental = existing_instrumental
+        self.existing_title_image = existing_title_image
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
@@ -479,51 +483,73 @@ class KaraokePrep:
         duration = 5  # Duration in seconds
         resolution = (3840, 2160)  # 4K resolution
 
-        # Load or create background image
-        if format["background_image"] and os.path.exists(format["background_image"]):
-            self.logger.info(f"Using title screen background image file: {format['background_image']}")
-            background = Image.open(format["background_image"])
+        if self.existing_title_image:
+            self.logger.info(f"Using existing title image file: {self.existing_title_image}")
+            existing_extension = os.path.splitext(self.existing_title_image)[1]
+
+            if existing_extension == ".png":
+                self.logger.info(f"Copying existing PNG title image file: {self.existing_title_image}")
+                shutil.copy2(self.existing_title_image, output_image_filepath_noext + existing_extension)
+            else:
+                self.logger.info(f"Converting existing title image to PNG")
+                existing_image = Image.open(self.existing_title_image)
+                existing_image.save(output_image_filepath_noext + ".png")
+
+            if existing_extension != ".jpg":
+                self.logger.info(f"Converting existing title image to JPG")
+                existing_image = Image.open(self.existing_title_image)
+                if existing_image.mode == "RGBA":
+                    existing_image = existing_image.convert("RGB")  # Convert RGBA to RGB
+                existing_image.save(output_image_filepath_noext + ".jpg", quality=95)
+
         else:
-            self.logger.info(f"Using title screen background color: {format['background_color']}")
-            background = Image.new("RGB", resolution, color=self.hex_to_rgb(format["background_color"]))
+            # Load or create background image
+            if format["background_image"] and os.path.exists(format["background_image"]):
+                self.logger.info(f"Using title screen background image file: {format['background_image']}")
+                background = Image.open(format["background_image"])
+            else:
+                self.logger.info(f"Using title screen background color: {format['background_color']}")
+                background = Image.new("RGB", resolution, color=self.hex_to_rgb(format["background_color"]))
 
-        # Resize background to match resolution
-        background = background.resize(resolution)
+            # Resize background to match resolution
+            background = background.resize(resolution)
 
-        title = title.upper()
-        artist = artist.upper()
+            title = title.upper()
+            artist = artist.upper()
 
-        initial_font_size = 500
-        top_padding = 950
-        title_padding = 400
-        artist_padding = 700
-        fixed_gap = 150
+            initial_font_size = 500
+            top_padding = 950
+            title_padding = 400
+            artist_padding = 700
+            fixed_gap = 150
 
-        draw = ImageDraw.Draw(background)
+            draw = ImageDraw.Draw(background)
 
-        # Accessing the font file from the package resources
-        with pkg_resources.path("karaoke_prep.resources", format["intro_font"]) as font_path:
-            # Calculate positions and sizes for title and artist
-            title_font, _ = self.calculate_text_size_and_position(draw, title, str(font_path), initial_font_size, resolution, title_padding)
-            artist_font, _ = self.calculate_text_size_and_position(
-                draw, artist, str(font_path), initial_font_size, resolution, artist_padding
+            # Accessing the font file from the package resources
+            with pkg_resources.path("karaoke_prep.resources", format["intro_font"]) as font_path:
+                # Calculate positions and sizes for title and artist
+                title_font, _ = self.calculate_text_size_and_position(
+                    draw, title, str(font_path), initial_font_size, resolution, title_padding
+                )
+                artist_font, _ = self.calculate_text_size_and_position(
+                    draw, artist, str(font_path), initial_font_size, resolution, artist_padding
+                )
+
+            # Calculate vertical positions with consistent gap
+            title_text_position, title_height = self.calculate_text_position(draw, title, title_font, resolution, top_padding)
+            artist_text_position, _ = self.calculate_text_position(
+                draw, artist, artist_font, resolution, title_text_position[1] + title_height + fixed_gap
             )
 
-        # Calculate vertical positions with consistent gap
-        title_text_position, title_height = self.calculate_text_position(draw, title, title_font, resolution, top_padding)
-        artist_text_position, _ = self.calculate_text_position(
-            draw, artist, artist_font, resolution, title_text_position[1] + title_height + fixed_gap
-        )
+            draw.text(title_text_position, title, fill=format["title_color"], font=title_font)
+            draw.text(artist_text_position, artist, fill=format["artist_color"], font=artist_font)
 
-        draw.text(title_text_position, title, fill=format["title_color"], font=title_font)
-        draw.text(artist_text_position, artist, fill=format["artist_color"], font=artist_font)
+            # Save static background image
+            background.save(f"{output_image_filepath_noext}.png")
 
-        # Save static background image
-        background.save(f"{output_image_filepath_noext}.png")
-
-        # Save static background image as JPG for smaller filesize to upload as YouTube thumbnail
-        background_rgb = background.convert("RGB")
-        background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
+            # Save static background image as JPG for smaller filesize to upload as YouTube thumbnail
+            background_rgb = background.convert("RGB")
+            background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
 
         # Use ffmpeg to create video
         ffmpeg_command = f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath_noext}.png" -f lavfi -i anullsrc '
@@ -643,29 +669,44 @@ class KaraokePrep:
             self.logger.info(f"Creating title video...")
             self.create_title_video(self.artist, self.title, self.title_format, output_image_filepath_noext, processed_track["title_video"])
 
-        self.logger.info(f"Separating audio for track: {self.title} by {self.artist} using models: {', '.join(self.model_names)}")
+        if self.existing_instrumental:
+            self.logger.info(f"Using existing instrumental file: {self.existing_instrumental}")
+            existing_instrumental_extension = os.path.splitext(self.existing_instrumental)[1]
 
-        for model_name in self.model_names:
-            processed_track[f"separated_audio"][model_name] = {}
+            instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental Custom){existing_instrumental_extension}")
+            instrumental_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Instrumental Custom).{self.lossy_output_format}")
 
-            instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossless_output_format}")
-            vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossless_output_format}")
+            shutil.copy2(self.existing_instrumental, instrumental_path)
+            self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
 
-            instrumental_path_lossy = os.path.join(
-                track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossy_output_format}"
-            )
-            vocals_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossy_output_format}")
+            processed_track["separated_audio"]["Custom"] = {
+                "instrumental": instrumental_path,
+                "instrumental_lossy": instrumental_path_lossy,
+                "vocals": None,
+                "vocals_lossy": None,
+            }
+        else:
+            self.logger.info(f"Separating audio for track: {self.title} by {self.artist} using models: {', '.join(self.model_names)}")
+            for model_name in self.model_names:
+                processed_track[f"separated_audio"][model_name] = {}
+                instrumental_path = os.path.join(
+                    track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossless_output_format}"
+                )
+                vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossless_output_format}")
+                instrumental_path_lossy = os.path.join(
+                    track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossy_output_format}"
+                )
+                vocals_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossy_output_format}")
 
-            if not (os.path.isfile(instrumental_path) and os.path.isfile(vocals_path)):
-                self.separate_audio(processed_track["input_audio_wav"], model_name, instrumental_path, vocals_path)
-                self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
-                self.convert_to_lossy(vocals_path, vocals_path_lossy)
+                if not (os.path.isfile(instrumental_path) and os.path.isfile(vocals_path)):
+                    self.separate_audio(processed_track["input_audio_wav"], model_name, instrumental_path, vocals_path)
+                    self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
+                    self.convert_to_lossy(vocals_path, vocals_path_lossy)
 
-            processed_track[f"separated_audio"][model_name]["instrumental"] = instrumental_path
-            processed_track[f"separated_audio"][model_name]["vocals"] = vocals_path
-
-            processed_track[f"separated_audio"][model_name]["instrumental_lossy"] = instrumental_path_lossy
-            processed_track[f"separated_audio"][model_name]["vocals_lossy"] = vocals_path_lossy
+                processed_track[f"separated_audio"][model_name]["instrumental"] = instrumental_path
+                processed_track[f"separated_audio"][model_name]["vocals"] = vocals_path
+                processed_track[f"separated_audio"][model_name]["instrumental_lossy"] = instrumental_path_lossy
+                processed_track[f"separated_audio"][model_name]["vocals_lossy"] = vocals_path_lossy
 
         self.logger.info("Script finished, audio downloaded, lyrics fetched and audio separated!")
 
