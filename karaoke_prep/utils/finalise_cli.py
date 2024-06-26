@@ -136,8 +136,13 @@ def main():
     logger.info(f"Track: {track['artist']} - {track['title']}")
     logger.info(f" Video With Vocals: {track['video_with_vocals']}")
     logger.info(f" Video With Instrumental: {track['video_with_instrumental']}")
-    logger.info(f" Final CDG+MP3 ZIP: {track['final_karaoke_cdg_zip']}")
-    logger.info(f" Final TXT+MP3 ZIP: {track['final_karaoke_txt_zip']}")
+
+    if "final_karaoke_cdg_zip" in track:
+        logger.info(f" Final CDG+MP3 ZIP: {track['final_karaoke_cdg_zip']}")
+
+    if "final_karaoke_txt_zip" in track:
+        logger.info(f" Final TXT+MP3 ZIP: {track['final_karaoke_txt_zip']}")
+
     logger.info(f" Final Video with Title: {track['final_video']}")
     logger.info(f" YouTube URL: {track['youtube_url']}")
     logger.info(f" Brand Code: {track['brand_code']}")

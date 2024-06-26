@@ -139,7 +139,8 @@ class KaraokeFinalise:
             if not os.path.isfile(file_path):
                 self.logger.info(f" Optional input file {key} not found: {file_path}")
 
-            self.logger.info(f" Input file {key} found: {file_path}")
+            self.logger.info(f" Input file {key} found, adding to input_files: {file_path}")
+            input_files[key] = file_path
 
         return input_files
 
@@ -528,6 +529,7 @@ class KaraokeFinalise:
 
         # Check if end_mov file exists and include it in the concat command
         if "end_mov" in input_files and os.path.isfile(input_files["end_mov"]):
+            self.logger.info(f"Found end_mov file: {input_files['end_mov']}, including in final MP4")
             end_mov_file = shlex.quote(os.path.abspath(input_files["end_mov"]))
             env_mov_input = f"-i {end_mov_file}"
 
@@ -746,6 +748,9 @@ class KaraokeFinalise:
         }
 
         if self.enable_cdg:
-            result["final_cdg_zip"] = output_files["final_karaoke_cdg_zip"]
+            result["final_karaoke_cdg_zip"] = output_files["final_karaoke_cdg_zip"]
+
+        if self.enable_txt:
+            result["final_karaoke_txt_zip"] = output_files["final_karaoke_txt_zip"]
 
         return result
