@@ -8,11 +8,13 @@ import shutil
 import re
 import requests
 import pickle
+import lyrics_converter
 from thefuzz import fuzz
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
+
 
 
 class KaraokeFinalise:
@@ -23,6 +25,8 @@ class KaraokeFinalise:
         dry_run=False,
         model_name=None,
         instrumental_format="flac",
+        enable_cdg=False,
+        enable_txt=False,
         brand_prefix=None,
         organised_dir=None,
         public_share_dir=None,
@@ -30,7 +34,6 @@ class KaraokeFinalise:
         youtube_description_file=None,
         rclone_destination=None,
         discord_webhook_url=None,
-        skip_cdg=False,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -70,7 +73,8 @@ class KaraokeFinalise:
         self.youtube_description_file = youtube_description_file
         self.rclone_destination = rclone_destination
         self.discord_webhook_url = discord_webhook_url
-        self.skip_cdg = skip_cdg
+        self.enable_cdg = enable_cdg
+        self.enable_txt = enable_txt
 
         self.youtube_upload_enabled = False
         self.discord_notication_enabled = False
@@ -83,13 +87,18 @@ class KaraokeFinalise:
         self.suffixes = {
             "title_mov": " (Title).mov",
             "title_jpg": " (Title).jpg",
+            "end_mov": " (End).mov",
+            "end_jpg": " (End).jpg",
             "with_vocals_mov": " (With Vocals).mov",
             "with_vocals_mp4": " (With Vocals).mp4",
+            "karaoke_lrc": " (Karaoke).lrc",
             "karaoke_cdg": " (Karaoke).cdg",
+            "karaoke_txt": " (Karaoke).txt",
             "karaoke_mp3": " (Karaoke).mp3",
             "karaoke_mov": " (Karaoke).mov",
             "final_karaoke_mp4": " (Final Karaoke).mp4",
-            "final_karaoke_zip": " (Final Karaoke).zip",
+            "final_karaoke_cdg_zip": " (Final Karaoke CDG).zip",
+            "final_karaoke_txt_zip": " (Final Karaoke TXT).zip",
         }
 
         self.youtube_url_prefix = "https://www.youtube.com/watch?v="
@@ -108,13 +117,28 @@ class KaraokeFinalise:
             "with_vocals_mov": with_vocals_file,
         }
 
-        if not self.skip_cdg:
+        optional_input_files = {
+            "end_mov": f"{base_name}{self.suffixes['end_mov']}",
+            "end_jpg": f"{base_name}{self.suffixes['end_jpg']}",
+        }
+
+        if self.enable_cdg:
             input_files["karaoke_cdg"] = f"{base_name}{self.suffixes['karaoke_cdg']}"
             input_files["karaoke_mp3"] = f"{base_name}{self.suffixes['karaoke_mp3']}"
+
+        if self.enable_txt:
+            input_files["karaoke_mp3"] = f"{base_name}{self.suffixes['karaoke_mp3']}"
+            input_files["karaoke_lrc"] = f"{base_name}{self.suffixes['karaoke_lrc']}"
 
         for key, file_path in input_files.items():
             if not os.path.isfile(file_path):
                 raise Exception(f"Input file {key} not found: {file_path}")
+
+            self.logger.info(f" Input file {key} found: {file_path}")
+
+        for key, file_path in optional_input_files.items():
+            if not os.path.isfile(file_path):
+                self.logger.info(f" Optional input file {key} not found: {file_path}")
 
             self.logger.info(f" Input file {key} found: {file_path}")
 
@@ -127,8 +151,12 @@ class KaraokeFinalise:
             "final_karaoke_mp4": f"{base_name}{self.suffixes['final_karaoke_mp4']}",
         }
 
-        if not self.skip_cdg:
-            output_files["final_karaoke_zip"] = f"{base_name}{self.suffixes['final_karaoke_zip']}"
+        if self.enable_cdg:
+            output_files["final_karaoke_cdg_zip"] = f"{base_name}{self.suffixes['final_karaoke_cdg_zip']}"
+
+        if self.enable_txt:
+            output_files["karaoke_txt"] = f"{base_name}{self.suffixes['karaoke_txt']}"
+            output_files["final_karaoke_txt_zip"] = f"{base_name}{self.suffixes['final_karaoke_txt_zip']}"
 
         return output_files
 
@@ -208,7 +236,7 @@ class KaraokeFinalise:
 
         # Tell user which features are enabled, prompt them to confirm before proceeding
         self.logger.info(f"Enabled features:")
-        self.logger.info(f" CDG ZIP creation: {not self.skip_cdg}")
+        self.logger.info(f" CDG ZIP creation: {self.enable_cdg}")
         self.logger.info(f" YouTube upload: {self.youtube_upload_enabled}")
         self.logger.info(f" Discord notifications: {self.discord_notication_enabled}")
         self.logger.info(f" Folder organisation: {self.folder_organisation_enabled}")
@@ -486,7 +514,9 @@ class KaraokeFinalise:
         self.execute_command(remux_ffmpeg_command, "Remuxing video with instrumental audio")
 
         # Convert the with vocals video to MP4
-        with_vocals_mp4_command = f'{self.ffmpeg_base_command} -i "{with_vocals_file}" -c:v libx264 -c:a aac "{output_files["with_vocals_mp4"]}"'
+        with_vocals_mp4_command = (
+            f'{self.ffmpeg_base_command} -i "{with_vocals_file}" -c:v libx264 -c:a aac "{output_files["with_vocals_mp4"]}"'
+        )
         self.execute_command(with_vocals_mp4_command, "Converting with vocals video to MP4")
 
         # Quote file paths to handle special characters
@@ -494,8 +524,15 @@ class KaraokeFinalise:
         karaoke_mov_file = shlex.quote(os.path.abspath(output_files["karaoke_mov"]))
         output_final_mp4_file = shlex.quote(output_files["final_karaoke_mp4"])
 
-        # Use ffmpeg concat filter to join the title video and the karaoke video to produce the final MP4
-        join_ffmpeg_command = f'{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mov_file} -filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]" -map "[outv]" -map "[outa]" -c:v libx264 -c:a aac_at -q:a 14 {output_final_mp4_file}'
+        env_mov_input = ""
+
+        # Check if end_mov file exists and include it in the concat command
+        if "end_mov" in input_files and os.path.isfile(input_files["end_mov"]):
+            end_mov_file = shlex.quote(os.path.abspath(input_files["end_mov"]))
+            env_mov_input = f"-i {end_mov_file}"
+
+        join_ffmpeg_command = f'{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mov_file} {env_mov_input} -filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]" -map "[outv]" -map "[outa]" -c:v libx264 -c:a aac_at -q:a 14 {output_final_mp4_file}'
+
         self.logger.debug(f"Running command: {join_ffmpeg_command}")
         self.execute_command(join_ffmpeg_command, "Joining title and instrumental videos")
 
@@ -510,26 +547,54 @@ class KaraokeFinalise:
         self.logger.info(f"Creating CDG ZIP file...")
 
         # Check if CDG file already exists, if so, ask user to overwrite or skip
-        if os.path.isfile(output_files["final_karaoke_zip"]):
+        if os.path.isfile(output_files["final_karaoke_cdg_zip"]):
             if not self.prompt_user_bool(
-                f"Found existing CDG ZIP file: {output_files['final_karaoke_zip']}. Overwrite (y) or skip (n)?",
+                f"Found existing CDG ZIP file: {output_files['final_karaoke_cdg_zip']}. Overwrite (y) or skip (n)?",
             ):
                 self.logger.info(f"Skipping CDG ZIP file creation, existing file will be used.")
                 return
 
         # Create the ZIP file containing the MP3 and CDG files
         if self.dry_run:
-            self.logger.info(f"DRY RUN: Would create CDG ZIP file: {output_files['final_karaoke_zip']}")
+            self.logger.info(f"DRY RUN: Would create CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
         else:
             self.logger.info(f"Creating ZIP file containing {input_files['karaoke_mp3']} and {input_files['karaoke_cdg']}")
-            with zipfile.ZipFile(output_files["final_karaoke_zip"], "w") as zipf:
+            with zipfile.ZipFile(output_files["final_karaoke_cdg_zip"], "w") as zipf:
                 zipf.write(input_files["karaoke_mp3"], os.path.basename(input_files["karaoke_mp3"]))
                 zipf.write(input_files["karaoke_cdg"], os.path.basename(input_files["karaoke_cdg"]))
 
-            if not os.path.isfile(output_files["final_karaoke_zip"]):
-                raise Exception(f"Failed to create CDG ZIP file: {output_files['final_karaoke_zip']}")
+            if not os.path.isfile(output_files["final_karaoke_cdg_zip"]):
+                raise Exception(f"Failed to create CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
 
-            self.logger.info(f"CDG ZIP file created: {output_files['final_karaoke_zip']}")
+            self.logger.info(f"CDG ZIP file created: {output_files['final_karaoke_cdg_zip']}")
+
+    def create_txt_zip_file(self, input_files, output_files):
+        self.logger.info(f"Creating TXT ZIP file...")
+
+        # Check if TXT file already exists, if so, ask user to overwrite or skip
+        if os.path.isfile(output_files["final_karaoke_txt_zip"]):
+            if not self.prompt_user_bool(
+                f"Found existing TXT ZIP file: {output_files['final_karaoke_txt_zip']}. Overwrite (y) or skip (n)?",
+            ):
+                self.logger.info(f"Skipping TXT ZIP file creation, existing file will be used.")
+                return
+
+        # Create the ZIP file containing the MP3 and TXT files
+        if self.dry_run:
+            self.logger.info(f"DRY RUN: Would create TXT ZIP file: {output_files['final_karaoke_txt_zip']}")
+        else:
+            self.logger.info("Running karaoke-converter to convert MidiCo LRC lyrics to TXT format")
+            lyrics_converter.LyricsConverter(input_files["karaoke_lrc"], output_files["karaoke_txt"])
+
+            self.logger.info(f"Creating ZIP file containing {input_files['karaoke_mp3']} and {output_files['karaoke_txt']}")
+            with zipfile.ZipFile(output_files["final_karaoke_txt_zip"], "w") as zipf:
+                zipf.write(input_files["karaoke_mp3"], os.path.basename(input_files["karaoke_mp3"]))
+                zipf.write(output_files["karaoke_txt"], os.path.basename(output_files["karaoke_txt"]))
+
+            if not os.path.isfile(output_files["final_karaoke_txt_zip"]):
+                raise Exception(f"Failed to create TXT ZIP file: {output_files['final_karaoke_txt_zip']}")
+
+            self.logger.info(f"TXT ZIP file created: {output_files['final_karaoke_txt_zip']}")
 
     def move_files_to_brand_code_folder(self, brand_code, artist, title, output_files):
         self.logger.info(f"Moving files to new brand-prefixed directory...")
@@ -579,7 +644,7 @@ class KaraokeFinalise:
             self.logger.info(f"DRY RUN: Would copy final MP4 and ZIP to {dest_mp4_file} + .cdg")
         else:
             shutil.copy2(output_files["final_karaoke_mp4"], dest_mp4_file)
-            shutil.copy2(output_files["final_karaoke_zip"], dest_zip_file)
+            shutil.copy2(output_files["final_karaoke_cdg_zip"], dest_zip_file)
             self.logger.info(f"Copied final files to public share directory")
 
     def sync_public_share_dir_to_rclone_destination(self):
@@ -654,8 +719,11 @@ class KaraokeFinalise:
         input_files = self.check_input_files_exist(base_name, with_vocals_file, instrumental_audio_file)
         output_files = self.prepare_output_filenames(base_name)
 
-        if not self.skip_cdg:
+        if self.enable_cdg:
             self.create_cdg_zip_file(input_files, output_files)
+
+        if self.enable_txt:
+            self.create_txt_zip_file(input_files, output_files)
 
         self.remux_and_encode_output_video_files(with_vocals_file, input_files, output_files)
 
@@ -672,7 +740,7 @@ class KaraokeFinalise:
             "new_brand_code_dir_path": self.new_brand_code_dir_path,
         }
 
-        if not self.skip_cdg:
-            result["final_zip"] = output_files["final_karaoke_zip"]
+        if self.enable_cdg:
+            result["final_cdg_zip"] = output_files["final_karaoke_cdg_zip"]
 
         return result

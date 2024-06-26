@@ -1358,6 +1358,17 @@ files = [
 ]
 
 [[package]]
+name = "lyrics-converter"
+version = "0.2.0"
+description = "Tool to convert between different text-based lyrics formats (e.g. LRC, MidiCo LRC, ASS, TXT)"
+optional = false
+python-versions = ">=3.10"
+files = [
+    {file = "lyrics_converter-0.2.0-py3-none-any.whl", hash = "sha256:f4360f6be75f5f5268ae9ef48a6bc26b0707e827a73529f8d9f10b7433ba345c"},
+    {file = "lyrics_converter-0.2.0.tar.gz", hash = "sha256:4baf5240262362f703e1be096945dd60848fc8f3ca740a1972935a0d6aae4a45"},
+]
+
+[[package]]
 name = "lyricsgenius"
 version = "3.0.1"
 description = "Download lyrics and metadata from Genius.com"
@@ -2161,7 +2172,6 @@ cleo = ">=2.1.0,<3.0.0"
 crashtest = ">=0.4.1,<0.5.0"
 dulwich = ">=0.21.2,<0.22.0"
 fastjsonschema = ">=2.18.0,<3.0.0"
-importlib-metadata = {version = ">=4.4", markers = "python_version < \"3.10\""}
 installer = ">=0.7.0,<0.8.0"
 keyring = ">=24.0.0,<25.0.0"
 packaging = ">=23.1"
@@ -2386,7 +2396,6 @@ files = [
 
 [package.dependencies]
 altgraph = "*"
-importlib-metadata = {version = ">=4.6", markers = "python_version < \"3.10\""}
 macholib = {version = ">=1.8", markers = "sys_platform == \"darwin\""}
 packaging = ">=22.0"
 pefile = {version = ">=2022.5.30", markers = "sys_platform == \"win32\""}
@@ -2410,7 +2419,6 @@ files = [
 ]
 
 [package.dependencies]
-importlib-metadata = {version = ">=4.6", markers = "python_version < \"3.10\""}
 packaging = ">=22.0"
 setuptools = ">=42.0.0"
 
@@ -3481,5 +3489,5 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 
 [metadata]
 lock-version = "2.0"
-python-versions = ">=3.9,<3.13"
-content-hash = "8d14c6c81eedaecf2de336edcd969a953aeb4d8fb310a23d41512790a1f6d776"
+python-versions = ">=3.10,<3.13"
+content-hash = "6a22bced0f6ab3e76f36c0946bd010e1720add14518357244bbf39340f37ef8c"

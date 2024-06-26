@@ -48,6 +48,18 @@ def main():
     )
 
     parser.add_argument(
+        "--enable_cdg",
+        action="store_true",
+        help="Optional: Enable CDG ZIP generation during finalisation (default: disabled). Example: --enable_cdg",
+    )
+
+    parser.add_argument(
+        "--enable_txt",
+        action="store_true",
+        help="Optional: Enable TXT ZIP generation during finalisation (default: disabled). Example: --enable_txt",
+    )
+
+    parser.add_argument(
         "--brand_prefix",
         default=None,
         help="Optional: Your brand prefix to calculate the next sequential number and move the resulting folder. Example: --brand_prefix=BRAND",
@@ -84,9 +96,9 @@ def main():
     )
 
     parser.add_argument(
-        "--skip_cdg",
-        action="store_true",
-        help="Optional: Skip CDG ZIP generation during finalisation (default: disabled). Example: --skip_cdg",
+        "--discord_webhook_url",
+        default=None,
+        help="Optional: Discord webhook URL to send notifications to. Example: --discord_webhook_url='https://discord.com/api/webhooks/1234567890/TOKEN/messages",
     )
 
     args = parser.parse_args()
@@ -102,14 +114,15 @@ def main():
         dry_run=args.dry_run,
         model_name=args.model_name,
         instrumental_format=args.instrumental_format,
+        enable_cdg=args.enable_cdg,
+        enable_txt=args.enable_txt,
         brand_prefix=args.brand_prefix,
         organised_dir=args.organised_dir,
         public_share_dir=args.public_share_dir,
         youtube_client_secrets_file=args.youtube_client_secrets_file,
         youtube_description_file=args.youtube_description_file,
         rclone_destination=args.rclone_destination,
-        discord_webhook_url=os.environ.get("DISCORD_WEBHOOK_URL"),
-        skip_cdg=args.skip_cdg,
+        discord_webhook_url=args.discord_webhook_url,
     )
 
     try:
@@ -123,8 +136,9 @@ def main():
     logger.info(f"Track: {track['artist']} - {track['title']}")
     logger.info(f" Video With Vocals: {track['video_with_vocals']}")
     logger.info(f" Video With Instrumental: {track['video_with_instrumental']}")
-    logger.info(f" Final CDG+MP3 ZIP: {track['final_video']}")
-    logger.info(f" Final Video with Title: {track['final_zip']}")
+    logger.info(f" Final CDG+MP3 ZIP: {track['final_karaoke_cdg_zip']}")
+    logger.info(f" Final TXT+MP3 ZIP: {track['final_karaoke_txt_zip']}")
+    logger.info(f" Final Video with Title: {track['final_video']}")
     logger.info(f" YouTube URL: {track['youtube_url']}")
     logger.info(f" Brand Code: {track['brand_code']}")
     logger.info(f" New Brand Code Directory: {track['new_brand_code_dir_path']}")
