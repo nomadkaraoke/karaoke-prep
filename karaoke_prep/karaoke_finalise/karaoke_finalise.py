@@ -8,13 +8,12 @@ import shutil
 import re
 import requests
 import pickle
-import lyrics_converter
+from lyrics_converter import LyricsConverter
 from thefuzz import fuzz
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
-
 
 
 class KaraokeFinalise:
@@ -237,6 +236,7 @@ class KaraokeFinalise:
         # Tell user which features are enabled, prompt them to confirm before proceeding
         self.logger.info(f"Enabled features:")
         self.logger.info(f" CDG ZIP creation: {self.enable_cdg}")
+        self.logger.info(f" TXT ZIP creation: {self.enable_txt}")
         self.logger.info(f" YouTube upload: {self.youtube_upload_enabled}")
         self.logger.info(f" Discord notifications: {self.discord_notication_enabled}")
         self.logger.info(f" Folder organisation: {self.folder_organisation_enabled}")
@@ -583,8 +583,13 @@ class KaraokeFinalise:
         if self.dry_run:
             self.logger.info(f"DRY RUN: Would create TXT ZIP file: {output_files['final_karaoke_txt_zip']}")
         else:
-            self.logger.info("Running karaoke-converter to convert MidiCo LRC lyrics to TXT format")
-            lyrics_converter.LyricsConverter(input_files["karaoke_lrc"], output_files["karaoke_txt"])
+            self.logger.info(f"Running karaoke-converter to convert MidiCo LRC file {input_files['karaoke_lrc']} to TXT format")
+            txt_converter = LyricsConverter(output_format="txt", filepath=input_files["karaoke_lrc"])
+            converted_txt = txt_converter.convert_file()
+
+            with open(output_files["karaoke_txt"], "w") as txt_file:
+                txt_file.write(converted_txt)
+                self.logger.info(f"TXT file written: {output_files['karaoke_txt']}")
 
             self.logger.info(f"Creating ZIP file containing {input_files['karaoke_mp3']} and {output_files['karaoke_txt']}")
             with zipfile.ZipFile(output_files["final_karaoke_txt_zip"], "w") as zipf:
