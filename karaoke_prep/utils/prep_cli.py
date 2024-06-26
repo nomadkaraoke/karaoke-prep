@@ -181,15 +181,33 @@ def main():
     )
 
     parser.add_argument(
+        "--end_extra_text",
+        default="THANK YOU FOR SINGING!",
+        help="Optional: Extra text to display on the end screen video. Example: --end_extra_text='THANK YOU FOR WATCHING!'",
+    )
+
+    parser.add_argument(
         "--end_font",
         default="Montserrat-Bold.ttf",
         help="Optional: Font file for end screen video (default: Montserrat-Bold.ttf). Example: --end_font=AvenirNext-Bold.ttf",
     )
 
     parser.add_argument(
-        "--end_text_color",
+        "--end_extra_text_color",
+        default="#ff7acc",
+        help="Optional: Font color for end screen video text (default: #ffffff). Example: --end_extra_text_color=#123456",
+    )
+
+    parser.add_argument(
+        "--end_artist_color",
+        default="#ffdf6b",
+        help="Optional: Font color for end screen video artist text (default: #ffdf6b). Example: --end_artist_color=#123456",
+    )
+
+    parser.add_argument(
+        "--end_title_color",
         default="#ffffff",
-        help="Optional: Font color for end screen video text (default: #ffffff). Example: --end_text_color=#123456",
+        help="Optional: Font color for end screen video title text (default: #ffffff). Example: --end_title_color=#123456",
     )
 
     parser.add_argument(
@@ -209,6 +227,73 @@ def main():
         type=int,
         default=5,
         help="Optional: duration of the end video in seconds (default: 5). Example: --end_video_duration=10",
+    )
+
+    parser.add_argument(
+        "--title_initial_font_size",
+        type=int,
+        default=500,
+        help="Optional: Initial font size for title video (default: 500). Example: --title_initial_font_size=600",
+    )
+    parser.add_argument(
+        "--title_top_padding",
+        type=int,
+        default=950,
+        help="Optional: Top padding for title video (default: 950). Example: --title_top_padding=1000",
+    )
+    parser.add_argument(
+        "--title_title_padding",
+        type=int,
+        default=400,
+        help="Optional: Title padding for title video (default: 400). Example: --title_title_padding=450",
+    )
+    parser.add_argument(
+        "--title_artist_padding",
+        type=int,
+        default=700,
+        help="Optional: Artist padding for title video (default: 700). Example: --title_artist_padding=750",
+    )
+    parser.add_argument(
+        "--title_fixed_gap",
+        type=int,
+        default=150,
+        help="Optional: Fixed gap for title video (default: 150). Example: --title_fixed_gap=200",
+    )
+    parser.add_argument(
+        "--end_initial_font_size",
+        type=int,
+        default=500,
+        help="Optional: Initial font size for end video (default: 500). Example: --end_initial_font_size=600",
+    )
+    parser.add_argument(
+        "--end_top_padding",
+        type=int,
+        default=950,
+        help="Optional: Top padding for end video (default: 950). Example: --end_top_padding=1000",
+    )
+    parser.add_argument(
+        "--end_title_padding",
+        type=int,
+        default=400,
+        help="Optional: Title padding for end video (default: 400). Example: --end_title_padding=450",
+    )
+    parser.add_argument(
+        "--end_artist_padding",
+        type=int,
+        default=700,
+        help="Optional: Artist padding for end video (default: 700). Example: --end_artist_padding=750",
+    )
+    parser.add_argument(
+        "--end_extra_text_padding",
+        type=int,
+        default=300,
+        help="Optional: Extra text padding for end video (default: 600). Example: --end_extra_text_padding=650",
+    )
+    parser.add_argument(
+        "--end_fixed_gap",
+        type=int,
+        default=150,
+        help="Optional: Fixed gap for end video (default: 150). Example: --end_fixed_gap=200",
     )
 
     args = parser.parse_args()
@@ -280,20 +365,34 @@ def main():
         normalization_enabled=args.normalize,
         denoise_enabled=args.denoise,
         create_track_subfolders=args.no_track_subfolders,
+        existing_instrumental=args.existing_instrumental,
+        existing_title_image=args.existing_title_image,
+        existing_end_image=args.existing_end_image,
+        title_video_duration=args.title_video_duration,
         intro_background_color=args.intro_background_color,
         intro_background_image=args.intro_background_image,
         intro_font=args.intro_font,
         intro_artist_color=args.intro_artist_color,
         intro_title_color=args.intro_title_color,
-        existing_instrumental=args.existing_instrumental,
-        existing_title_image=args.existing_title_image,
+        title_initial_font_size=args.title_initial_font_size,
+        title_top_padding=args.title_top_padding,
+        title_title_padding=args.title_title_padding,
+        title_artist_padding=args.title_artist_padding,
+        title_fixed_gap=args.title_fixed_gap,
+        end_video_duration=args.end_video_duration,
+        end_extra_text=args.end_extra_text,
         end_background_color=args.end_background_color,
         end_background_image=args.end_background_image,
         end_font=args.end_font,
-        end_text_color=args.end_text_color,
-        existing_end_image=args.existing_end_image,
-        title_video_duration=args.title_video_duration,
-        end_video_duration=args.end_video_duration,
+        end_extra_text_color=args.end_extra_text_color,
+        end_artist_color=args.end_artist_color,
+        end_title_color=args.end_title_color,
+        end_initial_font_size=args.end_initial_font_size,
+        end_top_padding=args.end_top_padding,
+        end_title_padding=args.end_title_padding,
+        end_artist_padding=args.end_artist_padding,
+        end_extra_text_padding=args.end_extra_text_padding,
+        end_fixed_gap=args.end_fixed_gap,
     )
 
     tracks = kprep.process()

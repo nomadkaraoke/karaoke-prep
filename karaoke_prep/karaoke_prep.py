@@ -43,10 +43,24 @@ class KaraokePrep:
         end_background_color="#000000",
         end_background_image=None,
         end_font="Montserrat-Bold.ttf",
-        end_text_color="#ffffff",
+        end_extra_text_color="#ffffff",
+        end_artist_color="#ffffff",
+        end_title_color="#ff7acc",
         existing_end_image=None,
         title_video_duration=5,
         end_video_duration=5,
+        title_initial_font_size=500,
+        title_top_padding=950,
+        title_title_padding=400,
+        title_artist_padding=700,
+        title_fixed_gap=150,
+        end_initial_font_size=500,
+        end_top_padding=950,
+        end_title_padding=400,
+        end_artist_padding=700,
+        end_extra_text_padding=300,
+        end_fixed_gap=150,
+        end_extra_text="THANK YOU FOR SINGING!",
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -86,6 +100,18 @@ class KaraokePrep:
         self.existing_title_image = existing_title_image
         self.title_video_duration = title_video_duration
         self.end_video_duration = end_video_duration
+        self.title_initial_font_size = title_initial_font_size
+        self.title_top_padding = title_top_padding
+        self.title_title_padding = title_title_padding
+        self.title_artist_padding = title_artist_padding
+        self.title_fixed_gap = title_fixed_gap
+        self.end_initial_font_size = end_initial_font_size
+        self.end_top_padding = end_top_padding
+        self.end_title_padding = end_title_padding
+        self.end_artist_padding = end_artist_padding
+        self.end_extra_text_padding = end_extra_text_padding
+        self.end_fixed_gap = end_fixed_gap
+        self.end_extra_text = end_extra_text
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
@@ -100,7 +126,7 @@ class KaraokePrep:
         self.title_format = {
             "background_color": intro_background_color,
             "background_image": intro_background_image,
-            "intro_font": intro_font,
+            "font": intro_font,
             "artist_color": intro_artist_color,
             "title_color": intro_title_color,
         }
@@ -108,8 +134,10 @@ class KaraokePrep:
         self.end_format = {
             "background_color": end_background_color,
             "background_image": end_background_image,
-            "end_font": end_font,
-            "text_color": end_text_color,
+            "font": end_font,
+            "extra_text_color": end_extra_text_color,
+            "artist_color": end_artist_color,
+            "title_color": end_title_color,
         }
 
         self.existing_end_image = existing_end_image
@@ -499,18 +527,28 @@ class KaraokePrep:
 
     def create_video(
         self,
+        extra_text,
         title_text,
         artist_text,
         format,
         output_image_filepath_noext,
         output_video_filepath,
         existing_image=None,
-        font_key="font",
+        extra_text_color=None,
         title_color=None,
         artist_color=None,
         duration=5,
+        initial_font_size=500,
+        top_padding=950,
+        title_padding=400,
+        artist_padding=700,
+        extra_text_padding=600,
+        fixed_gap=150,
     ):
         resolution = (3840, 2160)  # 4K resolution
+        self.logger.info(f"Creating video with format: {format}")
+        self.logger.info(f"extra_text: {extra_text}, artist_text: {artist_text}, title_text: {title_text}")
+        self.logger.info(f"top_padding: {top_padding}, title_padding: {title_padding}, artist_padding: {artist_padding}, extra_text_padding: {extra_text_padding}")
 
         if existing_image:
             self.logger.info(f"Using existing image file: {existing_image}")
@@ -543,31 +581,38 @@ class KaraokePrep:
             # Resize background to match resolution
             background = background.resize(resolution)
 
-            initial_font_size = 500
-            top_padding = 950
-            title_padding = 400
-            artist_padding = 700
-            fixed_gap = 150
-
             draw = ImageDraw.Draw(background)
 
             # Accessing the font file from the package resources
-            with pkg_resources.path("karaoke_prep.resources", format[font_key]) as font_path:
-                # Calculate positions and sizes for title and artist
+            with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
+                # Calculate positions and sizes for title, artist, and extra text
                 title_font, _ = self.calculate_text_size_and_position(
                     draw, title_text, str(font_path), initial_font_size, resolution, title_padding
                 )
                 artist_font, _ = self.calculate_text_size_and_position(
                     draw, artist_text, str(font_path), initial_font_size, resolution, artist_padding
                 )
+                if extra_text:
+                    self.logger.info(f"Calculating extra text font size and position for: {extra_text}")
+                    extra_text_font, _ = self.calculate_text_size_and_position(
+                        draw, extra_text, str(font_path), initial_font_size, resolution, extra_text_padding
+                    )
 
             # Calculate vertical positions with consistent gap
-            title_text_position, title_height = self.calculate_text_position(draw, title_text, title_font, resolution, top_padding)
-            artist_text_position, _ = self.calculate_text_position(
-                draw, artist_text, artist_font, resolution, title_text_position[1] + title_height + fixed_gap
-            )
+            current_y = top_padding
+            if extra_text:
+                self.logger.info(f"Calculating extra text position for: {extra_text}")
+                extra_text_position, extra_text_height = self.calculate_text_position(
+                    draw, extra_text, extra_text_font, resolution, current_y
+                )
+                draw.text(extra_text_position, extra_text, fill=extra_text_color, font=extra_text_font)
+                current_y += extra_text_height + fixed_gap
 
+            title_text_position, title_height = self.calculate_text_position(draw, title_text, title_font, resolution, current_y)
             draw.text(title_text_position, title_text, fill=title_color, font=title_font)
+            current_y += title_height + fixed_gap
+
+            artist_text_position, _ = self.calculate_text_position(draw, artist_text, artist_font, resolution, current_y)
             draw.text(artist_text_position, artist_text, fill=artist_color, font=artist_font)
 
             # Save static background image
@@ -586,35 +631,48 @@ class KaraokePrep:
         os.system(ffmpeg_command)
 
     def create_end_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
-        title_text = "THANK YOU FOR WATCHING!"
-        artist_text = f"{title.upper()} by {artist.upper()}"
+        extra_text = self.end_extra_text
+        title_text = title.upper()
+        artist_text = artist.upper()
         self.create_video(
-            title_text,
-            artist_text,
-            format,
-            output_image_filepath_noext,
-            output_video_filepath,
-            self.existing_end_image,
-            font_key="end_font",
-            title_color=format["text_color"],
-            artist_color=format["text_color"],
+            extra_text=extra_text,
+            title_text=title_text,
+            artist_text=artist_text,
+            format=format,
+            output_image_filepath_noext=output_image_filepath_noext,
+            output_video_filepath=output_video_filepath,
+            existing_image=self.existing_end_image,
+            extra_text_color=format["extra_text_color"],
+            title_color=format["title_color"],
+            artist_color=format["artist_color"],
             duration=self.end_video_duration,
+            initial_font_size=self.end_initial_font_size,
+            top_padding=self.end_top_padding,
+            title_padding=self.end_title_padding,
+            artist_padding=self.end_artist_padding,
+            extra_text_padding=self.end_extra_text_padding,
+            fixed_gap=self.end_fixed_gap,
         )
 
     def create_title_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
         title_text = title.upper()
         artist_text = artist.upper()
         self.create_video(
-            title_text,
-            artist_text,
-            format,
-            output_image_filepath_noext,
-            output_video_filepath,
-            self.existing_title_image,
-            font_key="intro_font",
+            extra_text=None,
+            title_text=title_text,
+            artist_text=artist_text,
+            format=format,
+            output_image_filepath_noext=output_image_filepath_noext,
+            output_video_filepath=output_video_filepath,
+            existing_image=self.existing_title_image,
             title_color=format["title_color"],
             artist_color=format["artist_color"],
-            duration=self.title_video_duration,  # Use the title video duration
+            duration=self.title_video_duration,
+            initial_font_size=self.title_initial_font_size,
+            top_padding=self.title_top_padding,
+            title_padding=self.title_title_padding,
+            artist_padding=self.title_artist_padding,
+            fixed_gap=self.title_fixed_gap,
         )
 
     def hex_to_rgb(self, hex_color):
