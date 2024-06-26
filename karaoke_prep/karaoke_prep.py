@@ -40,6 +40,13 @@ class KaraokePrep:
         intro_title_color="#ff7acc",
         existing_instrumental=None,
         existing_title_image=None,
+        end_background_color="#000000",
+        end_background_image=None,
+        end_font="Montserrat-Bold.ttf",
+        end_text_color="#ffffff",
+        existing_end_image=None,
+        title_video_duration=5,
+        end_video_duration=5,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -77,6 +84,8 @@ class KaraokePrep:
         self.create_track_subfolders = create_track_subfolders
         self.existing_instrumental = existing_instrumental
         self.existing_title_image = existing_title_image
+        self.title_video_duration = title_video_duration
+        self.end_video_duration = end_video_duration
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
@@ -95,6 +104,15 @@ class KaraokePrep:
             "artist_color": intro_artist_color,
             "title_color": intro_title_color,
         }
+
+        self.end_format = {
+            "background_color": end_background_color,
+            "background_image": end_background_image,
+            "end_font": end_font,
+            "text_color": end_text_color,
+        }
+
+        self.existing_end_image = existing_end_image
 
         self.extracted_info = None
         self.persistent_artist = None
@@ -479,43 +497,51 @@ class KaraokePrep:
         text_y = vertical_offset
         return (text_x, text_y), text_height
 
-    def create_title_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
-        duration = 5  # Duration in seconds
+    def create_video(
+        self,
+        title_text,
+        artist_text,
+        format,
+        output_image_filepath_noext,
+        output_video_filepath,
+        existing_image=None,
+        font_key="font",
+        title_color=None,
+        artist_color=None,
+        duration=5,
+    ):
         resolution = (3840, 2160)  # 4K resolution
 
-        if self.existing_title_image:
-            self.logger.info(f"Using existing title image file: {self.existing_title_image}")
-            existing_extension = os.path.splitext(self.existing_title_image)[1]
+        if existing_image:
+            self.logger.info(f"Using existing image file: {existing_image}")
+            existing_extension = os.path.splitext(existing_image)[1]
 
             if existing_extension == ".png":
-                self.logger.info(f"Copying existing PNG title image file: {self.existing_title_image}")
-                shutil.copy2(self.existing_title_image, output_image_filepath_noext + existing_extension)
+                self.logger.info(f"Copying existing PNG image file: {existing_image}")
+                shutil.copy2(existing_image, output_image_filepath_noext + existing_extension)
             else:
-                self.logger.info(f"Converting existing title image to PNG")
-                existing_image = Image.open(self.existing_title_image)
-                existing_image.save(output_image_filepath_noext + ".png")
+                self.logger.info(f"Converting existing image to PNG")
+                existing_image_obj = Image.open(existing_image)
+                existing_image_obj.save(output_image_filepath_noext + ".png")
 
             if existing_extension != ".jpg":
-                self.logger.info(f"Converting existing title image to JPG")
-                existing_image = Image.open(self.existing_title_image)
-                if existing_image.mode == "RGBA":
-                    existing_image = existing_image.convert("RGB")  # Convert RGBA to RGB
-                existing_image.save(output_image_filepath_noext + ".jpg", quality=95)
+                self.logger.info(f"Converting existing image to JPG")
+                existing_image_obj = Image.open(existing_image)
+                if existing_image_obj.mode == "RGBA":
+                    existing_image_obj = existing_image_obj.convert("RGB")  # Convert RGBA to RGB
+                existing_image_obj.save(output_image_filepath_noext + ".jpg", quality=95)
 
         else:
             # Load or create background image
             if format["background_image"] and os.path.exists(format["background_image"]):
-                self.logger.info(f"Using title screen background image file: {format['background_image']}")
+                self.logger.info(f"Using background image file: {format['background_image']}")
                 background = Image.open(format["background_image"])
             else:
-                self.logger.info(f"Using title screen background color: {format['background_color']}")
+                self.logger.info(f"Using background color: {format['background_color']}")
                 background = Image.new("RGB", resolution, color=self.hex_to_rgb(format["background_color"]))
 
             # Resize background to match resolution
             background = background.resize(resolution)
-
-            title = title.upper()
-            artist = artist.upper()
 
             initial_font_size = 500
             top_padding = 950
@@ -526,23 +552,23 @@ class KaraokePrep:
             draw = ImageDraw.Draw(background)
 
             # Accessing the font file from the package resources
-            with pkg_resources.path("karaoke_prep.resources", format["intro_font"]) as font_path:
+            with pkg_resources.path("karaoke_prep.resources", format[font_key]) as font_path:
                 # Calculate positions and sizes for title and artist
                 title_font, _ = self.calculate_text_size_and_position(
-                    draw, title, str(font_path), initial_font_size, resolution, title_padding
+                    draw, title_text, str(font_path), initial_font_size, resolution, title_padding
                 )
                 artist_font, _ = self.calculate_text_size_and_position(
-                    draw, artist, str(font_path), initial_font_size, resolution, artist_padding
+                    draw, artist_text, str(font_path), initial_font_size, resolution, artist_padding
                 )
 
             # Calculate vertical positions with consistent gap
-            title_text_position, title_height = self.calculate_text_position(draw, title, title_font, resolution, top_padding)
+            title_text_position, title_height = self.calculate_text_position(draw, title_text, title_font, resolution, top_padding)
             artist_text_position, _ = self.calculate_text_position(
-                draw, artist, artist_font, resolution, title_text_position[1] + title_height + fixed_gap
+                draw, artist_text, artist_font, resolution, title_text_position[1] + title_height + fixed_gap
             )
 
-            draw.text(title_text_position, title, fill=format["title_color"], font=title_font)
-            draw.text(artist_text_position, artist, fill=format["artist_color"], font=artist_font)
+            draw.text(title_text_position, title_text, fill=title_color, font=title_font)
+            draw.text(artist_text_position, artist_text, fill=artist_color, font=artist_font)
 
             # Save static background image
             background.save(f"{output_image_filepath_noext}.png")
@@ -555,9 +581,41 @@ class KaraokePrep:
         ffmpeg_command = f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath_noext}.png" -f lavfi -i anullsrc '
         ffmpeg_command += f'-c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p -vf scale={resolution[0]}:{resolution[1]} -c:a aac -shortest "{output_video_filepath}"'
 
-        self.logger.info("Generating title video...")
+        self.logger.info("Generating video...")
         self.logger.debug(f"Running command: {ffmpeg_command}")
         os.system(ffmpeg_command)
+
+    def create_end_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
+        title_text = "THANK YOU FOR WATCHING!"
+        artist_text = f"{title.upper()} by {artist.upper()}"
+        self.create_video(
+            title_text,
+            artist_text,
+            format,
+            output_image_filepath_noext,
+            output_video_filepath,
+            self.existing_end_image,
+            font_key="end_font",
+            title_color=format["text_color"],
+            artist_color=format["text_color"],
+            duration=self.end_video_duration,
+        )
+
+    def create_title_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
+        title_text = title.upper()
+        artist_text = artist.upper()
+        self.create_video(
+            title_text,
+            artist_text,
+            format,
+            output_image_filepath_noext,
+            output_video_filepath,
+            self.existing_title_image,
+            font_key="intro_font",
+            title_color=format["title_color"],
+            artist_color=format["artist_color"],
+            duration=self.title_video_duration,  # Use the title video duration
+        )
 
     def hex_to_rgb(self, hex_color):
         """Convert hex color to RGB tuple."""
@@ -668,6 +726,17 @@ class KaraokePrep:
         else:
             self.logger.info(f"Creating title video...")
             self.create_title_video(self.artist, self.title, self.title_format, output_image_filepath_noext, processed_track["title_video"])
+
+        output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (End)")
+        processed_track["end_image_png"] = f"{output_image_filepath_noext}.png"
+        processed_track["end_image_jpg"] = f"{output_image_filepath_noext}.jpg"
+        processed_track["end_video"] = os.path.join(track_output_dir, f"{artist_title} (End).mov")
+
+        if os.path.exists(processed_track["end_video"]):
+            self.logger.debug(f"End screen video already exists, skipping render: {processed_track['end_video']}")
+        else:
+            self.logger.info(f"Creating end screen video...")
+            self.create_end_video(self.artist, self.title, self.end_format, output_image_filepath_noext, processed_track["end_video"])
 
         if self.existing_instrumental:
             self.logger.info(f"Using existing instrumental file: {self.existing_instrumental}")

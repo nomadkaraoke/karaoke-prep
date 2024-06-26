@@ -169,6 +169,48 @@ def main():
         help="Optional: Path to an existing title image file. If provided, title image generation will be skipped.",
     )
 
+    parser.add_argument(
+        "--end_background_color",
+        default="#000000",
+        help="Optional: Background color for end screen video (default: black). Example: --end_background_color=#123456",
+    )
+
+    parser.add_argument(
+        "--end_background_image",
+        help="Optional: Path to background image for end screen video. Overrides background color if provided. Example: --end_background_image=path/to/image.jpg",
+    )
+
+    parser.add_argument(
+        "--end_font",
+        default="Montserrat-Bold.ttf",
+        help="Optional: Font file for end screen video (default: Montserrat-Bold.ttf). Example: --end_font=AvenirNext-Bold.ttf",
+    )
+
+    parser.add_argument(
+        "--end_text_color",
+        default="#ffffff",
+        help="Optional: Font color for end screen video text (default: #ffffff). Example: --end_text_color=#123456",
+    )
+
+    parser.add_argument(
+        "--existing_end_image",
+        help="Optional: Path to an existing end screen image file. If provided, end screen image generation will be skipped.",
+    )
+
+    parser.add_argument(
+        "--title_video_duration",
+        type=int,
+        default=5,
+        help="Optional: duration of the title video in seconds (default: 5). Example: --title_video_duration=10",
+    )
+
+    parser.add_argument(
+        "--end_video_duration",
+        type=int,
+        default=5,
+        help="Optional: duration of the end video in seconds (default: 5). Example: --end_video_duration=10",
+    )
+
     args = parser.parse_args()
 
     input_media, artist, title, filename_pattern = None, None, None, None
@@ -245,6 +287,13 @@ def main():
         intro_title_color=args.intro_title_color,
         existing_instrumental=args.existing_instrumental,
         existing_title_image=args.existing_title_image,
+        end_background_color=args.end_background_color,
+        end_background_image=args.end_background_image,
+        end_font=args.end_font,
+        end_text_color=args.end_text_color,
+        existing_end_image=args.existing_end_image,
+        title_video_duration=args.title_video_duration,
+        end_video_duration=args.end_video_duration,
     )
 
     tracks = kprep.process()
