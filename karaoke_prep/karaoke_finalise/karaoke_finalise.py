@@ -526,14 +526,16 @@ class KaraokeFinalise:
         output_final_mp4_file = shlex.quote(output_files["final_karaoke_mp4"])
 
         env_mov_input = ""
+        ffmpeg_filter = '-filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]"'
 
         # Check if end_mov file exists and include it in the concat command
         if "end_mov" in input_files and os.path.isfile(input_files["end_mov"]):
             self.logger.info(f"Found end_mov file: {input_files['end_mov']}, including in final MP4")
             end_mov_file = shlex.quote(os.path.abspath(input_files["end_mov"]))
             env_mov_input = f"-i {end_mov_file}"
+            ffmpeg_filter = '-filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0][2:v:0][2:a:0]concat=n=3:v=1:a=1[outv][outa]"'
 
-        join_ffmpeg_command = f'{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mov_file} {env_mov_input} -filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]" -map "[outv]" -map "[outa]" -c:v libx264 -c:a aac_at -q:a 14 {output_final_mp4_file}'
+        join_ffmpeg_command = f'{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mov_file} {env_mov_input} {ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a aac_at -q:a 14 {output_final_mp4_file}'
 
         self.logger.debug(f"Running command: {join_ffmpeg_command}")
         self.execute_command(join_ffmpeg_command, "Joining title and instrumental videos")
