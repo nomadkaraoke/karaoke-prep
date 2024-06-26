@@ -412,10 +412,19 @@ class KaraokeFinalise:
         response.raise_for_status()  # This will raise an exception if the request failed
         self.logger.info("Message posted to Discord")
 
-    def find_with_vocals_mov_file(self):
-        self.logger.info("Finding input file in current directory ending (With Vocals).mov")
+    def find_with_vocals_file(self):
+        self.logger.info("Finding input file in current directory ending (With Vocals).mov or (With Vocals).mp4")
 
         with_vocals_files = [f for f in os.listdir(".") if self.suffixes["with_vocals_mov"] in f]
+
+        if not with_vocals_files:
+            self.logger.info(f"No with vocals MOV file found, looking for with vocals MP4 file instead")
+
+            with_vocals_files = [f for f in os.listdir(".") if self.suffixes["with_vocals_mp4"] in f]
+            if with_vocals_files:
+                self.logger.info(f"Found with vocals MP4 file: {with_vocals_files[0]}")
+                return with_vocals_files[0]
+
         if not with_vocals_files:
             karaoke_files = [f for f in os.listdir(".") if self.suffixes["karaoke_mov"] in f]
             if karaoke_files:
@@ -487,7 +496,7 @@ class KaraokeFinalise:
     def get_names_from_withvocals(self, with_vocals_file):
         self.logger.info(f"Getting artist and title from {with_vocals_file}")
 
-        base_name = with_vocals_file.replace(self.suffixes["with_vocals_mov"], "")
+        base_name = with_vocals_file.replace(self.suffixes["with_vocals_mov"], "").replace(self.suffixes["with_vocals_mp4"], "")
         artist, title = base_name.split(" - ", 1)
         return base_name, artist, title
 
@@ -514,11 +523,17 @@ class KaraokeFinalise:
         remux_ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" -vn -i "{input_files["instrumental_audio"]}" -c:v copy -c:a aac "{output_files["karaoke_mov"]}"'
         self.execute_command(remux_ffmpeg_command, "Remuxing video with instrumental audio")
 
-        # Convert the with vocals video to MP4
-        with_vocals_mp4_command = (
-            f'{self.ffmpeg_base_command} -i "{with_vocals_file}" -c:v libx264 -c:a aac "{output_files["with_vocals_mp4"]}"'
-        )
-        self.execute_command(with_vocals_mp4_command, "Converting with vocals video to MP4")
+        # Convert the with vocals video to MP4 if it isn't already
+        if not with_vocals_file.endswith(".mp4"):
+            with_vocals_mp4_command = (
+                f'{self.ffmpeg_base_command} -i "{with_vocals_file}" -c:v libx264 -c:a aac "{output_files["with_vocals_mp4"]}"'
+            )
+            self.execute_command(with_vocals_mp4_command, "Converting with vocals video to MP4")
+
+            # Delete the with vocals mov after successfully converting it to mp4
+            if not self.dry_run and os.path.isfile(with_vocals_file):
+                self.logger.info(f"Deleting with vocals MOV file: {with_vocals_file}")
+                os.remove(with_vocals_file)
 
         # Quote file paths to handle special characters
         title_mov_file = shlex.quote(os.path.abspath(input_files["title_mov"]))
@@ -720,7 +735,7 @@ class KaraokeFinalise:
         # Check required input files and parameters exist, get user to confirm features before proceeding
         self.validate_input_parameters_for_features()
 
-        with_vocals_file = self.find_with_vocals_mov_file()
+        with_vocals_file = self.find_with_vocals_file()
         base_name, artist, title = self.get_names_from_withvocals(with_vocals_file)
 
         instrumental_audio_file = self.choose_instrumental_audio_file(base_name)
