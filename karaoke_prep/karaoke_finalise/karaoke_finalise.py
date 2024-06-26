@@ -84,6 +84,7 @@ class KaraokeFinalise:
             "title_mov": " (Title).mov",
             "title_jpg": " (Title).jpg",
             "with_vocals_mov": " (With Vocals).mov",
+            "with_vocals_mp4": " (With Vocals).mp4",
             "karaoke_cdg": " (Karaoke).cdg",
             "karaoke_mp3": " (Karaoke).mp3",
             "karaoke_mov": " (Karaoke).mov",
@@ -122,6 +123,7 @@ class KaraokeFinalise:
     def prepare_output_filenames(self, base_name):
         output_files = {
             "karaoke_mov": f"{base_name}{self.suffixes['karaoke_mov']}",
+            "with_vocals_mp4": f"{base_name}{self.suffixes['with_vocals_mp4']}",
             "final_karaoke_mp4": f"{base_name}{self.suffixes['final_karaoke_mp4']}",
         }
 
@@ -483,6 +485,10 @@ class KaraokeFinalise:
         remux_ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" -vn -i "{input_files["instrumental_audio"]}" -c:v copy -c:a aac "{output_files["karaoke_mov"]}"'
         self.execute_command(remux_ffmpeg_command, "Remuxing video with instrumental audio")
 
+        # Convert the with vocals video to MP4
+        with_vocals_mp4_command = f'{self.ffmpeg_base_command} -i "{with_vocals_file}" -c:v libx264 -c:a aac "{output_files["with_vocals_mp4"]}"'
+        self.execute_command(with_vocals_mp4_command, "Converting with vocals video to MP4")
+
         # Quote file paths to handle special characters
         title_mov_file = shlex.quote(os.path.abspath(input_files["title_mov"]))
         karaoke_mov_file = shlex.quote(os.path.abspath(output_files["karaoke_mov"]))
@@ -658,7 +664,7 @@ class KaraokeFinalise:
         result = {
             "artist": artist,
             "title": title,
-            "video_with_vocals": with_vocals_file,
+            "video_with_vocals": output_files["with_vocals_mp4"],
             "video_with_instrumental": output_files["karaoke_mov"],
             "final_video": output_files["final_karaoke_mp4"],
             "youtube_url": self.youtube_url,
