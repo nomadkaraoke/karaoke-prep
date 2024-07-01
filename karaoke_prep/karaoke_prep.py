@@ -61,6 +61,9 @@ class KaraokePrep:
         end_extra_text_padding=300,
         end_fixed_gap=150,
         end_extra_text="THANK YOU FOR SINGING!",
+        lyrics_artist=None,
+        lyrics_title=None,
+        skip_lyrics=False,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -112,6 +115,9 @@ class KaraokePrep:
         self.end_extra_text_padding = end_extra_text_padding
         self.end_fixed_gap = end_fixed_gap
         self.end_extra_text = end_extra_text
+        self.lyrics_artist = lyrics_artist
+        self.lyrics_title = lyrics_title
+        self.skip_lyrics = skip_lyrics
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
@@ -548,7 +554,9 @@ class KaraokePrep:
         resolution = (3840, 2160)  # 4K resolution
         self.logger.info(f"Creating video with format: {format}")
         self.logger.info(f"extra_text: {extra_text}, artist_text: {artist_text}, title_text: {title_text}")
-        self.logger.info(f"top_padding: {top_padding}, title_padding: {title_padding}, artist_padding: {artist_padding}, extra_text_padding: {extra_text_padding}")
+        self.logger.info(
+            f"top_padding: {top_padding}, title_padding: {title_padding}, artist_padding: {artist_padding}, extra_text_padding: {extra_text_padding}"
+        )
 
         if existing_image:
             self.logger.info(f"Using existing image file: {existing_image}")
@@ -760,19 +768,26 @@ class KaraokePrep:
                 else:
                     self.logger.warning(f"Skipping download due to missing URL.")
 
-        processed_track["lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
-        if os.path.exists(processed_track["lyrics"]):
-            self.logger.debug(f"Lyrics file already exists, skipping fetch: {processed_track['lyrics']}")
+        if self.skip_lyrics:
+            self.logger.info("Skipping lyrics fetch as requested.")
+            processed_track["lyrics"] = None
+            processed_track["processed_lyrics"] = None
         else:
-            self.logger.info("Fetching lyrics from Genius...")
-            self.lyrics = self.write_lyrics_from_genius(self.artist, self.title, processed_track["lyrics"])
-
-            processed_track["processed_lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics Processed).txt")
-            if self.lyrics is None:
-                processed_track["lyrics"] = None
-                processed_track["processed_lyrics"] = None
+            processed_track["lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
+            if os.path.exists(processed_track["lyrics"]):
+                self.logger.debug(f"Lyrics file already exists, skipping fetch: {processed_track['lyrics']}")
             else:
-                self.write_processed_lyrics(self.lyrics, processed_track["processed_lyrics"])
+                self.logger.info("Fetching lyrics from Genius...")
+                lyrics_artist = self.lyrics_artist or self.artist
+                lyrics_title = self.lyrics_title or self.title
+                self.lyrics = self.write_lyrics_from_genius(lyrics_artist, lyrics_title, processed_track["lyrics"])
+
+                processed_track["processed_lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics Processed).txt")
+                if self.lyrics is None:
+                    processed_track["lyrics"] = None
+                    processed_track["processed_lyrics"] = None
+                else:
+                    self.write_processed_lyrics(self.lyrics, processed_track["processed_lyrics"])
 
         output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
         processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"

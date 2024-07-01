@@ -296,6 +296,22 @@ def main():
         help="Optional: Fixed gap for end video (default: 150). Example: --end_fixed_gap=200",
     )
 
+    parser.add_argument(
+        "--lyrics_artist",
+        help="Optional: Override the artist name used for lyrics search. Example: --lyrics_artist='The Beatles'",
+    )
+
+    parser.add_argument(
+        "--lyrics_title",
+        help="Optional: Override the song title used for lyrics search. Example: --lyrics_title='Hey Jude'",
+    )
+
+    parser.add_argument(
+        "--skip_lyrics",
+        action="store_true",
+        help="Optional: Skip fetching and processing lyrics. Example: --skip_lyrics",
+    )
+
     args = parser.parse_args()
 
     input_media, artist, title, filename_pattern = None, None, None, None
@@ -393,6 +409,9 @@ def main():
         end_artist_padding=args.end_artist_padding,
         end_extra_text_padding=args.end_extra_text_padding,
         end_fixed_gap=args.end_fixed_gap,
+        lyrics_artist=args.lyrics_artist,
+        lyrics_title=args.lyrics_title,
+        skip_lyrics=args.skip_lyrics,
     )
 
     tracks = kprep.process()
