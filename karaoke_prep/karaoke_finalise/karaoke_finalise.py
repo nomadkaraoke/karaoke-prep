@@ -33,6 +33,7 @@ class KaraokeFinalise:
         youtube_description_file=None,
         rclone_destination=None,
         discord_webhook_url=None,
+        non_interactive=False,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -82,6 +83,7 @@ class KaraokeFinalise:
         self.public_share_rclone_enabled = False
 
         self.skip_notifications = False
+        self
 
         self.suffixes = {
             "title_mov": " (Title).mov",
@@ -166,6 +168,10 @@ class KaraokeFinalise:
             raise Exception(exit_message)
 
     def prompt_user_bool(self, prompt_message, allow_empty=False):
+        if self.non_interactive:
+            self.logger.warning(f"Non-interactive mode, responding True for prompt: {prompt_message}")
+            return True
+
         options_string = "[y]/n" if allow_empty else "y/[n]"
         accept_responses = ["y", "yes"]
         if allow_empty:
