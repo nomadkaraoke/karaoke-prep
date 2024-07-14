@@ -83,7 +83,7 @@ class KaraokeFinalise:
         self.public_share_rclone_enabled = False
 
         self.skip_notifications = False
-        self
+        self.non_interactive = non_interactive
 
         self.suffixes = {
             "title_mov": " (Title).mov",
