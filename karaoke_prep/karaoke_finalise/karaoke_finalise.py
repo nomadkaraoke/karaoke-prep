@@ -556,7 +556,16 @@ class KaraokeFinalise:
             env_mov_input = f"-i {end_mov_file}"
             ffmpeg_filter = '-filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0][2:v:0][2:a:0]concat=n=3:v=1:a=1[outv][outa]"'
 
-        join_ffmpeg_command = f'{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mov_file} {env_mov_input} {ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a aac_at -q:a 14 {output_final_mp4_file}'
+
+        aac_codec = "libfdk_aac"
+
+        # Check if aac_at codec is available
+        codec_check_command = f'{self.ffmpeg_base_command} -codecs'
+        result = os.popen(codec_check_command).read()
+        if 'aac_at' in result:
+            aac_codec = "aac_at"
+
+        join_ffmpeg_command = f'{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mov_file} {env_mov_input} {ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a {aac_codec} -q:a 14 {output_final_mp4_file}'
 
         self.logger.debug(f"Running command: {join_ffmpeg_command}")
         self.execute_command(join_ffmpeg_command, "Joining title and instrumental videos")
