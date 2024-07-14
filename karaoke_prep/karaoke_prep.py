@@ -8,6 +8,7 @@ import lyricsgenius
 import tempfile
 import shutil
 import pyperclip
+from pyperclip import PyperclipException
 import importlib.resources as pkg_resources
 import yt_dlp.YoutubeDL as ydl
 from PIL import Image, ImageDraw, ImageFont
@@ -442,8 +443,11 @@ class KaraokePrep:
                     processed_lyrics_lines += line + "\n"
 
         if not self.dry_run:
-            pyperclip.copy(processed_lyrics_lines)
-            self.logger.info(f"Processed lyrics copied to clipboard.")
+            try:
+                pyperclip.copy(processed_lyrics_lines)
+                self.logger.info(f"Processed lyrics copied to clipboard.")
+            except PyperclipException:
+                self.logger.warning("Clipboard functionality not available. Skipping clipboard operations.")
 
         return processed_lyrics_lines
 
