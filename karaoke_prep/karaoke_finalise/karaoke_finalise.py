@@ -105,6 +105,7 @@ class KaraokeFinalise:
             "final_karaoke_mp4": " (Final Karaoke).mp4",
             "final_karaoke_cdg_zip": " (Final Karaoke CDG).zip",
             "final_karaoke_txt_zip": " (Final Karaoke TXT).zip",
+            "final_karaoke_720p_mp4": " (Final Karaoke 720p).mp4",
         }
 
         self.youtube_url_prefix = "https://www.youtube.com/watch?v="
@@ -158,6 +159,7 @@ class KaraokeFinalise:
             "karaoke_mov": f"{base_name}{self.suffixes['karaoke_mov']}",
             "with_vocals_mp4": f"{base_name}{self.suffixes['with_vocals_mp4']}",
             "final_karaoke_mp4": f"{base_name}{self.suffixes['final_karaoke_mp4']}",
+            "final_karaoke_720p_mp4": f"{base_name}{self.suffixes['final_karaoke_720p_mp4']}",
         }
 
         if self.enable_cdg:
@@ -641,6 +643,15 @@ class KaraokeFinalise:
 
             self.logger.info(f"TXT ZIP file created: {output_files['final_karaoke_txt_zip']}")
 
+    def encode_720p_version(self, input_file, output_file):
+        ffmpeg_command = (
+            f'{self.ffmpeg_base_command} -i "{input_file}" '
+            f'-c:v libx264 -vf "scale=1280:720" -b:v 200k -preset medium -tune animation '
+            f'-c:a copy "{output_file}"'
+        )
+
+        self.execute_command(ffmpeg_command, "Encoding 720p version of the final video")
+
     def move_files_to_brand_code_folder(self, brand_code, artist, title, output_files):
         self.logger.info(f"Moving files to new brand-prefixed directory...")
 
@@ -663,14 +674,17 @@ class KaraokeFinalise:
             os.rename(orig_dir, self.new_brand_code_dir_path)
 
     def copy_final_files_to_public_share_dirs(self, brand_code, base_name, output_files):
-        self.logger.info(f"Copying final MP4 and ZIP to public share directory...")
+        self.logger.info(f"Copying final MP4, 720p MP4, and ZIP to public share directory...")
 
-        # Validate public_share_dir is a valid folder with MP4 and CDG subdirectories
+        # Validate public_share_dir is a valid folder with MP4, MP4-720p, and CDG subdirectories
         if not os.path.isdir(self.public_share_dir):
             raise Exception(f"Public share directory does not exist: {self.public_share_dir}")
 
         if not os.path.isdir(os.path.join(self.public_share_dir, "MP4")):
             raise Exception(f"Public share directory does not contain MP4 subdirectory: {self.public_share_dir}")
+
+        if not os.path.isdir(os.path.join(self.public_share_dir, "MP4-720p")):
+            raise Exception(f"Public share directory does not contain MP4-720p subdirectory: {self.public_share_dir}")
 
         if not os.path.isdir(os.path.join(self.public_share_dir, "CDG")):
             raise Exception(f"Public share directory does not contain CDG subdirectory: {self.public_share_dir}")
@@ -679,17 +693,23 @@ class KaraokeFinalise:
             raise Exception(f"New track prefix was not set, refusing to copy to public share directory")
 
         dest_mp4_dir = os.path.join(self.public_share_dir, "MP4")
+        dest_720p_dir = os.path.join(self.public_share_dir, "MP4-720p")
         dest_cdg_dir = os.path.join(self.public_share_dir, "CDG")
         os.makedirs(dest_mp4_dir, exist_ok=True)
+        os.makedirs(dest_720p_dir, exist_ok=True)
         os.makedirs(dest_cdg_dir, exist_ok=True)
 
         dest_mp4_file = os.path.join(dest_mp4_dir, f"{brand_code} - {base_name}.mp4")
+        dest_720p_mp4_file = os.path.join(dest_720p_dir, f"{brand_code} - {base_name}.mp4")
         dest_zip_file = os.path.join(dest_cdg_dir, f"{brand_code} - {base_name}.zip")
 
         if self.dry_run:
-            self.logger.info(f"DRY RUN: Would copy final MP4 and ZIP to {dest_mp4_file} + .cdg")
+            self.logger.info(
+                f"DRY RUN: Would copy final MP4, 720p MP4, and ZIP to {dest_mp4_file}, {dest_720p_mp4_file}, and {dest_zip_file}"
+            )
         else:
             shutil.copy2(output_files["final_karaoke_mp4"], dest_mp4_file)
+            shutil.copy2(output_files["final_karaoke_720p_mp4"], dest_720p_mp4_file)
             shutil.copy2(output_files["final_karaoke_cdg_zip"], dest_zip_file)
             self.logger.info(f"Copied final files to public share directory")
 
@@ -799,6 +819,7 @@ class KaraokeFinalise:
             self.create_txt_zip_file(input_files, output_files)
 
         self.remux_and_encode_output_video_files(with_vocals_file, input_files, output_files)
+        self.encode_720p_version(output_files["final_karaoke_mp4"], output_files["final_karaoke_720p_mp4"])
 
         self.execute_optional_features(artist, title, base_name, input_files, output_files)
 
@@ -808,6 +829,7 @@ class KaraokeFinalise:
             "video_with_vocals": output_files["with_vocals_mp4"],
             "video_with_instrumental": output_files["karaoke_mov"],
             "final_video": output_files["final_karaoke_mp4"],
+            "final_video_720p": output_files["final_karaoke_720p_mp4"],
             "youtube_url": self.youtube_url,
             "brand_code": self.brand_code,
             "new_brand_code_dir_path": self.new_brand_code_dir_path,

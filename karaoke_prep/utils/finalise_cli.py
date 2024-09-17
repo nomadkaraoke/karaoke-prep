@@ -151,6 +151,8 @@ def main():
         logger.info(f" Final TXT+MP3 ZIP: {track['final_karaoke_txt_zip']}")
 
     logger.info(f" Final Video with Title: {track['final_video']}")
+    logger.info(f" Final Video 720p: {track['final_video_720p']}")
+
     logger.info(f" Brand Code: {track['brand_code']}")
     logger.info(f" New Brand Code Directory: {track['new_brand_code_dir_path']}")
 
