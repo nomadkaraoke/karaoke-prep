@@ -460,7 +460,7 @@ class KaraokePrep:
         filename = filename.rstrip(" ")
         return filename
 
-    def separate_audio(self, audio_file, model_name, instrumental_path, vocals_path):
+    def separate_audio(self, audio_file, model_name, artist_title, track_output_dir, instrumental_path, vocals_path):
         if audio_file is None or not os.path.isfile(audio_file):
             raise Exception("Error: Invalid audio source provided.")
 
@@ -482,11 +482,40 @@ class KaraokePrep:
         separator.load_model(model_filename=model_name)
         output_files = separator.separate(audio_file)
 
+        self.logger.debug(f"Separator output files: {output_files}")
+
+        model_name_no_extension = os.path.splitext(model_name)[0]
+
         for file in output_files:
             if "(Vocals)" in file:
+                self.logger.info(f"Renaming Vocals file {file} to {vocals_path}")
                 os.rename(file, vocals_path)
             elif "(Instrumental)" in file:
+                self.logger.info(f"Renaming Instrumental file {file} to {instrumental_path}")
                 os.rename(file, instrumental_path)
+            elif model_name in file:
+                # Example filename 1: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Piano)_htdemucs_6s.flac"
+                # Example filename 2: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Guitar)_htdemucs_6s.flac"
+                # The stem name in these examples would be "Piano" or "Guitar"
+                # Extract stem_name from the filename
+                stem_name = file.split(f"_{model_name}")[0].split("_")[-1]
+                stem_name = stem_name.strip("()")  # Remove parentheses if present
+
+                other_stem_path = os.path.join(track_output_dir, f"{artist_title} ({stem_name} {model_name}).{self.lossless_output_format}")
+                self.logger.info(f"Renaming other stem file {file} to {other_stem_path}")
+                os.rename(file, other_stem_path)
+
+            elif model_name_no_extension in file:
+                # Example filename 1: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Piano)_htdemucs_6s.flac"
+                # Example filename 2: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Guitar)_htdemucs_6s.flac"
+                # The stem name in these examples would be "Piano" or "Guitar"
+                # Extract stem_name from the filename
+                stem_name = file.split(f"_{model_name_no_extension}")[0].split("_")[-1]
+                stem_name = stem_name.strip("()")  # Remove parentheses if present
+
+                other_stem_path = os.path.join(track_output_dir, f"{artist_title} ({stem_name} {model_name}).{self.lossless_output_format}")
+                self.logger.info(f"Renaming other stem file {file} to {other_stem_path}")
+                os.rename(file, other_stem_path)
 
         self.logger.info(f"Separation complete! Output file(s): {vocals_path} {instrumental_path}")
 
@@ -845,9 +874,18 @@ class KaraokePrep:
                 vocals_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossy_output_format}")
 
                 if not (os.path.isfile(instrumental_path) and os.path.isfile(vocals_path)):
-                    self.separate_audio(processed_track["input_audio_wav"], model_name, instrumental_path, vocals_path)
-                    self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
-                    self.convert_to_lossy(vocals_path, vocals_path_lossy)
+                    self.separate_audio(
+                        audio_file=processed_track["input_audio_wav"],
+                        model_name=model_name,
+                        track_output_dir=track_output_dir,
+                        artist_title=artist_title,
+                        instrumental_path=instrumental_path,
+                        vocals_path=vocals_path,
+                    )
+                    if os.path.isfile(instrumental_path):
+                        self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
+                    if os.path.isfile(vocals_path):
+                        self.convert_to_lossy(vocals_path, vocals_path_lossy)
 
                 processed_track[f"separated_audio"][model_name]["instrumental"] = instrumental_path
                 processed_track[f"separated_audio"][model_name]["vocals"] = vocals_path
