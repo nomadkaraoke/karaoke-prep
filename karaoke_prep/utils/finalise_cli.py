@@ -144,9 +144,11 @@ def main():
         logger.info(f" Final TXT+MP3 ZIP: {track['final_karaoke_txt_zip']}")
 
     logger.info(f" Final Video with Title: {track['final_video']}")
-    logger.info(f" YouTube URL: {track['youtube_url']}")
     logger.info(f" Brand Code: {track['brand_code']}")
     logger.info(f" New Brand Code Directory: {track['new_brand_code_dir_path']}")
+
+    logger.info(f" YouTube URL: {track['youtube_url']}")
+    logger.info(f" Dropbox Sharing Link: {track['dropbox_sharing_link']}")
 
 
 if __name__ == "__main__":

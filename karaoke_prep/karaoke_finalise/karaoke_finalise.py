@@ -14,6 +14,7 @@ from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
+import subprocess
 
 
 class KaraokeFinalise:
@@ -556,13 +557,12 @@ class KaraokeFinalise:
             env_mov_input = f"-i {end_mov_file}"
             ffmpeg_filter = '-filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0][2:v:0][2:a:0]concat=n=3:v=1:a=1[outv][outa]"'
 
-
         aac_codec = "libfdk_aac"
 
         # Check if aac_at codec is available
-        codec_check_command = f'{self.ffmpeg_base_command} -codecs'
+        codec_check_command = f"{self.ffmpeg_base_command} -codecs"
         result = os.popen(codec_check_command).read()
-        if 'aac_at' in result:
+        if "aac_at" in result:
             aac_codec = "aac_at"
 
         join_ffmpeg_command = f'{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mov_file} {env_mov_input} {ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a {aac_codec} -q:a 14 {output_final_mp4_file}'
@@ -715,6 +715,24 @@ class KaraokeFinalise:
             discord_message = f"New upload: {self.youtube_url}"
             self.post_discord_message(discord_message, self.discord_webhook_url)
 
+    def get_dropbox_sharing_link(self):
+        self.logger.info(f"Getting Dropbox sharing link for new brand code directory...")
+
+        if self.dry_run:
+            self.logger.info(f"DRY RUN: Would get Dropbox sharing link for: {self.new_brand_code_dir_path}")
+            return "https://www.dropbox.com/sh/dryrun_link"
+
+        rclone_link_cmd = f"rclone link '{self.rclone_destination}/{os.path.basename(self.new_brand_code_dir_path)}'"
+
+        try:
+            result = subprocess.run(rclone_link_cmd, shell=True, check=True, capture_output=True, text=True)
+            dropbox_link = result.stdout.strip()
+            self.logger.info(f"Got Dropbox sharing link: {dropbox_link}")
+            return dropbox_link
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Failed to get Dropbox sharing link: {e}")
+            return None
+
     def execute_optional_features(self, artist, title, base_name, input_files, output_files):
         self.logger.info(f"Executing optional features...")
 
@@ -768,6 +786,10 @@ class KaraokeFinalise:
 
         self.execute_optional_features(artist, title, base_name, input_files, output_files)
 
+        dropbox_sharing_link = None
+        if self.folder_organisation_enabled and self.public_share_rclone_enabled:
+            dropbox_sharing_link = self.get_dropbox_sharing_link()
+
         result = {
             "artist": artist,
             "title": title,
@@ -777,6 +799,7 @@ class KaraokeFinalise:
             "youtube_url": self.youtube_url,
             "brand_code": self.brand_code,
             "new_brand_code_dir_path": self.new_brand_code_dir_path,
+            "dropbox_sharing_link": dropbox_sharing_link,
         }
 
         if self.enable_cdg:
