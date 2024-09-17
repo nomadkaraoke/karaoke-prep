@@ -60,6 +60,7 @@ def main():
         nargs="+",
         default=[
             "UVR_MDXNET_KARA_2.onnx",
+            "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt",
             "2_HP-UVR.pth",
             "model_bs_roformer_ep_317_sdr_12.9755.yaml",
             "MDX23C-8KFFT-InstVoc_HQ_2.ckpt",
