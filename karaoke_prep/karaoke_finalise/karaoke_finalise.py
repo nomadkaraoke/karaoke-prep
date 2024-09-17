@@ -15,6 +15,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
 import subprocess
+import time
 
 
 class KaraokeFinalise:
@@ -29,6 +30,7 @@ class KaraokeFinalise:
         enable_txt=False,
         brand_prefix=None,
         organised_dir=None,
+        organised_dir_rclone_root=None,
         public_share_dir=None,
         youtube_client_secrets_file=None,
         youtube_description_file=None,
@@ -69,6 +71,8 @@ class KaraokeFinalise:
 
         self.brand_prefix = brand_prefix
         self.organised_dir = organised_dir
+        self.organised_dir_rclone_root = organised_dir_rclone_root
+
         self.public_share_dir = public_share_dir
         self.youtube_client_secrets_file = youtube_client_secrets_file
         self.youtube_description_file = youtube_description_file
@@ -107,7 +111,9 @@ class KaraokeFinalise:
 
         self.youtube_url = None
         self.brand_code = None
+        self.new_brand_code_dir = None
         self.new_brand_code_dir_path = None
+        self.brand_code_dir_sharing_link = None
 
     def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
         self.logger.info(f"Checking required input files exist...")
@@ -638,7 +644,8 @@ class KaraokeFinalise:
     def move_files_to_brand_code_folder(self, brand_code, artist, title, output_files):
         self.logger.info(f"Moving files to new brand-prefixed directory...")
 
-        self.new_brand_code_dir_path = os.path.join(self.organised_dir, f"{brand_code} - {artist} - {title}")
+        self.new_brand_code_dir = f"{brand_code} - {artist} - {title}"
+        self.new_brand_code_dir_path = os.path.join(self.organised_dir, self.new_brand_code_dir)
 
         self.prompt_user_confirmation_or_raise_exception(
             f"Move files to new brand-prefixed directory {self.new_brand_code_dir_path} and delete current dir?",
@@ -715,23 +722,30 @@ class KaraokeFinalise:
             discord_message = f"New upload: {self.youtube_url}"
             self.post_discord_message(discord_message, self.discord_webhook_url)
 
-    def get_dropbox_sharing_link(self):
-        self.logger.info(f"Getting Dropbox sharing link for new brand code directory...")
+    def generate_organised_folder_sharing_link(self):
+        self.logger.info(f"Getting Organised Folder sharing link for new brand code directory...")
+
+        rclone_dest = f"{self.organised_dir_rclone_root}/{self.new_brand_code_dir}"
+        rclone_link_cmd = f"rclone link {shlex.quote(rclone_dest)}"
 
         if self.dry_run:
-            self.logger.info(f"DRY RUN: Would get Dropbox sharing link for: {self.new_brand_code_dir_path}")
-            return "https://www.dropbox.com/sh/dryrun_link"
+            self.logger.info(f"DRY RUN: Would get sharing link with: {rclone_link_cmd}")
+            return "https://file-sharing-service.com/example"
 
-        rclone_link_cmd = f"rclone link '{self.rclone_destination}/{os.path.basename(self.new_brand_code_dir_path)}'"
+        # Add a 5-second delay to allow dropbox to index the folder before generating a link
+        self.logger.info("Waiting 5 seconds before generating link...")
+        time.sleep(5)
 
         try:
+            self.logger.info(f"Running command: {rclone_link_cmd}")
             result = subprocess.run(rclone_link_cmd, shell=True, check=True, capture_output=True, text=True)
-            dropbox_link = result.stdout.strip()
-            self.logger.info(f"Got Dropbox sharing link: {dropbox_link}")
-            return dropbox_link
+            self.brand_code_dir_sharing_link = result.stdout.strip()
+            self.logger.info(f"Got organised folder sharing link: {self.brand_code_dir_sharing_link}")
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to get Dropbox sharing link: {e}")
-            return None
+            self.logger.error(f"Failed to get organised folder sharing link. Exit code: {e.returncode}")
+            self.logger.error(f"Command output (stdout): {e.stdout}")
+            self.logger.error(f"Command output (stderr): {e.stderr}")
+            self.logger.error(f"Full exception: {e}")
 
     def execute_optional_features(self, artist, title, base_name, input_files, output_files):
         self.logger.info(f"Executing optional features...")
@@ -761,6 +775,8 @@ class KaraokeFinalise:
 
             self.move_files_to_brand_code_folder(self.brand_code, artist, title, output_files)
 
+            self.generate_organised_folder_sharing_link()
+
     def process(self):
         if self.dry_run:
             self.logger.warning("Dry run enabled. No actions will be performed.")
@@ -786,10 +802,6 @@ class KaraokeFinalise:
 
         self.execute_optional_features(artist, title, base_name, input_files, output_files)
 
-        dropbox_sharing_link = None
-        if self.folder_organisation_enabled and self.public_share_rclone_enabled:
-            dropbox_sharing_link = self.get_dropbox_sharing_link()
-
         result = {
             "artist": artist,
             "title": title,
@@ -799,7 +811,7 @@ class KaraokeFinalise:
             "youtube_url": self.youtube_url,
             "brand_code": self.brand_code,
             "new_brand_code_dir_path": self.new_brand_code_dir_path,
-            "dropbox_sharing_link": dropbox_sharing_link,
+            "brand_code_dir_sharing_link": self.brand_code_dir_sharing_link,
         }
 
         if self.enable_cdg:

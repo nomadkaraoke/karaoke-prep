@@ -72,6 +72,12 @@ def main():
     )
 
     parser.add_argument(
+        "--organised_dir_rclone_root",
+        default=None,
+        help="Optional: Rclone path which maps to your organised_dir, to generate a sharing link after adding files to it. Example: --organised_dir_rclone_root='andrewdropbox:Media/Karaoke/Tracks-Organized'",
+    )
+
+    parser.add_argument(
         "--public_share_dir",
         default=None,
         help="Optional: Public share directory where final MP4 and ZIP files will be copied. Example: --public_share_dir='/path/to/Tracks-PublicShare'",
@@ -118,6 +124,7 @@ def main():
         enable_txt=args.enable_txt,
         brand_prefix=args.brand_prefix,
         organised_dir=args.organised_dir,
+        organised_dir_rclone_root=args.organised_dir_rclone_root,
         public_share_dir=args.public_share_dir,
         youtube_client_secrets_file=args.youtube_client_secrets_file,
         youtube_description_file=args.youtube_description_file,
@@ -148,7 +155,7 @@ def main():
     logger.info(f" New Brand Code Directory: {track['new_brand_code_dir_path']}")
 
     logger.info(f" YouTube URL: {track['youtube_url']}")
-    logger.info(f" Dropbox Sharing Link: {track['dropbox_sharing_link']}")
+    logger.info(f" Folder Sharing Link: {track['brand_code_dir_sharing_link']}")
 
 
 if __name__ == "__main__":
