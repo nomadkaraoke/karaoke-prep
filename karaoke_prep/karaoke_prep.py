@@ -12,6 +12,7 @@ from pyperclip import PyperclipException
 import importlib.resources as pkg_resources
 import yt_dlp.YoutubeDL as ydl
 from PIL import Image, ImageDraw, ImageFont
+from lyrics_transcriber import LyricsTranscriber
 
 
 class KaraokePrep:
@@ -401,6 +402,32 @@ class KaraokePrep:
             processed_lines.append(line)
 
         return processed_lines
+
+    def transcribe_lyrics(self, input_audio_wav, track_output_dir):
+        self.logger.info(f"Transcribing lyrics from audio file: {input_audio_wav} with output directory: {track_output_dir}")
+
+        if os.environ.get("AUDIOSHAKE_API_TOKEN") is None:
+            self.logger.warning("Error: AUDIOSHAKE_API_TOKEN environment variable is not set, skipping transcription")
+            return
+
+        self.logger.debug("Loading LyricsTranscriber class")
+
+        transcriber = LyricsTranscriber(
+            input_audio_wav,
+            log_level=self.log_level,
+            log_formatter=self.log_formatter,
+            audioshake_api_token=os.environ["AUDIOSHAKE_API_TOKEN"],
+            output_dir=track_output_dir,
+            artist=self.artist,
+            title=self.title,
+        )
+
+        transcriber_outputs = transcriber.generate()
+
+        self.logger.info(f"*** Outputs: ***")
+        self.logger.info(f"Transcription output data file: {transcriber_outputs['transcription_data_filepath']}")
+        self.logger.info(f"Transcribed lyrics text file: {transcriber_outputs['transcribed_lyrics_text_filepath']}")
+        self.logger.info(f"MidiCo LRC output file: {transcriber_outputs['midico_lrc_filepath']}")
 
     def write_processed_lyrics(self, lyrics, processed_lyrics_file):
         self.logger.info(f"Writing processed lyrics to {processed_lyrics_file}")
@@ -821,6 +848,8 @@ class KaraokePrep:
                     processed_track["processed_lyrics"] = None
                 else:
                     self.write_processed_lyrics(self.lyrics, processed_track["processed_lyrics"])
+
+        self.transcribe_lyrics(processed_track["input_audio_wav"], track_output_dir)
 
         output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
         processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"
