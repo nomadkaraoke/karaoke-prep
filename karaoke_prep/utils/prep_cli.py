@@ -64,6 +64,7 @@ def main():
             "2_HP-UVR.pth",
             "model_bs_roformer_ep_317_sdr_12.9755.yaml",
             "MDX23C-8KFFT-InstVoc_HQ_2.ckpt",
+            "htdemucs_6s.yaml",
         ],
         help="Optional: list of model names to be used for separation (default: %(default)s). Example: --model_names UVR_MDXNET_KARA_2.onnx UVR-MDX-NET-Inst_HQ_4.onnx",
     )
