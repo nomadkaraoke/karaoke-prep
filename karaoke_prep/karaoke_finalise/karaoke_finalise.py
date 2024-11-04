@@ -16,6 +16,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
 import subprocess
 import time
+from cdgmaker.lrc_to_cdg import generate_cdg
 
 
 class KaraokeFinalise:
@@ -131,12 +132,7 @@ class KaraokeFinalise:
             "end_jpg": f"{base_name}{self.suffixes['end_jpg']}",
         }
 
-        if self.enable_cdg:
-            input_files["karaoke_cdg"] = f"{base_name}{self.suffixes['karaoke_cdg']}"
-            input_files["karaoke_mp3"] = f"{base_name}{self.suffixes['karaoke_mp3']}"
-
-        if self.enable_txt:
-            input_files["karaoke_mp3"] = f"{base_name}{self.suffixes['karaoke_mp3']}"
+        if self.enable_cdg or self.enable_txt:
             input_files["karaoke_lrc"] = f"{base_name}{self.suffixes['karaoke_lrc']}"
 
         for key, file_path in input_files.items():
@@ -157,6 +153,7 @@ class KaraokeFinalise:
     def prepare_output_filenames(self, base_name):
         output_files = {
             "karaoke_mov": f"{base_name}{self.suffixes['karaoke_mov']}",
+            "karaoke_mp3": f"{base_name}{self.suffixes['karaoke_mp3']}",
             "with_vocals_mp4": f"{base_name}{self.suffixes['with_vocals_mp4']}",
             "final_karaoke_mp4": f"{base_name}{self.suffixes['final_karaoke_mp4']}",
             "final_karaoke_720p_mp4": f"{base_name}{self.suffixes['final_karaoke_720p_mp4']}",
@@ -585,8 +582,8 @@ class KaraokeFinalise:
             allow_empty=True,
         )
 
-    def create_cdg_zip_file(self, input_files, output_files):
-        self.logger.info(f"Creating CDG ZIP file...")
+    def create_cdg_zip_file(self, input_files, output_files, artist, title):
+        self.logger.info(f"Creating CDG and MP3 files, then zipping them...")
 
         # Check if CDG file already exists, if so, ask user to overwrite or skip
         if os.path.isfile(output_files["final_karaoke_cdg_zip"]):
@@ -596,19 +593,42 @@ class KaraokeFinalise:
                 self.logger.info(f"Skipping CDG ZIP file creation, existing file will be used.")
                 return
 
-        # Create the ZIP file containing the MP3 and CDG files
+        # Generate CDG and MP3 files
         if self.dry_run:
-            self.logger.info(f"DRY RUN: Would create CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
+            self.logger.info(f"DRY RUN: Would generate CDG and MP3 files")
         else:
-            self.logger.info(f"Creating ZIP file containing {input_files['karaoke_mp3']} and {input_files['karaoke_cdg']}")
-            with zipfile.ZipFile(output_files["final_karaoke_cdg_zip"], "w") as zipf:
-                zipf.write(input_files["karaoke_mp3"], os.path.basename(input_files["karaoke_mp3"]))
-                zipf.write(input_files["karaoke_cdg"], os.path.basename(input_files["karaoke_cdg"]))
+            self.logger.info(f"Generating CDG and MP3 files")
+
+            generate_cdg(input_files["karaoke_lrc"], input_files["instrumental_audio"], title, artist)
+
+            # Look for the generated ZIP file
+            expected_zip = f"{artist} - {title} (Karaoke).zip"
+
+            self.logger.info(f"Searching for CDG ZIP file. Expected: {expected_zip}")
+
+            if os.path.isfile(expected_zip):
+                self.logger.info(f"Found expected CDG ZIP file: {expected_zip}")
+                os.rename(expected_zip, output_files["final_karaoke_cdg_zip"])
+                self.logger.info(f"Renamed CDG ZIP file from {expected_zip} to {output_files['final_karaoke_cdg_zip']}")
 
             if not os.path.isfile(output_files["final_karaoke_cdg_zip"]):
+                self.logger.error(f"Failed to find any CDG ZIP file. Listing directory contents:")
+                for file in os.listdir():
+                    self.logger.error(f" - {file}")
                 raise Exception(f"Failed to create CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
 
             self.logger.info(f"CDG ZIP file created: {output_files['final_karaoke_cdg_zip']}")
+
+            # Extract the CDG ZIP file
+            self.logger.info(f"Extracting CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
+            with zipfile.ZipFile(output_files["final_karaoke_cdg_zip"], "r") as zip_ref:
+                zip_ref.extractall()
+
+            if os.path.isfile(output_files["karaoke_mp3"]):
+                self.logger.info(f"Found extracted MP3 file: {output_files['karaoke_mp3']}")
+            else:
+                self.logger.error("Failed to find extracted MP3 file")
+                raise Exception("Failed to extract MP3 file from CDG ZIP")
 
     def create_txt_zip_file(self, input_files, output_files):
         self.logger.info(f"Creating TXT ZIP file...")
@@ -633,9 +653,9 @@ class KaraokeFinalise:
                 txt_file.write(converted_txt)
                 self.logger.info(f"TXT file written: {output_files['karaoke_txt']}")
 
-            self.logger.info(f"Creating ZIP file containing {input_files['karaoke_mp3']} and {output_files['karaoke_txt']}")
+            self.logger.info(f"Creating ZIP file containing {output_files['karaoke_mp3']} and {output_files['karaoke_txt']}")
             with zipfile.ZipFile(output_files["final_karaoke_txt_zip"], "w") as zipf:
-                zipf.write(input_files["karaoke_mp3"], os.path.basename(input_files["karaoke_mp3"]))
+                zipf.write(output_files["karaoke_mp3"], os.path.basename(output_files["karaoke_mp3"]))
                 zipf.write(output_files["karaoke_txt"], os.path.basename(output_files["karaoke_txt"]))
 
             if not os.path.isfile(output_files["final_karaoke_txt_zip"]):
@@ -813,7 +833,7 @@ class KaraokeFinalise:
         output_files = self.prepare_output_filenames(base_name)
 
         if self.enable_cdg:
-            self.create_cdg_zip_file(input_files, output_files)
+            self.create_cdg_zip_file(input_files, output_files, artist, title)
 
         if self.enable_txt:
             self.create_txt_zip_file(input_files, output_files)
