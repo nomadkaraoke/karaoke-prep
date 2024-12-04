@@ -3,16 +3,14 @@ import sys
 import re
 import glob
 import logging
-import unicodedata
 import lyricsgenius
 import tempfile
 import shutil
-import pyperclip
-from pyperclip import PyperclipException
 import importlib.resources as pkg_resources
 import yt_dlp.YoutubeDL as ydl
 from PIL import Image, ImageDraw, ImageFont
 from lyrics_transcriber import LyricsTranscriber
+from karaoke_lyrics_processor import KaraokeLyricsProcessor
 
 
 class KaraokePrep:
@@ -429,54 +427,25 @@ class KaraokePrep:
         self.logger.info(f"Transcribed lyrics text file: {transcriber_outputs['transcribed_lyrics_text_filepath']}")
         self.logger.info(f"MidiCo LRC output file: {transcriber_outputs['midico_lrc_filepath']}")
 
-    def write_processed_lyrics(self, lyrics, processed_lyrics_file):
-        self.logger.info(f"Writing processed lyrics to {processed_lyrics_file}")
-
-        processed_lyrics_lines = ""
-        iteration_count = 0
-        max_iterations = 100  # Failsafe limit
+    def write_processed_lyrics(self, lyrics_file, processed_lyrics_file):
+        self.logger.info(f"Processing lyrics from {lyrics_file} and writing to {processed_lyrics_file}")
 
         if not self.dry_run:
-            with open(processed_lyrics_file, "w") as outfile:
-                all_processed = False
-                while not all_processed:
-                    if iteration_count > max_iterations:
-                        self.logger.error("Maximum iterations exceeded in write_processed_lyrics.")
-                        break
+            processor = KaraokeLyricsProcessor(
+                log_level=self.log_level,
+                log_formatter=self.log_formatter,
+                input_filename=lyrics_file,
+                output_filename=processed_lyrics_file,
+                max_line_length=36,  # Using the default max line length
+            )
+            processor.process()
+            processor.write_to_output_file()
 
-                    all_processed = True
-                    new_lyrics = []
-                    for line in lyrics:
-                        line = line.strip()
+            self.logger.info(f"Lyrics processing complete, processed lyrics written to: {processed_lyrics_file}")
+        else:
+            self.logger.info(f"DRY RUN: Would process lyrics from {lyrics_file} and write to: {processed_lyrics_file}")
 
-                        # Check for abnormal space characters and replace them
-                        abnormal_spaces = [chr(i) for i in range(sys.maxunicode) if unicodedata.category(chr(i)) == "Zs" and chr(i) != " "]
-                        if any(space in line for space in abnormal_spaces):
-                            self.logger.warning(f"Replacing abnormal space characters found in line: {line}")
-                            for space in abnormal_spaces:
-                                line = line.replace(space, " ")
-
-                        processed = self.process_line(line)
-                        new_lyrics.extend(processed)
-                        if any(len(l) > 36 for l in processed):
-                            all_processed = False
-                    lyrics = new_lyrics
-
-                    iteration_count += 1
-
-                # Write the processed lyrics to file
-                for line in lyrics:
-                    outfile.write(line + "\n")
-                    processed_lyrics_lines += line + "\n"
-
-        if not self.dry_run:
-            try:
-                pyperclip.copy(processed_lyrics_lines)
-                self.logger.info(f"Processed lyrics copied to clipboard.")
-            except PyperclipException:
-                self.logger.warning("Clipboard functionality not available. Skipping clipboard operations.")
-
-        return processed_lyrics_lines
+        return processed_lyrics_file
 
     def sanitize_filename(self, filename):
         """Replace or remove characters that are unsafe for filenames."""
@@ -847,7 +816,7 @@ class KaraokePrep:
                     processed_track["lyrics"] = None
                     processed_track["processed_lyrics"] = None
                 else:
-                    self.write_processed_lyrics(self.lyrics, processed_track["processed_lyrics"])
+                    self.write_processed_lyrics(processed_track["lyrics"], processed_track["processed_lyrics"])
 
         self.transcribe_lyrics(processed_track["input_audio_wav"], track_output_dir)
 
