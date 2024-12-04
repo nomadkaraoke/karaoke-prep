@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "karaoke-prep"
-version = "0.26.1"
+version = "0.27.0"
 description = "Prepare for karaoke video creation, by downloading audio and lyrics for a specified song or playlist from youtube and separating audio stems. After syncing, finalise the video with a title screen!"
 authors = ["Andrew Beveridge <andrew@beveridge.uk>"]
 license = "MIT"
@@ -28,7 +28,13 @@ thefuzz = ">=0.22"
 numpy = "^1"
 audio-separator = { version = ">=0.21.0", extras = ["cpu"] }
 lyrics-converter = ">=0.2.1"
-cdgmaker = {git = "https://github.com/nomadkaraoke/cdgmaker", rev = "nomad-branded-lrc-to-cdg"}
+lyrics-transcriber = ">=0.18"
+kbputils = "^0.0.16"
+karaoke-lyrics-processor = ">=0.4.0"
+attrs = ">=24.2.0"
+cattrs = ">=24.1.2"
+toml = ">=0.10"
+argparse = ">=1.4.0"
 
 [tool.poetry.group.dev.dependencies]
 black = ">=23"
