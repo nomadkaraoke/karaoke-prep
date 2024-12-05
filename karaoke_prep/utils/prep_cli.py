@@ -56,17 +56,23 @@ def main():
     )
 
     parser.add_argument(
-        "--model_names",
+        "--clean_instrumental_model",
+        default="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+        help="Optional: Model for clean instrumental separation (default: %(default)s).",
+    )
+
+    parser.add_argument(
+        "--backing_vocals_models",
         nargs="+",
-        default=[
-            "UVR_MDXNET_KARA_2.onnx",
-            "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt",
-            "2_HP-UVR.pth",
-            "model_bs_roformer_ep_317_sdr_12.9755.yaml",
-            "MDX23C-8KFFT-InstVoc_HQ_2.ckpt",
-            "htdemucs_6s.yaml",
-        ],
-        help="Optional: list of model names to be used for separation (default: %(default)s). Example: --model_names UVR_MDXNET_KARA_2.onnx UVR-MDX-NET-Inst_HQ_4.onnx",
+        default=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt", "UVR-BVE-4B_SN-44100-1.pth"],
+        help="Optional: List of models for backing vocals separation (default: %(default)s).",
+    )
+
+    parser.add_argument(
+        "--other_stems_models",
+        nargs="+",
+        default=["htdemucs_6s.yaml"],
+        help="Optional: List of models for other stems separation (default: %(default)s).",
     )
 
     default_model_dir_unix = "/tmp/audio-separator-models/"
@@ -92,12 +98,6 @@ def main():
         "--lossless_output_format",
         default="FLAC",
         help="Optional: lossless output format for separated audio (default: FLAC). Example: --lossless_output_format=WAV",
-    )
-
-    parser.add_argument(
-        "--lossy_output_format",
-        default="MP3",
-        help="Optional: lossy output format for separated audio (default: MP3). Example: --lossy_output_format=OGG",
     )
 
     parser.add_argument(
@@ -361,7 +361,9 @@ def main():
     logger.setLevel(log_level)
 
     if args.existing_instrumental:
-        args.model_names = ["Custom"]
+        args.clean_instrumental_model = None
+        args.backing_vocals_models = []
+        args.other_stems_models = []
 
     logger.info(f"KaraokePrep beginning with input_media: {input_media} artist: {artist} and title: {title}")
 
@@ -373,11 +375,12 @@ def main():
         dry_run=args.dry_run,
         log_formatter=log_formatter,
         log_level=log_level,
-        model_names=args.model_names,
+        clean_instrumental_model=args.clean_instrumental_model,
+        backing_vocals_models=args.backing_vocals_models,
+        other_stems_models=args.other_stems_models,
         model_file_dir=args.model_file_dir,
         output_dir=args.output_dir,
         lossless_output_format=args.lossless_output_format,
-        lossy_output_format=args.lossy_output_format,
         use_cuda=args.use_cuda,
         use_coreml=args.use_coreml,
         normalization_enabled=args.normalize,
@@ -429,11 +432,26 @@ def main():
         logger.info(f" Lyrics: {track['lyrics']}")
         logger.info(f" Processed Lyrics: {track['processed_lyrics']}")
 
-        for model_name in args.model_names:
-            logger.info(f" Instrumental: {track['separated_audio'][model_name]['instrumental']}")
-            logger.info(f" Instrumental (Lossy): {track['separated_audio'][model_name]['instrumental_lossy']}")
-            logger.info(f" Vocals: {track['separated_audio'][model_name]['vocals']}")
-            logger.info(f" Vocals (Lossy): {track['separated_audio'][model_name]['vocals_lossy']}")
+        logger.info(f" Separated Audio:")
+
+        # Clean Instrumental
+        logger.info(f"  Clean Instrumental Model:")
+        for stem_type, file_path in track["separated_audio"]["clean_instrumental"].items():
+            logger.info(f"   {stem_type.capitalize()}: {file_path}")
+
+        # Other Stems
+        logger.info(f"  Other Stems Models:")
+        for model, stems in track["separated_audio"]["other_stems"].items():
+            logger.info(f"   Model: {model}")
+            for stem_type, file_path in stems.items():
+                logger.info(f"    {stem_type.capitalize()}: {file_path}")
+
+        # Backing Vocals
+        logger.info(f"  Backing Vocals Models:")
+        for model, stems in track["separated_audio"]["backing_vocals"].items():
+            logger.info(f"   Model: {model}")
+            for stem_type, file_path in stems.items():
+                logger.info(f"    {stem_type.capitalize()}: {file_path}")
 
 
 if __name__ == "__main__":

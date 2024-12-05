@@ -23,11 +23,12 @@ class KaraokePrep:
         dry_run=False,
         log_level=logging.DEBUG,
         log_formatter=None,
-        model_names=["UVR_MDXNET_KARA_2.onnx", "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt"],
+        clean_instrumental_model="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+        backing_vocals_models=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt", "UVR-BVE-4B_SN-44100-1.pth"],
+        other_stems_models=["htdemucs_6s.yaml"],
         model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
         output_dir=".",
         lossless_output_format="FLAC",
-        lossy_output_format="MP3",
         use_cuda=False,
         use_coreml=False,
         normalization_enabled=True,
@@ -89,11 +90,12 @@ class KaraokePrep:
         self.artist = artist
         self.title = title
         self.filename_pattern = filename_pattern
-        self.model_names = model_names
+        self.clean_instrumental_model = clean_instrumental_model
+        self.backing_vocals_models = backing_vocals_models
+        self.other_stems_models = other_stems_models
         self.model_file_dir = model_file_dir
         self.output_dir = output_dir
         self.lossless_output_format = lossless_output_format.lower()
-        self.lossy_output_format = lossy_output_format.lower()
         self.use_cuda = use_cuda
         self.use_coreml = use_coreml
         self.normalization_enabled = normalization_enabled
@@ -717,6 +719,80 @@ class KaraokePrep:
         hex_color = hex_color.lstrip("#")
         return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
 
+    def process_audio_separation(self, audio_file, artist_title, track_output_dir):
+        from audio_separator.separator import Separator
+
+        self.logger.info(f"Starting audio separation process for {artist_title}")
+
+        separator = Separator(
+            log_level=self.log_level,
+            log_formatter=self.log_formatter,
+            model_file_dir=self.model_file_dir,
+            output_format=self.lossless_output_format,
+        )
+
+        # Create a "stems" subfolder
+        stems_dir = os.path.join(track_output_dir, "stems")
+        os.makedirs(stems_dir, exist_ok=True)
+        self.logger.info(f"Created stems directory: {stems_dir}")
+
+        result = {"clean_instrumental": {}, "other_stems": {}, "backing_vocals": {}}
+
+        # Step 1: Separate using clean_instrumental_model
+        self.logger.info(f"Step 1: Separating using clean instrumental model: {self.clean_instrumental_model}")
+        instrumental_path = os.path.join(
+            track_output_dir, f"{artist_title} (Instrumental {self.clean_instrumental_model}).{self.lossless_output_format}"
+        )
+        vocals_path = os.path.join(stems_dir, f"{artist_title} (Vocals {self.clean_instrumental_model}).{self.lossless_output_format}")
+
+        separator.load_model(model_filename=self.clean_instrumental_model)
+        clean_output_files = separator.separate(audio_file)
+
+        for file in clean_output_files:
+            if "(Vocals)" in file:
+                os.rename(file, vocals_path)
+                result["clean_instrumental"]["vocals"] = vocals_path
+            elif "(Instrumental)" in file:
+                os.rename(file, instrumental_path)
+                result["clean_instrumental"]["instrumental"] = instrumental_path
+
+        # Step 2: Separate using other_stems_models
+        self.logger.info(f"Step 2: Separating using other stems models: {self.other_stems_models}")
+        for model in self.other_stems_models:
+            self.logger.info(f"Processing with model: {model}")
+            separator.load_model(model_filename=model)
+            other_stems_output = separator.separate(audio_file)
+
+            result["other_stems"][model] = {}
+            for file in other_stems_output:
+                file_name = os.path.basename(file)
+                stem_name = file_name[file_name.rfind("_(") + 2 : file_name.rfind(")_")]
+                new_filename = f"{artist_title} ({stem_name} {model}).{self.lossless_output_format}"
+                other_stem_path = os.path.join(stems_dir, new_filename)
+                os.rename(file, other_stem_path)
+                result["other_stems"][model][stem_name] = other_stem_path
+
+        # Step 3: Separate clean vocals using backing_vocals_models
+        self.logger.info(f"Step 3: Separating clean vocals using backing vocals models: {self.backing_vocals_models}")
+        for model in self.backing_vocals_models:
+            self.logger.info(f"Processing with model: {model}")
+            separator.load_model(model_filename=model)
+            backing_vocals_output = separator.separate(vocals_path)
+
+            result["backing_vocals"][model] = {}
+            for file in backing_vocals_output:
+                if "(Vocals)" in file:
+                    lead_vocals_path = os.path.join(stems_dir, f"{artist_title} (Lead Vocals {model}).{self.lossless_output_format}")
+                    os.rename(file, lead_vocals_path)
+                    result["backing_vocals"][model]["lead_vocals"] = lead_vocals_path
+                elif "(Instrumental)" in file:
+                    backing_vocals_path = os.path.join(stems_dir, f"{artist_title} (Backing Vocals {model}).{self.lossless_output_format}")
+                    os.rename(file, backing_vocals_path)
+                    result["backing_vocals"][model]["backing_vocals"] = backing_vocals_path
+
+        self.logger.info("Audio separation process completed")
+        return result
+
     def prep_single_track(self):
         self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
 
@@ -847,64 +923,23 @@ class KaraokePrep:
             existing_instrumental_extension = os.path.splitext(self.existing_instrumental)[1]
 
             instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental Custom){existing_instrumental_extension}")
-            instrumental_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Instrumental Custom).{self.lossy_output_format}")
 
             shutil.copy2(self.existing_instrumental, instrumental_path)
-            self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
 
             processed_track["separated_audio"]["Custom"] = {
                 "instrumental": instrumental_path,
-                "instrumental_lossy": instrumental_path_lossy,
                 "vocals": None,
-                "vocals_lossy": None,
             }
         else:
-            self.logger.info(f"Separating audio for track: {self.title} by {self.artist} using models: {', '.join(self.model_names)}")
-            for model_name in self.model_names:
-                processed_track[f"separated_audio"][model_name] = {}
-                instrumental_path = os.path.join(
-                    track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossless_output_format}"
-                )
-                vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossless_output_format}")
-                instrumental_path_lossy = os.path.join(
-                    track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossy_output_format}"
-                )
-                vocals_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossy_output_format}")
-
-                if not (os.path.isfile(instrumental_path) and os.path.isfile(vocals_path)):
-                    self.separate_audio(
-                        audio_file=processed_track["input_audio_wav"],
-                        model_name=model_name,
-                        track_output_dir=track_output_dir,
-                        artist_title=artist_title,
-                        instrumental_path=instrumental_path,
-                        vocals_path=vocals_path,
-                    )
-                    if os.path.isfile(instrumental_path):
-                        self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
-                    if os.path.isfile(vocals_path):
-                        self.convert_to_lossy(vocals_path, vocals_path_lossy)
-
-                processed_track[f"separated_audio"][model_name]["instrumental"] = instrumental_path
-                processed_track[f"separated_audio"][model_name]["vocals"] = vocals_path
-                processed_track[f"separated_audio"][model_name]["instrumental_lossy"] = instrumental_path_lossy
-                processed_track[f"separated_audio"][model_name]["vocals_lossy"] = vocals_path_lossy
+            self.logger.info(f"Separating audio for track: {self.title} by {self.artist}")
+            separation_results = self.process_audio_separation(
+                audio_file=processed_track["input_audio_wav"], artist_title=artist_title, track_output_dir=track_output_dir
+            )
+            processed_track["separated_audio"] = separation_results
 
         self.logger.info("Script finished, audio downloaded, lyrics fetched and audio separated!")
 
         return processed_track
-
-    def convert_to_lossy(self, input_filename, output_filename):
-        if input_filename is None or not os.path.isfile(input_filename):
-            raise Exception(f"Error: Invalid input file provided for convert_to_lossy: {input_filename}")
-
-        self.logger.info(f"Converting {self.lossless_output_format} audio to lossy {self.lossy_output_format} format")
-
-        ffmpeg_extras = "-q:a 0" if self.lossy_output_format == "mp3" else ""
-
-        ffmpeg_command = f'{self.ffmpeg_base_command} -i "{input_filename}" {ffmpeg_extras} "{output_filename}"'
-        self.logger.debug(f"Running command: {ffmpeg_command}")
-        os.system(ffmpeg_command)
 
     def process_playlist(self):
         if self.artist is None or self.title is None:
