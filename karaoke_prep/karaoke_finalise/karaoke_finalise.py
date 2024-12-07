@@ -17,6 +17,9 @@ from googleapiclient.http import MediaFileUpload
 import subprocess
 import time
 from cdgmaker.lrc_to_cdg import generate_cdg
+from google.oauth2.credentials import Credentials
+import base64
+from email.mime.text import MIMEText
 
 
 class KaraokeFinalise:
@@ -38,6 +41,7 @@ class KaraokeFinalise:
         rclone_destination=None,
         discord_webhook_url=None,
         non_interactive=False,
+        email_template_file=None,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -116,6 +120,9 @@ class KaraokeFinalise:
         self.new_brand_code_dir = None
         self.new_brand_code_dir_path = None
         self.brand_code_dir_sharing_link = None
+
+        self.email_template_file = email_template_file
+        self.gmail_service = None
 
     def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
         self.logger.info(f"Checking required input files exist...")
@@ -817,6 +824,67 @@ class KaraokeFinalise:
 
             self.generate_organised_folder_sharing_link()
 
+    def authenticate_gmail(self):
+        """Authenticate and return a Gmail service object."""
+        creds = None
+        if os.path.exists("/tmp/karaoke-finalise-token.pickle"):
+            with open("/tmp/karaoke-finalise-token.pickle", "rb") as token:
+                creds = pickle.load(token)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    self.youtube_client_secrets_file, ["https://www.googleapis.com/auth/gmail.compose"]
+                )
+                creds = flow.run_local_server(port=0)
+            with open("/tmp/karaoke-finalise-token.pickle", "wb") as token:
+                pickle.dump(creds, token)
+
+        return build("gmail", "v1", credentials=creds)
+
+    def draft_completion_email(self, artist, title, youtube_url, dropbox_url):
+        if not self.email_template_file:
+            self.logger.info("Email template file not provided, skipping email draft creation.")
+            return
+
+        with open(self.email_template_file, "r") as f:
+            template = f.read()
+
+        email_body = template.format(youtube_url=youtube_url, dropbox_url=dropbox_url)
+
+        subject = f"{self.brand_code}: {artist} - {title}"
+
+        if self.dry_run:
+            self.logger.info(f"DRY RUN: Would create email draft with subject: {subject}")
+            self.logger.info(f"DRY RUN: Email body:\n{email_body}")
+        else:
+            if not self.gmail_service:
+                self.gmail_service = self.authenticate_gmail()
+
+            message = MIMEText(email_body)
+            message["subject"] = subject
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+            draft = self.gmail_service.users().drafts().create(userId="me", body={"message": {"raw": raw_message}}).execute()
+            self.logger.info(f"Email draft created with ID: {draft['id']}")
+
+    def test_email_template(self):
+        if not self.email_template_file:
+            self.logger.error("Email template file not provided. Use --email_template_file to specify the file path.")
+            return
+
+        fake_artist = "Test Artist"
+        fake_title = "Test Song"
+        fake_youtube_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        fake_dropbox_url = "https://www.dropbox.com/sh/fake/folder/link"
+        fake_brand_code = "TEST-0001"
+
+        self.brand_code = fake_brand_code
+        self.draft_completion_email(fake_artist, fake_title, fake_youtube_url, fake_dropbox_url)
+
+        self.logger.info("Email template test complete. Check your Gmail drafts for the test email.")
+
     def process(self):
         if self.dry_run:
             self.logger.warning("Dry run enabled. No actions will be performed.")
@@ -861,5 +929,8 @@ class KaraokeFinalise:
 
         if self.enable_txt:
             result["final_karaoke_txt_zip"] = output_files["final_karaoke_txt_zip"]
+
+        if self.email_template_file:
+            self.draft_completion_email(artist, title, result["youtube_url"], result["brand_code_dir_sharing_link"])
 
         return result

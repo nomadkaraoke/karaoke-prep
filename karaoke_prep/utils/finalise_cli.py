@@ -107,6 +107,18 @@ def main():
         help="Optional: Discord webhook URL to send notifications to. Example: --discord_webhook_url='https://discord.com/api/webhooks/1234567890/TOKEN/messages",
     )
 
+    parser.add_argument(
+        "--email_template_file",
+        default=None,
+        help="Optional: File path to email template for drafting completion email. Example: --email_template_file='/path/to/email_template.txt'",
+    )
+
+    parser.add_argument(
+        "--test_email_template",
+        action="store_true",
+        help="Optional: Test the email template functionality with fake data. Example: --test_email_template",
+    )
+
     args = parser.parse_args()
 
     log_level = getattr(logging, args.log_level.upper())
@@ -130,13 +142,18 @@ def main():
         youtube_description_file=args.youtube_description_file,
         rclone_destination=args.rclone_destination,
         discord_webhook_url=args.discord_webhook_url,
+        email_template_file=args.email_template_file,
     )
 
-    try:
-        track = kfinalise.process()
-    except Exception as e:
-        logger.error(f"An error occurred during finalisation, see stack trace below: {str(e)}")
-        raise e
+    if args.test_email_template:
+        logger.info("Testing email template functionality...")
+        kfinalise.test_email_template()
+    else:
+        try:
+            track = kfinalise.process()
+        except Exception as e:
+            logger.error(f"An error occurred during finalisation, see stack trace below: {str(e)}")
+            raise e
 
     logger.info(f"Karaoke finalisation processing complete! Output files:")
     logger.info(f"")
