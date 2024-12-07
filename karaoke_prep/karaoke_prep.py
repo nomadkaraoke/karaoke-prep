@@ -790,7 +790,26 @@ class KaraokePrep:
                     os.rename(file, backing_vocals_path)
                     result["backing_vocals"][model]["backing_vocals"] = backing_vocals_path
 
-        self.logger.info("Audio separation process completed")
+        # Step 4: Generate combined instrumental tracks with backing vocals
+        self.logger.info("Step 4: Generating combined instrumental tracks with backing vocals")
+        result["combined_instrumentals"] = {}
+
+        for model in self.backing_vocals_models:
+            backing_vocals_path = result["backing_vocals"][model]["backing_vocals"]
+            combined_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental+Backing {model}).{self.lossless_output_format}")
+
+            ffmpeg_command = (
+                f'{self.ffmpeg_base_command} -i "{instrumental_path}" -i "{backing_vocals_path}" '
+                f'-filter_complex "[0:a][1:a]amix=inputs=2:duration=longest" '
+                f'-c:a {self.lossless_output_format.lower()} "{combined_path}"'
+            )
+
+            self.logger.debug(f"Running command: {ffmpeg_command}")
+            os.system(ffmpeg_command)
+
+            result["combined_instrumentals"][model] = combined_path
+
+        self.logger.info("Audio separation and combination process completed")
         return result
 
     def prep_single_track(self):

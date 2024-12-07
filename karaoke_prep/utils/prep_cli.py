@@ -453,6 +453,12 @@ def main():
             for stem_type, file_path in stems.items():
                 logger.info(f"    {stem_type.capitalize()}: {file_path}")
 
+        # Combined Instrumentals
+        logger.info(f"  Combined Instrumentals:")
+        for model, file_path in track["separated_audio"]["combined_instrumentals"].items():
+            logger.info(f"   Model: {model}")
+            logger.info(f"    Combined Instrumental: {file_path}")
+
 
 if __name__ == "__main__":
     main()
