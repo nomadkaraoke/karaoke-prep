@@ -796,11 +796,11 @@ class KaraokePrep:
 
         for model in self.backing_vocals_models:
             backing_vocals_path = result["backing_vocals"][model]["backing_vocals"]
-            combined_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental+Backing {model}).{self.lossless_output_format}")
+            combined_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental with Backing {model}).{self.lossless_output_format}")
 
             ffmpeg_command = (
                 f'{self.ffmpeg_base_command} -i "{instrumental_path}" -i "{backing_vocals_path}" '
-                f'-filter_complex "[0:a][1:a]amix=inputs=2:duration=longest" '
+                f'-filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:weights=1 1" '
                 f'-c:a {self.lossless_output_format.lower()} "{combined_path}"'
             )
 

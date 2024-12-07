@@ -272,11 +272,11 @@ class KaraokeFinalise:
     def authenticate_youtube(self):
         """Authenticate and return a YouTube service object."""
         credentials = None
-        pickle_file = "/tmp/karaoke-finalise-token.pickle"
+        youtube_token_file = "/tmp/karaoke-finalise-youtube-token.pickle"
 
-        # Token file stores the user's access and refresh tokens.
-        if os.path.exists(pickle_file):
-            with open(pickle_file, "rb") as token:
+        # Token file stores the user's access and refresh tokens for YouTube.
+        if os.path.exists(youtube_token_file):
+            with open(youtube_token_file, "rb") as token:
                 credentials = pickle.load(token)
 
         # If there are no valid credentials, let the user log in.
@@ -290,7 +290,7 @@ class KaraokeFinalise:
                 credentials = flow.run_local_server(port=0)  # This will open a browser for authentication
 
             # Save the credentials for the next run
-            with open(pickle_file, "wb") as token:
+            with open(youtube_token_file, "wb") as token:
                 pickle.dump(credentials, token)
 
         return build("youtube", "v3", credentials=credentials)
@@ -827,8 +827,10 @@ class KaraokeFinalise:
     def authenticate_gmail(self):
         """Authenticate and return a Gmail service object."""
         creds = None
-        if os.path.exists("/tmp/karaoke-finalise-token.pickle"):
-            with open("/tmp/karaoke-finalise-token.pickle", "rb") as token:
+        gmail_token_file = "/tmp/karaoke-finalise-gmail-token.pickle"
+
+        if os.path.exists(gmail_token_file):
+            with open(gmail_token_file, "rb") as token:
                 creds = pickle.load(token)
 
         if not creds or not creds.valid:
@@ -839,7 +841,7 @@ class KaraokeFinalise:
                     self.youtube_client_secrets_file, ["https://www.googleapis.com/auth/gmail.compose"]
                 )
                 creds = flow.run_local_server(port=0)
-            with open("/tmp/karaoke-finalise-token.pickle", "wb") as token:
+            with open(gmail_token_file, "wb") as token:
                 pickle.dump(creds, token)
 
         return build("gmail", "v1", credentials=creds)
