@@ -72,12 +72,6 @@ def main():
     )
 
     parser.add_argument(
-        "--organised_dir_rclone_root",
-        default=None,
-        help="Optional: Rclone path which maps to your organised_dir, to generate a sharing link after adding files to it. Example: --organised_dir_rclone_root='andrewdropbox:Media/Karaoke/Tracks-Organized'",
-    )
-
-    parser.add_argument(
         "--public_share_dir",
         default=None,
         help="Optional: Public share directory where final MP4 and ZIP files will be copied. Example: --public_share_dir='/path/to/Tracks-PublicShare'",
@@ -107,18 +101,6 @@ def main():
         help="Optional: Discord webhook URL to send notifications to. Example: --discord_webhook_url='https://discord.com/api/webhooks/1234567890/TOKEN/messages",
     )
 
-    parser.add_argument(
-        "--email_template_file",
-        default=None,
-        help="Optional: File path to email template for drafting completion email. Example: --email_template_file='/path/to/email_template.txt'",
-    )
-
-    parser.add_argument(
-        "--test_email_template",
-        action="store_true",
-        help="Optional: Test the email template functionality with fake data. Example: --test_email_template",
-    )
-
     args = parser.parse_args()
 
     log_level = getattr(logging, args.log_level.upper())
@@ -136,24 +118,18 @@ def main():
         enable_txt=args.enable_txt,
         brand_prefix=args.brand_prefix,
         organised_dir=args.organised_dir,
-        organised_dir_rclone_root=args.organised_dir_rclone_root,
         public_share_dir=args.public_share_dir,
         youtube_client_secrets_file=args.youtube_client_secrets_file,
         youtube_description_file=args.youtube_description_file,
         rclone_destination=args.rclone_destination,
         discord_webhook_url=args.discord_webhook_url,
-        email_template_file=args.email_template_file,
     )
 
-    if args.test_email_template:
-        logger.info("Testing email template functionality...")
-        kfinalise.test_email_template()
-    else:
-        try:
-            track = kfinalise.process()
-        except Exception as e:
-            logger.error(f"An error occurred during finalisation, see stack trace below: {str(e)}")
-            raise e
+    try:
+        track = kfinalise.process()
+    except Exception as e:
+        logger.error(f"An error occurred during finalisation, see stack trace below: {str(e)}")
+        raise e
 
     logger.info(f"Karaoke finalisation processing complete! Output files:")
     logger.info(f"")
@@ -168,13 +144,9 @@ def main():
         logger.info(f" Final TXT+MP3 ZIP: {track['final_karaoke_txt_zip']}")
 
     logger.info(f" Final Video with Title: {track['final_video']}")
-    logger.info(f" Final Video 720p: {track['final_video_720p']}")
-
+    logger.info(f" YouTube URL: {track['youtube_url']}")
     logger.info(f" Brand Code: {track['brand_code']}")
     logger.info(f" New Brand Code Directory: {track['new_brand_code_dir_path']}")
-
-    logger.info(f" YouTube URL: {track['youtube_url']}")
-    logger.info(f" Folder Sharing Link: {track['brand_code_dir_sharing_link']}")
 
 
 if __name__ == "__main__":

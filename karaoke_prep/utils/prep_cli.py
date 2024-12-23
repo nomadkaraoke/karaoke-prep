@@ -56,23 +56,15 @@ def main():
     )
 
     parser.add_argument(
-        "--clean_instrumental_model",
-        default="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-        help="Optional: Model for clean instrumental separation (default: %(default)s).",
-    )
-
-    parser.add_argument(
-        "--backing_vocals_models",
+        "--model_names",
         nargs="+",
-        default=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt", "UVR-BVE-4B_SN-44100-1.pth"],
-        help="Optional: List of models for backing vocals separation (default: %(default)s).",
-    )
-
-    parser.add_argument(
-        "--other_stems_models",
-        nargs="+",
-        default=["htdemucs_6s.yaml"],
-        help="Optional: List of models for other stems separation (default: %(default)s).",
+        default=[
+            "UVR_MDXNET_KARA_2.onnx",
+            "2_HP-UVR.pth",
+            "model_bs_roformer_ep_317_sdr_12.9755.yaml",
+            "MDX23C-8KFFT-InstVoc_HQ_2.ckpt",
+        ],
+        help="Optional: list of model names to be used for separation (default: %(default)s). Example: --model_names UVR_MDXNET_KARA_2.onnx UVR-MDX-NET-Inst_HQ_4.onnx",
     )
 
     default_model_dir_unix = "/tmp/audio-separator-models/"
@@ -98,6 +90,12 @@ def main():
         "--lossless_output_format",
         default="FLAC",
         help="Optional: lossless output format for separated audio (default: FLAC). Example: --lossless_output_format=WAV",
+    )
+
+    parser.add_argument(
+        "--lossy_output_format",
+        default="MP3",
+        help="Optional: lossy output format for separated audio (default: MP3). Example: --lossy_output_format=OGG",
     )
 
     parser.add_argument(
@@ -195,12 +193,6 @@ def main():
     )
 
     parser.add_argument(
-        "--end_extra_text_color",
-        default="#ff7acc",
-        help="Optional: Font color for end screen video text (default: #ffffff). Example: --end_extra_text_color=#123456",
-    )
-
-    parser.add_argument(
         "--end_artist_color",
         default="#ffdf6b",
         help="Optional: Font color for end screen video artist text (default: #ffdf6b). Example: --end_artist_color=#123456",
@@ -210,6 +202,16 @@ def main():
         "--end_title_color",
         default="#ffffff",
         help="Optional: Font color for end screen video title text (default: #ffffff). Example: --end_title_color=#123456",
+    )
+
+    parser.add_argument(
+        "--title_region",
+        help="Optional: Region for title text in title video (default: 370,470,3100,480). Example: --title_region=370,470,3100,480",
+    )
+
+    parser.add_argument(
+        "--artist_region",
+        help="Optional: Region for artist text in title video (default: 370,1210,3100,480). Example: --artist_region=370,1210,3100,480",
     )
 
     parser.add_argument(
@@ -229,73 +231,6 @@ def main():
         type=int,
         default=5,
         help="Optional: duration of the end video in seconds (default: 5). Example: --end_video_duration=10",
-    )
-
-    parser.add_argument(
-        "--title_initial_font_size",
-        type=int,
-        default=500,
-        help="Optional: Initial font size for title video (default: 500). Example: --title_initial_font_size=600",
-    )
-    parser.add_argument(
-        "--title_top_padding",
-        type=int,
-        default=950,
-        help="Optional: Top padding for title video (default: 950). Example: --title_top_padding=1000",
-    )
-    parser.add_argument(
-        "--title_title_padding",
-        type=int,
-        default=400,
-        help="Optional: Title padding for title video (default: 400). Example: --title_title_padding=450",
-    )
-    parser.add_argument(
-        "--title_artist_padding",
-        type=int,
-        default=700,
-        help="Optional: Artist padding for title video (default: 700). Example: --title_artist_padding=750",
-    )
-    parser.add_argument(
-        "--title_fixed_gap",
-        type=int,
-        default=150,
-        help="Optional: Fixed gap for title video (default: 150). Example: --title_fixed_gap=200",
-    )
-    parser.add_argument(
-        "--end_initial_font_size",
-        type=int,
-        default=500,
-        help="Optional: Initial font size for end video (default: 500). Example: --end_initial_font_size=600",
-    )
-    parser.add_argument(
-        "--end_top_padding",
-        type=int,
-        default=950,
-        help="Optional: Top padding for end video (default: 950). Example: --end_top_padding=1000",
-    )
-    parser.add_argument(
-        "--end_title_padding",
-        type=int,
-        default=400,
-        help="Optional: Title padding for end video (default: 400). Example: --end_title_padding=450",
-    )
-    parser.add_argument(
-        "--end_artist_padding",
-        type=int,
-        default=700,
-        help="Optional: Artist padding for end video (default: 700). Example: --end_artist_padding=750",
-    )
-    parser.add_argument(
-        "--end_extra_text_padding",
-        type=int,
-        default=300,
-        help="Optional: Extra text padding for end video (default: 600). Example: --end_extra_text_padding=650",
-    )
-    parser.add_argument(
-        "--end_fixed_gap",
-        type=int,
-        default=150,
-        help="Optional: Fixed gap for end video (default: 150). Example: --end_fixed_gap=200",
     )
 
     parser.add_argument(
@@ -361,9 +296,7 @@ def main():
     logger.setLevel(log_level)
 
     if args.existing_instrumental:
-        args.clean_instrumental_model = None
-        args.backing_vocals_models = []
-        args.other_stems_models = []
+        args.model_names = ["Custom"]
 
     logger.info(f"KaraokePrep beginning with input_media: {input_media} artist: {artist} and title: {title}")
 
@@ -375,12 +308,11 @@ def main():
         dry_run=args.dry_run,
         log_formatter=log_formatter,
         log_level=log_level,
-        clean_instrumental_model=args.clean_instrumental_model,
-        backing_vocals_models=args.backing_vocals_models,
-        other_stems_models=args.other_stems_models,
+        model_names=args.model_names,
         model_file_dir=args.model_file_dir,
         output_dir=args.output_dir,
         lossless_output_format=args.lossless_output_format,
+        lossy_output_format=args.lossy_output_format,
         use_cuda=args.use_cuda,
         use_coreml=args.use_coreml,
         normalization_enabled=args.normalize,
@@ -395,25 +327,15 @@ def main():
         intro_font=args.intro_font,
         intro_artist_color=args.intro_artist_color,
         intro_title_color=args.intro_title_color,
-        title_initial_font_size=args.title_initial_font_size,
-        title_top_padding=args.title_top_padding,
-        title_title_padding=args.title_title_padding,
-        title_artist_padding=args.title_artist_padding,
-        title_fixed_gap=args.title_fixed_gap,
         end_video_duration=args.end_video_duration,
         end_extra_text=args.end_extra_text,
         end_background_color=args.end_background_color,
         end_background_image=args.end_background_image,
         end_font=args.end_font,
-        end_extra_text_color=args.end_extra_text_color,
         end_artist_color=args.end_artist_color,
         end_title_color=args.end_title_color,
-        end_initial_font_size=args.end_initial_font_size,
-        end_top_padding=args.end_top_padding,
-        end_title_padding=args.end_title_padding,
-        end_artist_padding=args.end_artist_padding,
-        end_extra_text_padding=args.end_extra_text_padding,
-        end_fixed_gap=args.end_fixed_gap,
+        title_region=args.title_region,
+        artist_region=args.artist_region,
         lyrics_artist=args.lyrics_artist,
         lyrics_title=args.lyrics_title,
         skip_lyrics=args.skip_lyrics,
@@ -432,32 +354,11 @@ def main():
         logger.info(f" Lyrics: {track['lyrics']}")
         logger.info(f" Processed Lyrics: {track['processed_lyrics']}")
 
-        logger.info(f" Separated Audio:")
-
-        # Clean Instrumental
-        logger.info(f"  Clean Instrumental Model:")
-        for stem_type, file_path in track["separated_audio"]["clean_instrumental"].items():
-            logger.info(f"   {stem_type.capitalize()}: {file_path}")
-
-        # Other Stems
-        logger.info(f"  Other Stems Models:")
-        for model, stems in track["separated_audio"]["other_stems"].items():
-            logger.info(f"   Model: {model}")
-            for stem_type, file_path in stems.items():
-                logger.info(f"    {stem_type.capitalize()}: {file_path}")
-
-        # Backing Vocals
-        logger.info(f"  Backing Vocals Models:")
-        for model, stems in track["separated_audio"]["backing_vocals"].items():
-            logger.info(f"   Model: {model}")
-            for stem_type, file_path in stems.items():
-                logger.info(f"    {stem_type.capitalize()}: {file_path}")
-
-        # Combined Instrumentals
-        logger.info(f"  Combined Instrumentals:")
-        for model, file_path in track["separated_audio"]["combined_instrumentals"].items():
-            logger.info(f"   Model: {model}")
-            logger.info(f"    Combined Instrumental: {file_path}")
+        for model_name in args.model_names:
+            logger.info(f" Instrumental: {track['separated_audio'][model_name]['instrumental']}")
+            logger.info(f" Instrumental (Lossy): {track['separated_audio'][model_name]['instrumental_lossy']}")
+            logger.info(f" Vocals: {track['separated_audio'][model_name]['vocals']}")
+            logger.info(f" Vocals (Lossy): {track['separated_audio'][model_name]['vocals_lossy']}")
 
 
 if __name__ == "__main__":

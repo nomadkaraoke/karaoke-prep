@@ -3,18 +3,15 @@ import sys
 import re
 import glob
 import logging
+import unicodedata
 import lyricsgenius
 import tempfile
 import shutil
+import pyperclip
+from pyperclip import PyperclipException
 import importlib.resources as pkg_resources
 import yt_dlp.YoutubeDL as ydl
 from PIL import Image, ImageDraw, ImageFont
-from lyrics_transcriber import LyricsTranscriber
-from karaoke_lyrics_processor import KaraokeLyricsProcessor
-import json
-import subprocess
-from pydub import AudioSegment
-import numpy as np
 
 
 class KaraokePrep:
@@ -27,12 +24,11 @@ class KaraokePrep:
         dry_run=False,
         log_level=logging.DEBUG,
         log_formatter=None,
-        clean_instrumental_model="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-        backing_vocals_models=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt", "UVR-BVE-4B_SN-44100-1.pth"],
-        other_stems_models=["htdemucs_6s.yaml"],
+        model_names=["UVR_MDXNET_KARA_2.onnx", "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt"],
         model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
         output_dir=".",
         lossless_output_format="FLAC",
+        lossy_output_format="MP3",
         use_cuda=False,
         use_coreml=False,
         normalization_enabled=True,
@@ -40,35 +36,28 @@ class KaraokePrep:
         create_track_subfolders=False,
         intro_background_color="#000000",
         intro_background_image=None,
-        intro_font="Montserrat-Bold.ttf",
+        intro_font="Zurich_Cn_BT_Bold.ttf",
         intro_artist_color="#ffffff",
         intro_title_color="#ff7acc",
         existing_instrumental=None,
         existing_title_image=None,
         end_background_color="#000000",
         end_background_image=None,
-        end_font="Montserrat-Bold.ttf",
-        end_extra_text_color="#ffffff",
+        end_font="Zurich_Cn_BT_Bold.ttf",
         end_artist_color="#ffffff",
         end_title_color="#ff7acc",
         existing_end_image=None,
-        title_video_duration=5,
-        end_video_duration=5,
-        title_initial_font_size=500,
-        title_top_padding=950,
-        title_title_padding=400,
-        title_artist_padding=700,
-        title_fixed_gap=150,
-        end_initial_font_size=500,
-        end_top_padding=950,
-        end_title_padding=400,
-        end_artist_padding=700,
-        end_extra_text_padding=300,
-        end_fixed_gap=150,
         end_extra_text="THANK YOU FOR SINGING!",
         lyrics_artist=None,
         lyrics_title=None,
         skip_lyrics=False,
+        title_region=None,
+        artist_region=None,
+        render_bounding_boxes=False,
+        output_png=True,
+        output_jpg=True,
+        title_video_duration=5,
+        end_video_duration=5,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -94,12 +83,11 @@ class KaraokePrep:
         self.artist = artist
         self.title = title
         self.filename_pattern = filename_pattern
-        self.clean_instrumental_model = clean_instrumental_model
-        self.backing_vocals_models = backing_vocals_models
-        self.other_stems_models = other_stems_models
+        self.model_names = model_names
         self.model_file_dir = model_file_dir
         self.output_dir = output_dir
         self.lossless_output_format = lossless_output_format.lower()
+        self.lossy_output_format = lossy_output_format.lower()
         self.use_cuda = use_cuda
         self.use_coreml = use_coreml
         self.normalization_enabled = normalization_enabled
@@ -107,23 +95,18 @@ class KaraokePrep:
         self.create_track_subfolders = create_track_subfolders
         self.existing_instrumental = existing_instrumental
         self.existing_title_image = existing_title_image
-        self.title_video_duration = title_video_duration
-        self.end_video_duration = end_video_duration
-        self.title_initial_font_size = title_initial_font_size
-        self.title_top_padding = title_top_padding
-        self.title_title_padding = title_title_padding
-        self.title_artist_padding = title_artist_padding
-        self.title_fixed_gap = title_fixed_gap
-        self.end_initial_font_size = end_initial_font_size
-        self.end_top_padding = end_top_padding
-        self.end_title_padding = end_title_padding
-        self.end_artist_padding = end_artist_padding
-        self.end_extra_text_padding = end_extra_text_padding
-        self.end_fixed_gap = end_fixed_gap
+        self.existing_end_image = existing_end_image
         self.end_extra_text = end_extra_text
         self.lyrics_artist = lyrics_artist
         self.lyrics_title = lyrics_title
         self.skip_lyrics = skip_lyrics
+        self.title_region = self.parse_region(title_region) or (370, 470, 3100, 480)
+        self.artist_region = self.parse_region(artist_region) or (370, 1210, 3100, 480)
+        self.render_bounding_boxes = render_bounding_boxes
+        self.output_png = output_png
+        self.output_jpg = output_jpg
+        self.title_video_duration = title_video_duration
+        self.end_video_duration = end_video_duration
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
@@ -147,12 +130,9 @@ class KaraokePrep:
             "background_color": end_background_color,
             "background_image": end_background_image,
             "font": end_font,
-            "extra_text_color": end_extra_text_color,
             "artist_color": end_artist_color,
             "title_color": end_title_color,
         }
-
-        self.existing_end_image = existing_end_image
 
         self.extracted_info = None
         self.persistent_artist = None
@@ -164,6 +144,15 @@ class KaraokePrep:
             os.makedirs(self.output_dir)
         else:
             self.logger.debug(f"Overall output dir {self.output_dir} already exists")
+
+    @staticmethod
+    def parse_region(region_str):
+        if region_str:
+            try:
+                return tuple(map(int, region_str.split(",")))
+            except ValueError:
+                raise ValueError(f"Invalid region format: {region_str}. Expected format: 'x,y,width,height'")
+        return None
 
     def extract_info_for_online_media(self, input_url=None, input_artist=None, input_title=None):
         self.logger.info(f"Extracting info for input_url: {input_url} input_artist: {input_artist} input_title: {input_title}")
@@ -294,10 +283,6 @@ class KaraokePrep:
         return output_filename
 
     def write_lyrics_from_genius(self, artist, title, filename):
-        if self._file_exists(filename):
-            with open(filename, "r") as f:
-                return f.read().split("\n")
-
         genius = lyricsgenius.Genius(access_token=os.environ["GENIUS_API_TOKEN"], verbose=False, remove_section_headers=True)
         song = genius.search_song(title, artist)
         if song:
@@ -411,54 +396,54 @@ class KaraokePrep:
 
         return processed_lines
 
-    def transcribe_lyrics(self, input_audio_wav, track_output_dir):
-        self.logger.info(f"Transcribing lyrics from audio file: {input_audio_wav} with output directory: {track_output_dir}")
+    def write_processed_lyrics(self, lyrics, processed_lyrics_file):
+        self.logger.info(f"Writing processed lyrics to {processed_lyrics_file}")
 
-        if os.environ.get("AUDIOSHAKE_API_TOKEN") is None:
-            self.logger.warning("Error: AUDIOSHAKE_API_TOKEN environment variable is not set, skipping transcription")
-            return
-
-        self.logger.debug("Loading LyricsTranscriber class")
-
-        transcriber = LyricsTranscriber(
-            input_audio_wav,
-            log_level=self.log_level,
-            log_formatter=self.log_formatter,
-            audioshake_api_token=os.environ["AUDIOSHAKE_API_TOKEN"],
-            output_dir=track_output_dir,
-            artist=self.artist,
-            title=self.title,
-        )
-
-        transcriber_outputs = transcriber.generate()
-
-        self.logger.info(f"*** Outputs: ***")
-        self.logger.info(f"Transcription output data file: {transcriber_outputs['transcription_data_filepath']}")
-        self.logger.info(f"Transcribed lyrics text file: {transcriber_outputs['transcribed_lyrics_text_filepath']}")
-        self.logger.info(f"MidiCo LRC output file: {transcriber_outputs['midico_lrc_filepath']}")
-
-    def write_processed_lyrics(self, lyrics_file, processed_lyrics_file):
-        if self._file_exists(processed_lyrics_file):
-            return processed_lyrics_file
-
-        self.logger.info(f"Processing lyrics from {lyrics_file} and writing to {processed_lyrics_file}")
+        processed_lyrics_lines = ""
+        iteration_count = 0
+        max_iterations = 100  # Failsafe limit
 
         if not self.dry_run:
-            processor = KaraokeLyricsProcessor(
-                log_level=self.log_level,
-                log_formatter=self.log_formatter,
-                input_filename=lyrics_file,
-                output_filename=processed_lyrics_file,
-                max_line_length=36,  # Using the default max line length
-            )
-            processor.process()
-            processor.write_to_output_file()
+            with open(processed_lyrics_file, "w") as outfile:
+                all_processed = False
+                while not all_processed:
+                    if iteration_count > max_iterations:
+                        self.logger.error("Maximum iterations exceeded in write_processed_lyrics.")
+                        break
 
-            self.logger.info(f"Lyrics processing complete, processed lyrics written to: {processed_lyrics_file}")
-        else:
-            self.logger.info(f"DRY RUN: Would process lyrics from {lyrics_file} and write to: {processed_lyrics_file}")
+                    all_processed = True
+                    new_lyrics = []
+                    for line in lyrics:
+                        line = line.strip()
 
-        return processed_lyrics_file
+                        # Check for abnormal space characters and replace them
+                        abnormal_spaces = [chr(i) for i in range(sys.maxunicode) if unicodedata.category(chr(i)) == "Zs" and chr(i) != " "]
+                        if any(space in line for space in abnormal_spaces):
+                            self.logger.warning(f"Replacing abnormal space characters found in line: {line}")
+                            for space in abnormal_spaces:
+                                line = line.replace(space, " ")
+
+                        processed = self.process_line(line)
+                        new_lyrics.extend(processed)
+                        if any(len(l) > 36 for l in processed):
+                            all_processed = False
+                    lyrics = new_lyrics
+
+                    iteration_count += 1
+
+                # Write the processed lyrics to file
+                for line in lyrics:
+                    outfile.write(line + "\n")
+                    processed_lyrics_lines += line + "\n"
+
+        if not self.dry_run:
+            try:
+                pyperclip.copy(processed_lyrics_lines)
+                self.logger.info(f"Processed lyrics copied to clipboard.")
+            except PyperclipException:
+                self.logger.warning("Clipboard functionality not available. Skipping clipboard operations.")
+
+        return processed_lyrics_lines
 
     def sanitize_filename(self, filename):
         """Replace or remove characters that are unsafe for filenames."""
@@ -469,7 +454,7 @@ class KaraokePrep:
         filename = filename.rstrip(" ")
         return filename
 
-    def separate_audio(self, audio_file, model_name, artist_title, track_output_dir, instrumental_path, vocals_path):
+    def separate_audio(self, audio_file, model_name, instrumental_path, vocals_path):
         if audio_file is None or not os.path.isfile(audio_file):
             raise Exception("Error: Invalid audio source provided.")
 
@@ -491,40 +476,11 @@ class KaraokePrep:
         separator.load_model(model_filename=model_name)
         output_files = separator.separate(audio_file)
 
-        self.logger.debug(f"Separator output files: {output_files}")
-
-        model_name_no_extension = os.path.splitext(model_name)[0]
-
         for file in output_files:
             if "(Vocals)" in file:
-                self.logger.info(f"Renaming Vocals file {file} to {vocals_path}")
                 os.rename(file, vocals_path)
             elif "(Instrumental)" in file:
-                self.logger.info(f"Renaming Instrumental file {file} to {instrumental_path}")
                 os.rename(file, instrumental_path)
-            elif model_name in file:
-                # Example filename 1: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Piano)_htdemucs_6s.flac"
-                # Example filename 2: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Guitar)_htdemucs_6s.flac"
-                # The stem name in these examples would be "Piano" or "Guitar"
-                # Extract stem_name from the filename
-                stem_name = file.split(f"_{model_name}")[0].split("_")[-1]
-                stem_name = stem_name.strip("()")  # Remove parentheses if present
-
-                other_stem_path = os.path.join(track_output_dir, f"{artist_title} ({stem_name} {model_name}).{self.lossless_output_format}")
-                self.logger.info(f"Renaming other stem file {file} to {other_stem_path}")
-                os.rename(file, other_stem_path)
-
-            elif model_name_no_extension in file:
-                # Example filename 1: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Piano)_htdemucs_6s.flac"
-                # Example filename 2: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Guitar)_htdemucs_6s.flac"
-                # The stem name in these examples would be "Piano" or "Guitar"
-                # Extract stem_name from the filename
-                stem_name = file.split(f"_{model_name_no_extension}")[0].split("_")[-1]
-                stem_name = stem_name.strip("()")  # Remove parentheses if present
-
-                other_stem_path = os.path.join(track_output_dir, f"{artist_title} ({stem_name} {model_name}).{self.lossless_output_format}")
-                self.logger.info(f"Renaming other stem file {file} to {other_stem_path}")
-                os.rename(file, other_stem_path)
 
         self.logger.info(f"Separation complete! Output file(s): {vocals_path} {instrumental_path}")
 
@@ -543,35 +499,45 @@ class KaraokePrep:
 
         return track_output_dir, artist_title
 
-    def calculate_text_size_and_position(self, draw, text, font_path, start_size, resolution, padding):
-        font_size = start_size
+    def calculate_text_size_to_fit(self, draw, text, font_path, region):
+        font_size = 500  # Start with a large font size
         font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
 
-        # Initial position for calculating the text bounding box
-        temp_position = (padding, padding)
-        bbox = draw.textbbox(temp_position, text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
+        def get_text_size(text, font):
+            return draw.textbbox((0, 0), text, font=font)[2:]
 
-        while text_width + 2 * padding > resolution[0] or text_height + 2 * padding > resolution[1]:
+        text_width, text_height = get_text_size(text, font)
+
+        while text_width > region[2] or text_height > region[3]:
             font_size -= 10
-            if font_size <= 0:
-                raise ValueError("Cannot fit text within screen bounds.")
+            if font_size <= 150:
+                # Split the text into two lines
+                words = text.split()
+                mid = len(words) // 2
+                line1 = " ".join(words[:mid])
+                line2 = " ".join(words[mid:])
+
+                # Reset font size for two-line layout
+                font_size = 500
+                font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+
+                while True:
+                    text_width1, text_height1 = get_text_size(line1, font)
+                    text_width2, text_height2 = get_text_size(line2, font)
+                    total_height = text_height1 + text_height2
+
+                    if max(text_width1, text_width2) <= region[2] and total_height <= region[3]:
+                        return font, (line1, line2)
+
+                    font_size -= 10
+                    if font_size <= 0:
+                        raise ValueError("Cannot fit text within the defined region.")
+                    font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+
             font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
-            bbox = draw.textbbox(temp_position, text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
+            text_width, text_height = get_text_size(text, font)
 
-        text_position = ((resolution[0] - text_width) // 2, (resolution[1] - text_height) // 2)
-        return font, text_position
-
-    def calculate_text_position(self, draw, text, font, resolution, vertical_offset):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-        text_x = (resolution[0] - text_width) // 2
-        text_y = vertical_offset
-        return (text_x, text_y), text_height
+        return font, text
 
     def create_video(
         self,
@@ -582,26 +548,18 @@ class KaraokePrep:
         output_image_filepath_noext,
         output_video_filepath,
         existing_image=None,
-        extra_text_color=None,
         title_color=None,
         artist_color=None,
         duration=5,
-        initial_font_size=500,
-        top_padding=950,
-        title_padding=400,
-        artist_padding=700,
-        extra_text_padding=600,
-        fixed_gap=150,
+        title_region=None,
+        artist_region=None,
+        render_bounding_boxes=False,
+        output_png=True,
+        output_jpg=True,
     ):
-        if self._file_exists(output_video_filepath):
-            return output_video_filepath
-
         resolution = (3840, 2160)  # 4K resolution
         self.logger.info(f"Creating video with format: {format}")
         self.logger.info(f"extra_text: {extra_text}, artist_text: {artist_text}, title_text: {title_text}")
-        self.logger.info(
-            f"top_padding: {top_padding}, title_padding: {title_padding}, artist_padding: {artist_padding}, extra_text_padding: {extra_text_padding}"
-        )
 
         if existing_image:
             self.logger.info(f"Using existing image file: {existing_image}")
@@ -636,62 +594,99 @@ class KaraokePrep:
 
             draw = ImageDraw.Draw(background)
 
-            # Accessing the font file from the package resources
-            with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
-                # Calculate positions and sizes for title, artist, and extra text
-                title_font, _ = self.calculate_text_size_and_position(
-                    draw, title_text, str(font_path), initial_font_size, resolution, title_padding
-                )
-                artist_font, _ = self.calculate_text_size_and_position(
-                    draw, artist_text, str(font_path), initial_font_size, resolution, artist_padding
-                )
-                if extra_text:
-                    self.logger.info(f"Calculating extra text font size and position for: {extra_text}")
-                    extra_text_font, _ = self.calculate_text_size_and_position(
-                        draw, extra_text, str(font_path), initial_font_size, resolution, extra_text_padding
+            if format["font"] is not None:
+                self.logger.info(f"Using font: {format['font']}")
+
+                with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
+                    # Calculate font size and potentially split text for title and artist
+                    title_font, title_text = self.calculate_text_size_to_fit(
+                        draw, title_text, str(font_path), title_region or self.title_region
+                    )
+                    artist_font, artist_text = self.calculate_text_size_to_fit(
+                        draw, artist_text, str(font_path), artist_region or self.artist_region
                     )
 
-            # Calculate vertical positions with consistent gap
-            current_y = top_padding
-            if extra_text:
-                self.logger.info(f"Calculating extra text position for: {extra_text}")
-                extra_text_position, extra_text_height = self.calculate_text_position(
-                    draw, extra_text, extra_text_font, resolution, current_y
-                )
-                draw.text(extra_text_position, extra_text, fill=extra_text_color, font=extra_text_font)
-                current_y += extra_text_height + fixed_gap
+                # Draw title text
+                title_x, title_y, title_w, title_h = title_region or self.title_region
+                if isinstance(title_text, tuple):  # Two lines
+                    line1, line2 = title_text
+                    title_bbox1 = draw.textbbox((0, 0), line1, font=title_font)
+                    title_bbox2 = draw.textbbox((0, 0), line2, font=title_font)
+                    total_height = title_bbox1[3] + title_bbox2[3]
+                    y_offset = (title_h - total_height) // 2
+                    draw.text((title_x + (title_w - title_bbox1[2]) // 2, title_y + y_offset), line1, fill=title_color, font=title_font)
+                    draw.text(
+                        (title_x + (title_w - title_bbox2[2]) // 2, title_y + y_offset + title_bbox1[3]),
+                        line2,
+                        fill=title_color,
+                        font=title_font,
+                    )
+                else:
+                    title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+                    title_position = (
+                        title_x + (title_w - title_bbox[2]) // 2,
+                        title_y + (title_h - title_bbox[3]) // 2,
+                    )
+                    draw.text(title_position, title_text, fill=title_color, font=title_font)
 
-            title_text_position, title_height = self.calculate_text_position(draw, title_text, title_font, resolution, current_y)
-            draw.text(title_text_position, title_text, fill=title_color, font=title_font)
-            current_y += title_height + fixed_gap
+                # Draw artist text
+                artist_x, artist_y, artist_w, artist_h = artist_region or self.artist_region
+                if isinstance(artist_text, tuple):  # Two lines
+                    line1, line2 = artist_text
+                    artist_bbox1 = draw.textbbox((0, 0), line1, font=artist_font)
+                    artist_bbox2 = draw.textbbox((0, 0), line2, font=artist_font)
+                    total_height = artist_bbox1[3] + artist_bbox2[3]
+                    y_offset = (artist_h - total_height) // 2
+                    draw.text(
+                        (artist_x + (artist_w - artist_bbox1[2]) // 2, artist_y + y_offset), line1, fill=artist_color, font=artist_font
+                    )
+                    draw.text(
+                        (artist_x + (artist_w - artist_bbox2[2]) // 2, artist_y + y_offset + artist_bbox1[3]),
+                        line2,
+                        fill=artist_color,
+                        font=artist_font,
+                    )
+                else:
+                    artist_bbox = draw.textbbox((0, 0), artist_text, font=artist_font)
+                    artist_position = (
+                        artist_x + (artist_w - artist_bbox[2]) // 2,
+                        artist_y + (artist_h - artist_bbox[3]) // 2,
+                    )
+                    draw.text(artist_position, artist_text, fill=artist_color, font=artist_font)
 
-            artist_text_position, _ = self.calculate_text_position(draw, artist_text, artist_font, resolution, current_y)
-            draw.text(artist_text_position, artist_text, fill=artist_color, font=artist_font)
+                if render_bounding_boxes:
+                    # Draw bounding rectangles for debugging
+                    draw.rectangle([title_x, title_y, title_x + title_w, title_y + title_h], outline=title_color, width=2)
+                    draw.rectangle([artist_x, artist_y, artist_x + artist_w, artist_y + artist_h], outline=artist_color, width=2)
+            else:
+                self.logger.info("No font specified, skipping text rendering")
 
             # Save static background image
-            background.save(f"{output_image_filepath_noext}.png")
+            if output_png:
+                background.save(f"{output_image_filepath_noext}.png")
 
-            # Save static background image as JPG for smaller filesize to upload as YouTube thumbnail
-            background_rgb = background.convert("RGB")
-            background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
+            if output_jpg:
+                # Save static background image as JPG for smaller filesize to upload as YouTube thumbnail
+                background_rgb = background.convert("RGB")
+                background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
 
-        # Use ffmpeg to create video
-        ffmpeg_command = f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath_noext}.png" -f lavfi -i anullsrc '
-        ffmpeg_command += f'-c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p -vf scale={resolution[0]}:{resolution[1]} -c:a aac -shortest "{output_video_filepath}"'
+        if duration > 0:
+            # Use ffmpeg to create video
+            ffmpeg_command = (
+                f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath_noext}.png" -f lavfi -i anullsrc '
+            )
+            ffmpeg_command += f'-c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p -vf scale={resolution[0]}:{resolution[1]} -c:a aac -shortest "{output_video_filepath}"'
 
-        self.logger.info("Generating video...")
-        self.logger.debug(f"Running command: {ffmpeg_command}")
-        os.system(ffmpeg_command)
-
-        return output_video_filepath
+            self.logger.info("Generating video...")
+            self.logger.debug(f"Running command: {ffmpeg_command}")
+            os.system(ffmpeg_command)
+        else:
+            self.logger.info(f"Skipping video generation as duration is 0")
 
     def create_title_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
-        if self._file_exists(output_video_filepath):
-            return output_video_filepath
-
         title_text = title.upper()
         artist_text = artist.upper()
-        return self.create_video(
+        self.create_video(
             extra_text=None,
             title_text=title_text,
             artist_text=artist_text,
@@ -702,21 +697,18 @@ class KaraokePrep:
             title_color=format["title_color"],
             artist_color=format["artist_color"],
             duration=self.title_video_duration,
-            initial_font_size=self.title_initial_font_size,
-            top_padding=self.title_top_padding,
-            title_padding=self.title_title_padding,
-            artist_padding=self.title_artist_padding,
-            fixed_gap=self.title_fixed_gap,
+            title_region=self.title_region,
+            artist_region=self.artist_region,
+            render_bounding_boxes=self.render_bounding_boxes,
+            output_png=self.output_png,
+            output_jpg=self.output_jpg,
         )
 
     def create_end_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
-        if self._file_exists(output_video_filepath):
-            return output_video_filepath
-
         extra_text = self.end_extra_text
         title_text = title.upper()
         artist_text = artist.upper()
-        return self.create_video(
+        self.create_video(
             extra_text=extra_text,
             title_text=title_text,
             artist_text=artist_text,
@@ -724,215 +716,20 @@ class KaraokePrep:
             output_image_filepath_noext=output_image_filepath_noext,
             output_video_filepath=output_video_filepath,
             existing_image=self.existing_end_image,
-            extra_text_color=format["extra_text_color"],
             title_color=format["title_color"],
             artist_color=format["artist_color"],
             duration=self.end_video_duration,
-            initial_font_size=self.end_initial_font_size,
-            top_padding=self.end_top_padding,
-            title_padding=self.end_title_padding,
-            artist_padding=self.end_artist_padding,
-            extra_text_padding=self.end_extra_text_padding,
-            fixed_gap=self.end_fixed_gap,
+            title_region=self.title_region,
+            artist_region=self.artist_region,
+            render_bounding_boxes=self.render_bounding_boxes,
+            output_png=self.output_png,
+            output_jpg=self.output_jpg,
         )
 
     def hex_to_rgb(self, hex_color):
         """Convert hex color to RGB tuple."""
         hex_color = hex_color.lstrip("#")
         return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
-
-    def process_audio_separation(self, audio_file, artist_title, track_output_dir):
-        from audio_separator.separator import Separator
-
-        self.logger.info(f"Starting audio separation process for {artist_title}")
-
-        separator = Separator(
-            log_level=self.log_level,
-            log_formatter=self.log_formatter,
-            model_file_dir=self.model_file_dir,
-            output_format=self.lossless_output_format,
-        )
-
-        stems_dir = self._create_stems_directory(track_output_dir)
-        result = {"clean_instrumental": {}, "other_stems": {}, "backing_vocals": {}, "combined_instrumentals": {}}
-
-        result["clean_instrumental"] = self._separate_clean_instrumental(separator, audio_file, artist_title, track_output_dir, stems_dir)
-        result["other_stems"] = self._separate_other_stems(separator, audio_file, artist_title, stems_dir)
-        result["backing_vocals"] = self._separate_backing_vocals(separator, result["clean_instrumental"]["vocals"], artist_title, stems_dir)
-        result["combined_instrumentals"] = self._generate_combined_instrumentals(
-            result["clean_instrumental"]["instrumental"], result["backing_vocals"], artist_title, track_output_dir
-        )
-        self._normalize_audio_files(result, artist_title, track_output_dir)
-
-        self.logger.info("Audio separation, combination, and normalization process completed")
-        return result
-
-    def _create_stems_directory(self, track_output_dir):
-        stems_dir = os.path.join(track_output_dir, "stems")
-        os.makedirs(stems_dir, exist_ok=True)
-        self.logger.info(f"Created stems directory: {stems_dir}")
-        return stems_dir
-
-    def _separate_clean_instrumental(self, separator, audio_file, artist_title, track_output_dir, stems_dir):
-        self.logger.info(f"Separating using clean instrumental model: {self.clean_instrumental_model}")
-        instrumental_path = os.path.join(
-            track_output_dir, f"{artist_title} (Instrumental {self.clean_instrumental_model}).{self.lossless_output_format}"
-        )
-        vocals_path = os.path.join(stems_dir, f"{artist_title} (Vocals {self.clean_instrumental_model}).{self.lossless_output_format}")
-
-        result = {}
-        if not self._file_exists(instrumental_path) or not self._file_exists(vocals_path):
-            separator.load_model(model_filename=self.clean_instrumental_model)
-            clean_output_files = separator.separate(audio_file)
-
-            for file in clean_output_files:
-                if "(Vocals)" in file and not self._file_exists(vocals_path):
-                    os.rename(file, vocals_path)
-                    result["vocals"] = vocals_path
-                elif "(Instrumental)" in file and not self._file_exists(instrumental_path):
-                    os.rename(file, instrumental_path)
-                    result["instrumental"] = instrumental_path
-        else:
-            result["vocals"] = vocals_path
-            result["instrumental"] = instrumental_path
-
-        return result
-
-    def _separate_other_stems(self, separator, audio_file, artist_title, stems_dir):
-        self.logger.info(f"Separating using other stems models: {self.other_stems_models}")
-        result = {}
-        for model in self.other_stems_models:
-            self.logger.info(f"Processing with model: {model}")
-            result[model] = {}
-
-            # Check if any stem files for this model already exist
-            existing_stems = glob.glob(os.path.join(stems_dir, f"{artist_title} (*{model}).{self.lossless_output_format}"))
-
-            if existing_stems:
-                self.logger.info(f"Found existing stem files for model {model}, skipping separation")
-                for stem_file in existing_stems:
-                    stem_name = os.path.basename(stem_file).split("(")[1].split(")")[0].strip()
-                    result[model][stem_name] = stem_file
-            else:
-                separator.load_model(model_filename=model)
-                other_stems_output = separator.separate(audio_file)
-
-                for file in other_stems_output:
-                    file_name = os.path.basename(file)
-                    stem_name = file_name[file_name.rfind("_(") + 2 : file_name.rfind(")_")]
-                    new_filename = f"{artist_title} ({stem_name} {model}).{self.lossless_output_format}"
-                    other_stem_path = os.path.join(stems_dir, new_filename)
-                    if not self._file_exists(other_stem_path):
-                        os.rename(file, other_stem_path)
-                    result[model][stem_name] = other_stem_path
-
-        return result
-
-    def _separate_backing_vocals(self, separator, vocals_path, artist_title, stems_dir):
-        self.logger.info(f"Separating clean vocals using backing vocals models: {self.backing_vocals_models}")
-        result = {}
-        for model in self.backing_vocals_models:
-            self.logger.info(f"Processing with model: {model}")
-            result[model] = {}
-            lead_vocals_path = os.path.join(stems_dir, f"{artist_title} (Lead Vocals {model}).{self.lossless_output_format}")
-            backing_vocals_path = os.path.join(stems_dir, f"{artist_title} (Backing Vocals {model}).{self.lossless_output_format}")
-
-            if not self._file_exists(lead_vocals_path) or not self._file_exists(backing_vocals_path):
-                separator.load_model(model_filename=model)
-                backing_vocals_output = separator.separate(vocals_path)
-
-                for file in backing_vocals_output:
-                    if "(Vocals)" in file and not self._file_exists(lead_vocals_path):
-                        os.rename(file, lead_vocals_path)
-                        result[model]["lead_vocals"] = lead_vocals_path
-                    elif "(Instrumental)" in file and not self._file_exists(backing_vocals_path):
-                        os.rename(file, backing_vocals_path)
-                        result[model]["backing_vocals"] = backing_vocals_path
-            else:
-                result[model]["lead_vocals"] = lead_vocals_path
-                result[model]["backing_vocals"] = backing_vocals_path
-        return result
-
-    def _generate_combined_instrumentals(self, instrumental_path, backing_vocals_result, artist_title, track_output_dir):
-        self.logger.info("Generating combined instrumental tracks with backing vocals")
-        result = {}
-        for model, paths in backing_vocals_result.items():
-            backing_vocals_path = paths["backing_vocals"]
-            combined_path = os.path.join(
-                track_output_dir, f"{artist_title} (Instrumental with Backing {model}).{self.lossless_output_format}"
-            )
-
-            if not self._file_exists(combined_path):
-                ffmpeg_command = (
-                    f'{self.ffmpeg_base_command} -i "{instrumental_path}" -i "{backing_vocals_path}" '
-                    f'-filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:weights=1 1" '
-                    f'-c:a {self.lossless_output_format.lower()} "{combined_path}"'
-                )
-
-                self.logger.debug(f"Running command: {ffmpeg_command}")
-                os.system(ffmpeg_command)
-
-            result[model] = combined_path
-        return result
-
-    def _normalize_audio_files(self, separation_result, artist_title, track_output_dir):
-        self.logger.info("Normalizing clean instrumental and combined instrumentals")
-
-        files_to_normalize = [
-            ("clean_instrumental", separation_result["clean_instrumental"]["instrumental"]),
-        ] + [("combined_instrumentals", path) for path in separation_result["combined_instrumentals"].values()]
-
-        for key, file_path in files_to_normalize:
-            if self._file_exists(file_path):
-                try:
-                    self._normalize_audio(file_path, file_path)  # Normalize in-place
-
-                    # Verify the normalized file
-                    if os.path.getsize(file_path) > 0:
-                        self.logger.info(f"Successfully normalized: {file_path}")
-                    else:
-                        raise Exception("Normalized file is empty")
-
-                except Exception as e:
-                    self.logger.error(f"Error during normalization of {file_path}: {e}")
-                    self.logger.warning(f"Normalization failed for {file_path}. Original file remains unchanged.")
-            else:
-                self.logger.warning(f"File not found for normalization: {file_path}")
-
-        self.logger.info("Audio normalization process completed")
-
-    def _normalize_audio(self, input_path, output_path, target_level=0.0):
-        self.logger.info(f"Normalizing audio file: {input_path}")
-
-        # Load audio file
-        audio = AudioSegment.from_file(input_path, format=self.lossless_output_format.lower())
-
-        # Calculate the peak amplitude
-        peak_amplitude = float(audio.max_dBFS)
-
-        # Calculate the necessary gain
-        gain_db = target_level - peak_amplitude
-
-        # Apply gain
-        normalized_audio = audio.apply_gain(gain_db)
-
-        # Ensure the audio is not completely silent
-        if normalized_audio.rms == 0:
-            self.logger.warning(f"Normalized audio is silent for {input_path}. Using original audio.")
-            normalized_audio = audio
-
-        # Export normalized audio, overwriting the original file
-        normalized_audio.export(output_path, format=self.lossless_output_format.lower())
-
-        self.logger.info(f"Normalized audio saved, replacing: {output_path}")
-        self.logger.debug(f"Original peak: {peak_amplitude} dB, Applied gain: {gain_db} dB")
-
-    def _file_exists(self, file_path):
-        """Check if a file exists and log the result."""
-        exists = os.path.isfile(file_path)
-        if exists:
-            self.logger.info(f"File already exists, skipping creation: {file_path}")
-        return exists
 
     def prep_single_track(self):
         self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
@@ -1033,16 +830,16 @@ class KaraokePrep:
                     processed_track["lyrics"] = None
                     processed_track["processed_lyrics"] = None
                 else:
-                    self.write_processed_lyrics(processed_track["lyrics"], processed_track["processed_lyrics"])
-
-        self.transcribe_lyrics(processed_track["input_audio_wav"], track_output_dir)
+                    self.write_processed_lyrics(self.lyrics, processed_track["processed_lyrics"])
 
         output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
         processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"
         processed_track["title_image_jpg"] = f"{output_image_filepath_noext}.jpg"
         processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
 
-        if not self._file_exists(processed_track["title_video"]):
+        if os.path.exists(processed_track["title_video"]):
+            self.logger.debug(f"Title video already exists, skipping render: {processed_track['title_video']}")
+        else:
             self.logger.info(f"Creating title video...")
             self.create_title_video(self.artist, self.title, self.title_format, output_image_filepath_noext, processed_track["title_video"])
 
@@ -1051,7 +848,9 @@ class KaraokePrep:
         processed_track["end_image_jpg"] = f"{output_image_filepath_noext}.jpg"
         processed_track["end_video"] = os.path.join(track_output_dir, f"{artist_title} (End).mov")
 
-        if not self._file_exists(processed_track["end_video"]):
+        if os.path.exists(processed_track["end_video"]):
+            self.logger.debug(f"End screen video already exists, skipping render: {processed_track['end_video']}")
+        else:
             self.logger.info(f"Creating end screen video...")
             self.create_end_video(self.artist, self.title, self.end_format, output_image_filepath_noext, processed_track["end_video"])
 
@@ -1060,24 +859,55 @@ class KaraokePrep:
             existing_instrumental_extension = os.path.splitext(self.existing_instrumental)[1]
 
             instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental Custom){existing_instrumental_extension}")
+            instrumental_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Instrumental Custom).{self.lossy_output_format}")
 
-            if not self._file_exists(instrumental_path):
-                shutil.copy2(self.existing_instrumental, instrumental_path)
+            shutil.copy2(self.existing_instrumental, instrumental_path)
+            self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
 
             processed_track["separated_audio"]["Custom"] = {
                 "instrumental": instrumental_path,
+                "instrumental_lossy": instrumental_path_lossy,
                 "vocals": None,
+                "vocals_lossy": None,
             }
         else:
-            self.logger.info(f"Separating audio for track: {self.title} by {self.artist}")
-            separation_results = self.process_audio_separation(
-                audio_file=processed_track["input_audio_wav"], artist_title=artist_title, track_output_dir=track_output_dir
-            )
-            processed_track["separated_audio"] = separation_results
+            self.logger.info(f"Separating audio for track: {self.title} by {self.artist} using models: {', '.join(self.model_names)}")
+            for model_name in self.model_names:
+                processed_track[f"separated_audio"][model_name] = {}
+                instrumental_path = os.path.join(
+                    track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossless_output_format}"
+                )
+                vocals_path = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossless_output_format}")
+                instrumental_path_lossy = os.path.join(
+                    track_output_dir, f"{artist_title} (Instrumental {model_name}).{self.lossy_output_format}"
+                )
+                vocals_path_lossy = os.path.join(track_output_dir, f"{artist_title} (Vocals {model_name}).{self.lossy_output_format}")
+
+                if not (os.path.isfile(instrumental_path) and os.path.isfile(vocals_path)):
+                    self.separate_audio(processed_track["input_audio_wav"], model_name, instrumental_path, vocals_path)
+                    self.convert_to_lossy(instrumental_path, instrumental_path_lossy)
+                    self.convert_to_lossy(vocals_path, vocals_path_lossy)
+
+                processed_track[f"separated_audio"][model_name]["instrumental"] = instrumental_path
+                processed_track[f"separated_audio"][model_name]["vocals"] = vocals_path
+                processed_track[f"separated_audio"][model_name]["instrumental_lossy"] = instrumental_path_lossy
+                processed_track[f"separated_audio"][model_name]["vocals_lossy"] = vocals_path_lossy
 
         self.logger.info("Script finished, audio downloaded, lyrics fetched and audio separated!")
 
         return processed_track
+
+    def convert_to_lossy(self, input_filename, output_filename):
+        if input_filename is None or not os.path.isfile(input_filename):
+            raise Exception(f"Error: Invalid input file provided for convert_to_lossy: {input_filename}")
+
+        self.logger.info(f"Converting {self.lossless_output_format} audio to lossy {self.lossy_output_format} format")
+
+        ffmpeg_extras = "-q:a 0" if self.lossy_output_format == "mp3" else ""
+
+        ffmpeg_command = f'{self.ffmpeg_base_command} -i "{input_filename}" {ffmpeg_extras} "{output_filename}"'
+        self.logger.debug(f"Running command: {ffmpeg_command}")
+        os.system(ffmpeg_command)
 
     def process_playlist(self):
         if self.artist is None or self.title is None:
