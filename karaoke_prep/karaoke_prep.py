@@ -11,10 +11,7 @@ import yt_dlp.YoutubeDL as ydl
 from PIL import Image, ImageDraw, ImageFont
 from lyrics_transcriber import LyricsTranscriber
 from karaoke_lyrics_processor import KaraokeLyricsProcessor
-import json
-import subprocess
 from pydub import AudioSegment
-import numpy as np
 
 
 class KaraokePrep:
@@ -1009,7 +1006,7 @@ class KaraokePrep:
         self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
 
         if self.input_media is not None and os.path.isfile(self.input_media):
-            self.extractor = "Local"
+            self.extractor = "Original"
         else:
             # Parses metadata in self.extracted_info to set vars: self.url, self.extractor, self.media_id, self.artist, self.title
             self.parse_single_track_metadata(input_artist=self.artist, input_title=self.title)
