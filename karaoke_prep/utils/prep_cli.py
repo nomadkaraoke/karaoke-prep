@@ -64,7 +64,7 @@ def main():
     parser.add_argument(
         "--backing_vocals_models",
         nargs="+",
-        default=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt", "UVR-BVE-4B_SN-44100-1.pth"],
+        default=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"],
         help="Optional: List of models for backing vocals separation (default: %(default)s).",
     )
 
@@ -213,6 +213,16 @@ def main():
     )
 
     parser.add_argument(
+        "--title_region",
+        help="Optional: Region for title text in title video (x, y, width, height; default: 370,470,3100,480). Example: --title_region=370,470,3100,480",
+    )
+
+    parser.add_argument(
+        "--artist_region",
+        help="Optional: Region for artist text in title video (x, y, width, height; default: 370,1210,3100,480). Example: --artist_region=370,1210,3100,480",
+    )
+
+    parser.add_argument(
         "--existing_end_image",
         help="Optional: Path to an existing end screen image file. If provided, end screen image generation will be skipped.",
     )
@@ -232,73 +242,6 @@ def main():
     )
 
     parser.add_argument(
-        "--title_initial_font_size",
-        type=int,
-        default=500,
-        help="Optional: Initial font size for title video (default: 500). Example: --title_initial_font_size=600",
-    )
-    parser.add_argument(
-        "--title_top_padding",
-        type=int,
-        default=950,
-        help="Optional: Top padding for title video (default: 950). Example: --title_top_padding=1000",
-    )
-    parser.add_argument(
-        "--title_title_padding",
-        type=int,
-        default=400,
-        help="Optional: Title padding for title video (default: 400). Example: --title_title_padding=450",
-    )
-    parser.add_argument(
-        "--title_artist_padding",
-        type=int,
-        default=700,
-        help="Optional: Artist padding for title video (default: 700). Example: --title_artist_padding=750",
-    )
-    parser.add_argument(
-        "--title_fixed_gap",
-        type=int,
-        default=150,
-        help="Optional: Fixed gap for title video (default: 150). Example: --title_fixed_gap=200",
-    )
-    parser.add_argument(
-        "--end_initial_font_size",
-        type=int,
-        default=500,
-        help="Optional: Initial font size for end video (default: 500). Example: --end_initial_font_size=600",
-    )
-    parser.add_argument(
-        "--end_top_padding",
-        type=int,
-        default=950,
-        help="Optional: Top padding for end video (default: 950). Example: --end_top_padding=1000",
-    )
-    parser.add_argument(
-        "--end_title_padding",
-        type=int,
-        default=400,
-        help="Optional: Title padding for end video (default: 400). Example: --end_title_padding=450",
-    )
-    parser.add_argument(
-        "--end_artist_padding",
-        type=int,
-        default=700,
-        help="Optional: Artist padding for end video (default: 700). Example: --end_artist_padding=750",
-    )
-    parser.add_argument(
-        "--end_extra_text_padding",
-        type=int,
-        default=300,
-        help="Optional: Extra text padding for end video (default: 600). Example: --end_extra_text_padding=650",
-    )
-    parser.add_argument(
-        "--end_fixed_gap",
-        type=int,
-        default=150,
-        help="Optional: Fixed gap for end video (default: 150). Example: --end_fixed_gap=200",
-    )
-
-    parser.add_argument(
         "--lyrics_artist",
         help="Optional: Override the artist name used for lyrics search. Example: --lyrics_artist='The Beatles'",
     )
@@ -312,6 +255,26 @@ def main():
         "--skip_lyrics",
         action="store_true",
         help="Optional: Skip fetching and processing lyrics. Example: --skip_lyrics",
+    )
+
+    parser.add_argument(
+        "--render_bounding_boxes",
+        action="store_true",
+        help="Optional: render bounding boxes around text regions for debugging (default: %(default)s). Example: --render_bounding_boxes",
+    )
+
+    parser.add_argument(
+        "--output_png",
+        type=lambda x: (str(x).lower() == "true"),
+        default=True,
+        help="Optional: output PNG format for title and end images (default: %(default)s). Example: --output_png=False",
+    )
+
+    parser.add_argument(
+        "--output_jpg",
+        type=lambda x: (str(x).lower() == "true"),
+        default=True,
+        help="Optional: output JPG format for title and end images (default: %(default)s). Example: --output_jpg=False",
     )
 
     args = parser.parse_args()
@@ -395,11 +358,6 @@ def main():
         intro_font=args.intro_font,
         intro_artist_color=args.intro_artist_color,
         intro_title_color=args.intro_title_color,
-        title_initial_font_size=args.title_initial_font_size,
-        title_top_padding=args.title_top_padding,
-        title_title_padding=args.title_title_padding,
-        title_artist_padding=args.title_artist_padding,
-        title_fixed_gap=args.title_fixed_gap,
         end_video_duration=args.end_video_duration,
         end_extra_text=args.end_extra_text,
         end_background_color=args.end_background_color,
@@ -408,15 +366,14 @@ def main():
         end_extra_text_color=args.end_extra_text_color,
         end_artist_color=args.end_artist_color,
         end_title_color=args.end_title_color,
-        end_initial_font_size=args.end_initial_font_size,
-        end_top_padding=args.end_top_padding,
-        end_title_padding=args.end_title_padding,
-        end_artist_padding=args.end_artist_padding,
-        end_extra_text_padding=args.end_extra_text_padding,
-        end_fixed_gap=args.end_fixed_gap,
+        title_region=args.title_region,
+        artist_region=args.artist_region,
         lyrics_artist=args.lyrics_artist,
         lyrics_title=args.lyrics_title,
         skip_lyrics=args.skip_lyrics,
+        render_bounding_boxes=args.render_bounding_boxes,
+        output_png=args.output_png,
+        output_jpg=args.output_jpg,
     )
 
     tracks = kprep.process()

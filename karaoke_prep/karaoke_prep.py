@@ -28,7 +28,7 @@ class KaraokePrep:
         log_level=logging.DEBUG,
         log_formatter=None,
         clean_instrumental_model="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-        backing_vocals_models=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt", "UVR-BVE-4B_SN-44100-1.pth"],
+        backing_vocals_models=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"],
         other_stems_models=["htdemucs_6s.yaml"],
         model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
         output_dir=".",
@@ -52,23 +52,17 @@ class KaraokePrep:
         end_artist_color="#ffffff",
         end_title_color="#ff7acc",
         existing_end_image=None,
-        title_video_duration=5,
-        end_video_duration=5,
-        title_initial_font_size=500,
-        title_top_padding=950,
-        title_title_padding=400,
-        title_artist_padding=700,
-        title_fixed_gap=150,
-        end_initial_font_size=500,
-        end_top_padding=950,
-        end_title_padding=400,
-        end_artist_padding=700,
-        end_extra_text_padding=300,
-        end_fixed_gap=150,
         end_extra_text="THANK YOU FOR SINGING!",
         lyrics_artist=None,
         lyrics_title=None,
         skip_lyrics=False,
+        title_region=None,
+        artist_region=None,
+        render_bounding_boxes=False,
+        output_png=True,
+        output_jpg=True,
+        title_video_duration=5,
+        end_video_duration=5,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -107,23 +101,17 @@ class KaraokePrep:
         self.create_track_subfolders = create_track_subfolders
         self.existing_instrumental = existing_instrumental
         self.existing_title_image = existing_title_image
-        self.title_video_duration = title_video_duration
-        self.end_video_duration = end_video_duration
-        self.title_initial_font_size = title_initial_font_size
-        self.title_top_padding = title_top_padding
-        self.title_title_padding = title_title_padding
-        self.title_artist_padding = title_artist_padding
-        self.title_fixed_gap = title_fixed_gap
-        self.end_initial_font_size = end_initial_font_size
-        self.end_top_padding = end_top_padding
-        self.end_title_padding = end_title_padding
-        self.end_artist_padding = end_artist_padding
-        self.end_extra_text_padding = end_extra_text_padding
-        self.end_fixed_gap = end_fixed_gap
         self.end_extra_text = end_extra_text
         self.lyrics_artist = lyrics_artist
         self.lyrics_title = lyrics_title
         self.skip_lyrics = skip_lyrics
+        self.title_region = self.parse_region(title_region) or (370, 470, 3100, 480)
+        self.artist_region = self.parse_region(artist_region) or (370, 1210, 3100, 480)
+        self.render_bounding_boxes = render_bounding_boxes
+        self.output_png = output_png
+        self.output_jpg = output_jpg
+        self.title_video_duration = title_video_duration
+        self.end_video_duration = end_video_duration
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
@@ -164,6 +152,15 @@ class KaraokePrep:
             os.makedirs(self.output_dir)
         else:
             self.logger.debug(f"Overall output dir {self.output_dir} already exists")
+
+    @staticmethod
+    def parse_region(region_str):
+        if region_str:
+            try:
+                return tuple(map(int, region_str.split(",")))
+            except ValueError:
+                raise ValueError(f"Invalid region format: {region_str}. Expected format: 'x,y,width,height'")
+        return None
 
     def extract_info_for_online_media(self, input_url=None, input_artist=None, input_title=None):
         self.logger.info(f"Extracting info for input_url: {input_url} input_artist: {input_artist} input_title: {input_title}")
@@ -543,35 +540,45 @@ class KaraokePrep:
 
         return track_output_dir, artist_title
 
-    def calculate_text_size_and_position(self, draw, text, font_path, start_size, resolution, padding):
-        font_size = start_size
+    def calculate_text_size_to_fit(self, draw, text, font_path, region):
+        font_size = 500  # Start with a large font size
         font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
 
-        # Initial position for calculating the text bounding box
-        temp_position = (padding, padding)
-        bbox = draw.textbbox(temp_position, text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
+        def get_text_size(text, font):
+            return draw.textbbox((0, 0), text, font=font)[2:]
 
-        while text_width + 2 * padding > resolution[0] or text_height + 2 * padding > resolution[1]:
+        text_width, text_height = get_text_size(text, font)
+
+        while text_width > region[2] or text_height > region[3]:
             font_size -= 10
-            if font_size <= 0:
-                raise ValueError("Cannot fit text within screen bounds.")
+            if font_size <= 150:
+                # Split the text into two lines
+                words = text.split()
+                mid = len(words) // 2
+                line1 = " ".join(words[:mid])
+                line2 = " ".join(words[mid:])
+
+                # Reset font size for two-line layout
+                font_size = 500
+                font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+
+                while True:
+                    text_width1, text_height1 = get_text_size(line1, font)
+                    text_width2, text_height2 = get_text_size(line2, font)
+                    total_height = text_height1 + text_height2
+
+                    if max(text_width1, text_width2) <= region[2] and total_height <= region[3]:
+                        return font, (line1, line2)
+
+                    font_size -= 10
+                    if font_size <= 0:
+                        raise ValueError("Cannot fit text within the defined region.")
+                    font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+
             font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
-            bbox = draw.textbbox(temp_position, text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
+            text_width, text_height = get_text_size(text, font)
 
-        text_position = ((resolution[0] - text_width) // 2, (resolution[1] - text_height) // 2)
-        return font, text_position
-
-    def calculate_text_position(self, draw, text, font, resolution, vertical_offset):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-        text_x = (resolution[0] - text_width) // 2
-        text_y = vertical_offset
-        return (text_x, text_y), text_height
+        return font, text
 
     def create_video(
         self,
@@ -582,26 +589,18 @@ class KaraokePrep:
         output_image_filepath_noext,
         output_video_filepath,
         existing_image=None,
-        extra_text_color=None,
         title_color=None,
         artist_color=None,
         duration=5,
-        initial_font_size=500,
-        top_padding=950,
-        title_padding=400,
-        artist_padding=700,
-        extra_text_padding=600,
-        fixed_gap=150,
+        title_region=None,
+        artist_region=None,
+        render_bounding_boxes=False,
+        output_png=True,
+        output_jpg=True,
     ):
-        if self._file_exists(output_video_filepath):
-            return output_video_filepath
-
         resolution = (3840, 2160)  # 4K resolution
         self.logger.info(f"Creating video with format: {format}")
         self.logger.info(f"extra_text: {extra_text}, artist_text: {artist_text}, title_text: {title_text}")
-        self.logger.info(
-            f"top_padding: {top_padding}, title_padding: {title_padding}, artist_padding: {artist_padding}, extra_text_padding: {extra_text_padding}"
-        )
 
         if existing_image:
             self.logger.info(f"Using existing image file: {existing_image}")
@@ -636,62 +635,99 @@ class KaraokePrep:
 
             draw = ImageDraw.Draw(background)
 
-            # Accessing the font file from the package resources
-            with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
-                # Calculate positions and sizes for title, artist, and extra text
-                title_font, _ = self.calculate_text_size_and_position(
-                    draw, title_text, str(font_path), initial_font_size, resolution, title_padding
-                )
-                artist_font, _ = self.calculate_text_size_and_position(
-                    draw, artist_text, str(font_path), initial_font_size, resolution, artist_padding
-                )
-                if extra_text:
-                    self.logger.info(f"Calculating extra text font size and position for: {extra_text}")
-                    extra_text_font, _ = self.calculate_text_size_and_position(
-                        draw, extra_text, str(font_path), initial_font_size, resolution, extra_text_padding
+            if format["font"] is not None:
+                self.logger.info(f"Using font: {format['font']}")
+
+                with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
+                    # Calculate font size and potentially split text for title and artist
+                    title_font, title_text = self.calculate_text_size_to_fit(
+                        draw, title_text, str(font_path), title_region or self.title_region
+                    )
+                    artist_font, artist_text = self.calculate_text_size_to_fit(
+                        draw, artist_text, str(font_path), artist_region or self.artist_region
                     )
 
-            # Calculate vertical positions with consistent gap
-            current_y = top_padding
-            if extra_text:
-                self.logger.info(f"Calculating extra text position for: {extra_text}")
-                extra_text_position, extra_text_height = self.calculate_text_position(
-                    draw, extra_text, extra_text_font, resolution, current_y
-                )
-                draw.text(extra_text_position, extra_text, fill=extra_text_color, font=extra_text_font)
-                current_y += extra_text_height + fixed_gap
+                # Draw title text
+                title_x, title_y, title_w, title_h = title_region or self.title_region
+                if isinstance(title_text, tuple):  # Two lines
+                    line1, line2 = title_text
+                    title_bbox1 = draw.textbbox((0, 0), line1, font=title_font)
+                    title_bbox2 = draw.textbbox((0, 0), line2, font=title_font)
+                    total_height = title_bbox1[3] + title_bbox2[3]
+                    y_offset = (title_h - total_height) // 2
+                    draw.text((title_x + (title_w - title_bbox1[2]) // 2, title_y + y_offset), line1, fill=title_color, font=title_font)
+                    draw.text(
+                        (title_x + (title_w - title_bbox2[2]) // 2, title_y + y_offset + title_bbox1[3]),
+                        line2,
+                        fill=title_color,
+                        font=title_font,
+                    )
+                else:
+                    title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+                    title_position = (
+                        title_x + (title_w - title_bbox[2]) // 2,
+                        title_y + (title_h - title_bbox[3]) // 2,
+                    )
+                    draw.text(title_position, title_text, fill=title_color, font=title_font)
 
-            title_text_position, title_height = self.calculate_text_position(draw, title_text, title_font, resolution, current_y)
-            draw.text(title_text_position, title_text, fill=title_color, font=title_font)
-            current_y += title_height + fixed_gap
+                # Draw artist text
+                artist_x, artist_y, artist_w, artist_h = artist_region or self.artist_region
+                if isinstance(artist_text, tuple):  # Two lines
+                    line1, line2 = artist_text
+                    artist_bbox1 = draw.textbbox((0, 0), line1, font=artist_font)
+                    artist_bbox2 = draw.textbbox((0, 0), line2, font=artist_font)
+                    total_height = artist_bbox1[3] + artist_bbox2[3]
+                    y_offset = (artist_h - total_height) // 2
+                    draw.text(
+                        (artist_x + (artist_w - artist_bbox1[2]) // 2, artist_y + y_offset), line1, fill=artist_color, font=artist_font
+                    )
+                    draw.text(
+                        (artist_x + (artist_w - artist_bbox2[2]) // 2, artist_y + y_offset + artist_bbox1[3]),
+                        line2,
+                        fill=artist_color,
+                        font=artist_font,
+                    )
+                else:
+                    artist_bbox = draw.textbbox((0, 0), artist_text, font=artist_font)
+                    artist_position = (
+                        artist_x + (artist_w - artist_bbox[2]) // 2,
+                        artist_y + (artist_h - artist_bbox[3]) // 2,
+                    )
+                    draw.text(artist_position, artist_text, fill=artist_color, font=artist_font)
 
-            artist_text_position, _ = self.calculate_text_position(draw, artist_text, artist_font, resolution, current_y)
-            draw.text(artist_text_position, artist_text, fill=artist_color, font=artist_font)
+                if render_bounding_boxes:
+                    # Draw bounding rectangles for debugging
+                    draw.rectangle([title_x, title_y, title_x + title_w, title_y + title_h], outline=title_color, width=2)
+                    draw.rectangle([artist_x, artist_y, artist_x + artist_w, artist_y + artist_h], outline=artist_color, width=2)
+            else:
+                self.logger.info("No font specified, skipping text rendering")
 
             # Save static background image
-            background.save(f"{output_image_filepath_noext}.png")
+            if output_png:
+                background.save(f"{output_image_filepath_noext}.png")
 
-            # Save static background image as JPG for smaller filesize to upload as YouTube thumbnail
-            background_rgb = background.convert("RGB")
-            background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
+            if output_jpg:
+                # Save static background image as JPG for smaller filesize to upload as YouTube thumbnail
+                background_rgb = background.convert("RGB")
+                background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
 
-        # Use ffmpeg to create video
-        ffmpeg_command = f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath_noext}.png" -f lavfi -i anullsrc '
-        ffmpeg_command += f'-c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p -vf scale={resolution[0]}:{resolution[1]} -c:a aac -shortest "{output_video_filepath}"'
+        if duration > 0:
+            # Use ffmpeg to create video
+            ffmpeg_command = (
+                f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath_noext}.png" -f lavfi -i anullsrc '
+            )
+            ffmpeg_command += f'-c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p -vf scale={resolution[0]}:{resolution[1]} -c:a aac -shortest "{output_video_filepath}"'
 
-        self.logger.info("Generating video...")
-        self.logger.debug(f"Running command: {ffmpeg_command}")
-        os.system(ffmpeg_command)
-
-        return output_video_filepath
+            self.logger.info("Generating video...")
+            self.logger.debug(f"Running command: {ffmpeg_command}")
+            os.system(ffmpeg_command)
+        else:
+            self.logger.info(f"Skipping video generation as duration is 0")
 
     def create_title_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
-        if self._file_exists(output_video_filepath):
-            return output_video_filepath
-
         title_text = title.upper()
         artist_text = artist.upper()
-        return self.create_video(
+        self.create_video(
             extra_text=None,
             title_text=title_text,
             artist_text=artist_text,
@@ -702,21 +738,18 @@ class KaraokePrep:
             title_color=format["title_color"],
             artist_color=format["artist_color"],
             duration=self.title_video_duration,
-            initial_font_size=self.title_initial_font_size,
-            top_padding=self.title_top_padding,
-            title_padding=self.title_title_padding,
-            artist_padding=self.title_artist_padding,
-            fixed_gap=self.title_fixed_gap,
+            title_region=self.title_region,
+            artist_region=self.artist_region,
+            render_bounding_boxes=self.render_bounding_boxes,
+            output_png=self.output_png,
+            output_jpg=self.output_jpg,
         )
 
     def create_end_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
-        if self._file_exists(output_video_filepath):
-            return output_video_filepath
-
         extra_text = self.end_extra_text
         title_text = title.upper()
         artist_text = artist.upper()
-        return self.create_video(
+        self.create_video(
             extra_text=extra_text,
             title_text=title_text,
             artist_text=artist_text,
@@ -724,16 +757,14 @@ class KaraokePrep:
             output_image_filepath_noext=output_image_filepath_noext,
             output_video_filepath=output_video_filepath,
             existing_image=self.existing_end_image,
-            extra_text_color=format["extra_text_color"],
             title_color=format["title_color"],
             artist_color=format["artist_color"],
             duration=self.end_video_duration,
-            initial_font_size=self.end_initial_font_size,
-            top_padding=self.end_top_padding,
-            title_padding=self.end_title_padding,
-            artist_padding=self.end_artist_padding,
-            extra_text_padding=self.end_extra_text_padding,
-            fixed_gap=self.end_fixed_gap,
+            title_region=self.title_region,
+            artist_region=self.artist_region,
+            render_bounding_boxes=self.render_bounding_boxes,
+            output_png=self.output_png,
+            output_jpg=self.output_jpg,
         )
 
     def hex_to_rgb(self, hex_color):
@@ -858,9 +889,7 @@ class KaraokePrep:
         result = {}
         for model, paths in backing_vocals_result.items():
             backing_vocals_path = paths["backing_vocals"]
-            combined_path = os.path.join(
-                track_output_dir, f"{artist_title} (Instrumental with Backing {model}).{self.lossless_output_format}"
-            )
+            combined_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental +BV {model}).{self.lossless_output_format}")
 
             if not self._file_exists(combined_path):
                 ffmpeg_command = (
