@@ -32,37 +32,43 @@ class KaraokePrep:
         other_stems_models=["htdemucs_6s.yaml"],
         model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
         output_dir=".",
+        existing_instrumental=None,
         lossless_output_format="FLAC",
         use_cuda=False,
         use_coreml=False,
         normalization_enabled=True,
         denoise_enabled=True,
         create_track_subfolders=False,
+        lyrics_artist=None,
+        lyrics_title=None,
+        skip_lyrics=False,
+        output_png=True,
+        output_jpg=True,
+        render_bounding_boxes=False,
+        existing_title_image=None,
+        intro_video_duration=5,
         intro_background_color="#000000",
         intro_background_image=None,
         intro_font="Montserrat-Bold.ttf",
         intro_artist_color="#ffffff",
-        intro_title_color="#ff7acc",
-        existing_instrumental=None,
-        existing_title_image=None,
+        intro_title_color="#ffdf6b",
+        intro_extra_text=None,
+        intro_extra_text_color="#ffffff",
+        intro_extra_text_region=None,
+        intro_title_region=None,
+        intro_artist_region=None,
+        existing_end_image=None,
+        end_video_duration=5,
         end_background_color="#000000",
         end_background_image=None,
         end_font="Montserrat-Bold.ttf",
-        end_extra_text_color="#ffffff",
         end_artist_color="#ffffff",
-        end_title_color="#ff7acc",
-        existing_end_image=None,
+        end_title_color="#ffdf6b",
         end_extra_text="THANK YOU FOR SINGING!",
-        lyrics_artist=None,
-        lyrics_title=None,
-        skip_lyrics=False,
-        title_region=None,
-        artist_region=None,
-        render_bounding_boxes=False,
-        output_png=True,
-        output_jpg=True,
-        title_video_duration=5,
-        end_video_duration=5,
+        end_extra_text_color="#ffffff",
+        end_extra_text_region=None,
+        end_title_region=None,
+        end_artist_region=None,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -101,16 +107,13 @@ class KaraokePrep:
         self.create_track_subfolders = create_track_subfolders
         self.existing_instrumental = existing_instrumental
         self.existing_title_image = existing_title_image
-        self.end_extra_text = end_extra_text
         self.lyrics_artist = lyrics_artist
         self.lyrics_title = lyrics_title
         self.skip_lyrics = skip_lyrics
-        self.title_region = self.parse_region(title_region) or (370, 470, 3100, 480)
-        self.artist_region = self.parse_region(artist_region) or (370, 1210, 3100, 480)
         self.render_bounding_boxes = render_bounding_boxes
         self.output_png = output_png
         self.output_jpg = output_jpg
-        self.title_video_duration = title_video_duration
+        self.intro_video_duration = intro_video_duration
         self.end_video_duration = end_video_duration
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
@@ -129,16 +132,31 @@ class KaraokePrep:
             "font": intro_font,
             "artist_color": intro_artist_color,
             "title_color": intro_title_color,
+            "extra_text": intro_extra_text,
+            "extra_text_color": intro_extra_text_color,
+            "extra_text_region": self.parse_region(intro_extra_text_region) or (370, 1200, 3100, 480),
+            "title_region": self.parse_region(intro_title_region) or (370, 200, 3100, 480),
+            "artist_region": self.parse_region(intro_artist_region) or (370, 700, 3100, 480),
         }
+
+        self.logger.debug(f"Initialized title_format with extra_text: {self.title_format['extra_text']}")
+        self.logger.debug(f"Initialized title_format with extra_text_region: {self.title_format['extra_text_region']}")
 
         self.end_format = {
             "background_color": end_background_color,
             "background_image": end_background_image,
             "font": end_font,
-            "extra_text_color": end_extra_text_color,
             "artist_color": end_artist_color,
             "title_color": end_title_color,
+            "extra_text": end_extra_text,
+            "extra_text_color": end_extra_text_color,
+            "extra_text_region": self.parse_region(end_extra_text_region) or (370, 300, 3100, 400),
+            "title_region": self.parse_region(end_title_region) or (370, 800, 3100, 400),
+            "artist_region": self.parse_region(end_artist_region) or (370, 1300, 3100, 400),
         }
+
+        self.logger.debug(f"Initialized end_format with extra_text: {self.end_format['extra_text']}")
+        self.logger.debug(f"Initialized end_format with extra_text_region: {self.end_format['extra_text_region']}")
 
         self.existing_end_image = existing_end_image
 
@@ -580,6 +598,52 @@ class KaraokePrep:
 
         return font, text
 
+    def _render_text_in_region(self, draw, text, font_path, region, color, font=None):
+        """Helper method to render text within a specified region."""
+        self.logger.debug(f"Rendering text: '{text}' in region: {region} with color: {color}")
+
+        if text is None:
+            self.logger.debug("Text is None, skipping rendering")
+            return region
+
+        if font is None:
+            font, text_lines = self.calculate_text_size_to_fit(draw, text, font_path, region)
+        else:
+            text_lines = text
+
+        self.logger.debug(f"Using text_lines: {text_lines}")
+
+        x, y, width, height = region
+
+        if isinstance(text_lines, tuple):  # Two lines
+            line1, line2 = text_lines
+            bbox1 = draw.textbbox((0, 0), line1, font=font)
+            bbox2 = draw.textbbox((0, 0), line2, font=font)
+
+            total_height = bbox1[3] + bbox2[3]
+            y_offset = (height - total_height) // 2
+
+            # Draw first line
+            draw.text((x + (width - bbox1[2]) // 2, y + y_offset), line1, fill=color, font=font)
+
+            # Draw second line
+            draw.text((x + (width - bbox2[2]) // 2, y + y_offset + bbox1[3]), line2, fill=color, font=font)
+        else:
+            # Single line
+            bbox = draw.textbbox((0, 0), text_lines, font=font)
+            position = (
+                x + (width - bbox[2]) // 2,
+                y + (height - bbox[3]) // 2,
+            )
+            draw.text(position, text_lines, fill=color, font=font)
+
+        return region
+
+    def _draw_bounding_box(self, draw, region, color):
+        """Helper method to draw a bounding box around a region."""
+        x, y, width, height = region
+        draw.rectangle([x, y, x + width, y + height], outline=color, width=2)
+
     def create_video(
         self,
         extra_text,
@@ -589,179 +653,157 @@ class KaraokePrep:
         output_image_filepath_noext,
         output_video_filepath,
         existing_image=None,
-        title_color=None,
-        artist_color=None,
         duration=5,
-        title_region=None,
-        artist_region=None,
         render_bounding_boxes=False,
         output_png=True,
         output_jpg=True,
     ):
+        """Create a video with title, artist, and optional extra text."""
+        self.logger.debug(f"Creating video with extra_text: '{extra_text}'")
+        self.logger.debug(f"Format settings: {format}")
+
         resolution = (3840, 2160)  # 4K resolution
         self.logger.info(f"Creating video with format: {format}")
         self.logger.info(f"extra_text: {extra_text}, artist_text: {artist_text}, title_text: {title_text}")
 
         if existing_image:
-            self.logger.info(f"Using existing image file: {existing_image}")
-            existing_extension = os.path.splitext(existing_image)[1]
+            return self._handle_existing_image(existing_image, output_image_filepath_noext, output_video_filepath, duration)
 
-            if existing_extension == ".png":
-                self.logger.info(f"Copying existing PNG image file: {existing_image}")
-                shutil.copy2(existing_image, output_image_filepath_noext + existing_extension)
-            else:
-                self.logger.info(f"Converting existing image to PNG")
-                existing_image_obj = Image.open(existing_image)
-                existing_image_obj.save(output_image_filepath_noext + ".png")
+        # Create or load background
+        background = self._create_background(format, resolution)
+        draw = ImageDraw.Draw(background)
 
-            if existing_extension != ".jpg":
-                self.logger.info(f"Converting existing image to JPG")
-                existing_image_obj = Image.open(existing_image)
-                if existing_image_obj.mode == "RGBA":
-                    existing_image_obj = existing_image_obj.convert("RGB")  # Convert RGBA to RGB
-                existing_image_obj.save(output_image_filepath_noext + ".jpg", quality=95)
-
+        if format["font"] is not None:
+            self.logger.info(f"Using font: {format['font']}")
+            with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
+                # Render all text elements
+                self._render_all_text(
+                    draw,
+                    str(font_path),
+                    title_text,
+                    artist_text,
+                    format,
+                    render_bounding_boxes,
+                )
         else:
-            # Load or create background image
-            if format["background_image"] and os.path.exists(format["background_image"]):
-                self.logger.info(f"Using background image file: {format['background_image']}")
-                background = Image.open(format["background_image"])
-            else:
-                self.logger.info(f"Using background color: {format['background_color']}")
-                background = Image.new("RGB", resolution, color=self.hex_to_rgb(format["background_color"]))
+            self.logger.info("No font specified, skipping text rendering")
 
-            # Resize background to match resolution
-            background = background.resize(resolution)
+        # Save images and create video
+        self._save_output_files(
+            background, output_image_filepath_noext, output_video_filepath, output_png, output_jpg, duration, resolution
+        )
 
-            draw = ImageDraw.Draw(background)
+    def _handle_existing_image(self, existing_image, output_image_filepath_noext, output_video_filepath, duration):
+        """Handle case where an existing image is provided."""
+        self.logger.info(f"Using existing image file: {existing_image}")
+        existing_extension = os.path.splitext(existing_image)[1]
 
-            if format["font"] is not None:
-                self.logger.info(f"Using font: {format['font']}")
+        if existing_extension == ".png":
+            self.logger.info(f"Copying existing PNG image file: {existing_image}")
+            shutil.copy2(existing_image, output_image_filepath_noext + existing_extension)
+        else:
+            self.logger.info(f"Converting existing image to PNG")
+            existing_image_obj = Image.open(existing_image)
+            existing_image_obj.save(output_image_filepath_noext + ".png")
 
-                with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
-                    # Calculate font size and potentially split text for title and artist
-                    title_font, title_text = self.calculate_text_size_to_fit(
-                        draw, title_text, str(font_path), title_region or self.title_region
-                    )
-                    artist_font, artist_text = self.calculate_text_size_to_fit(
-                        draw, artist_text, str(font_path), artist_region or self.artist_region
-                    )
-
-                # Draw title text
-                title_x, title_y, title_w, title_h = title_region or self.title_region
-                if isinstance(title_text, tuple):  # Two lines
-                    line1, line2 = title_text
-                    title_bbox1 = draw.textbbox((0, 0), line1, font=title_font)
-                    title_bbox2 = draw.textbbox((0, 0), line2, font=title_font)
-                    total_height = title_bbox1[3] + title_bbox2[3]
-                    y_offset = (title_h - total_height) // 2
-                    draw.text((title_x + (title_w - title_bbox1[2]) // 2, title_y + y_offset), line1, fill=title_color, font=title_font)
-                    draw.text(
-                        (title_x + (title_w - title_bbox2[2]) // 2, title_y + y_offset + title_bbox1[3]),
-                        line2,
-                        fill=title_color,
-                        font=title_font,
-                    )
-                else:
-                    title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
-                    title_position = (
-                        title_x + (title_w - title_bbox[2]) // 2,
-                        title_y + (title_h - title_bbox[3]) // 2,
-                    )
-                    draw.text(title_position, title_text, fill=title_color, font=title_font)
-
-                # Draw artist text
-                artist_x, artist_y, artist_w, artist_h = artist_region or self.artist_region
-                if isinstance(artist_text, tuple):  # Two lines
-                    line1, line2 = artist_text
-                    artist_bbox1 = draw.textbbox((0, 0), line1, font=artist_font)
-                    artist_bbox2 = draw.textbbox((0, 0), line2, font=artist_font)
-                    total_height = artist_bbox1[3] + artist_bbox2[3]
-                    y_offset = (artist_h - total_height) // 2
-                    draw.text(
-                        (artist_x + (artist_w - artist_bbox1[2]) // 2, artist_y + y_offset), line1, fill=artist_color, font=artist_font
-                    )
-                    draw.text(
-                        (artist_x + (artist_w - artist_bbox2[2]) // 2, artist_y + y_offset + artist_bbox1[3]),
-                        line2,
-                        fill=artist_color,
-                        font=artist_font,
-                    )
-                else:
-                    artist_bbox = draw.textbbox((0, 0), artist_text, font=artist_font)
-                    artist_position = (
-                        artist_x + (artist_w - artist_bbox[2]) // 2,
-                        artist_y + (artist_h - artist_bbox[3]) // 2,
-                    )
-                    draw.text(artist_position, artist_text, fill=artist_color, font=artist_font)
-
-                if render_bounding_boxes:
-                    # Draw bounding rectangles for debugging
-                    draw.rectangle([title_x, title_y, title_x + title_w, title_y + title_h], outline=title_color, width=2)
-                    draw.rectangle([artist_x, artist_y, artist_x + artist_w, artist_y + artist_h], outline=artist_color, width=2)
-            else:
-                self.logger.info("No font specified, skipping text rendering")
-
-            # Save static background image
-            if output_png:
-                background.save(f"{output_image_filepath_noext}.png")
-
-            if output_jpg:
-                # Save static background image as JPG for smaller filesize to upload as YouTube thumbnail
-                background_rgb = background.convert("RGB")
-                background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
+        if existing_extension != ".jpg":
+            self.logger.info(f"Converting existing image to JPG")
+            existing_image_obj = Image.open(existing_image)
+            if existing_image_obj.mode == "RGBA":
+                existing_image_obj = existing_image_obj.convert("RGB")
+            existing_image_obj.save(output_image_filepath_noext + ".jpg", quality=95)
 
         if duration > 0:
-            # Use ffmpeg to create video
-            ffmpeg_command = (
-                f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{output_image_filepath_noext}.png" -f lavfi -i anullsrc '
-            )
-            ffmpeg_command += f'-c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p -vf scale={resolution[0]}:{resolution[1]} -c:a aac -shortest "{output_video_filepath}"'
+            self._create_video_from_image(output_image_filepath_noext + ".png", output_video_filepath, duration)
 
-            self.logger.info("Generating video...")
-            self.logger.debug(f"Running command: {ffmpeg_command}")
-            os.system(ffmpeg_command)
+    def _create_background(self, format, resolution):
+        """Create or load the background image."""
+        if format["background_image"] and os.path.exists(format["background_image"]):
+            self.logger.info(f"Using background image file: {format['background_image']}")
+            background = Image.open(format["background_image"])
         else:
-            self.logger.info(f"Skipping video generation as duration is 0")
+            self.logger.info(f"Using background color: {format['background_color']}")
+            background = Image.new("RGB", resolution, color=self.hex_to_rgb(format["background_color"]))
+
+        return background.resize(resolution)
+
+    def _render_all_text(self, draw, font_path, title_text, artist_text, format, render_bounding_boxes):
+        """Render all text elements on the image."""
+        # Render title
+        region = self._render_text_in_region(draw, title_text.upper(), font_path, format["title_region"], format["title_color"])
+        if render_bounding_boxes:
+            self._draw_bounding_box(draw, region, format["title_color"])
+
+        # Render artist
+        region = self._render_text_in_region(draw, artist_text.upper(), font_path, format["artist_region"], format["artist_color"])
+        if render_bounding_boxes:
+            self._draw_bounding_box(draw, region, format["artist_color"])
+
+        # Render extra text if provided
+        if format["extra_text"]:
+            region = self._render_text_in_region(
+                draw, format["extra_text"], font_path, format["extra_text_region"], format["extra_text_color"]
+            )
+            if render_bounding_boxes:
+                self._draw_bounding_box(draw, region, format["extra_text_color"])
+
+    def _save_output_files(
+        self, background, output_image_filepath_noext, output_video_filepath, output_png, output_jpg, duration, resolution
+    ):
+        """Save the output image files and create video if needed."""
+        # Save static background image
+        if output_png:
+            background.save(f"{output_image_filepath_noext}.png")
+
+        if output_jpg:
+            # Save static background image as JPG for smaller filesize
+            background_rgb = background.convert("RGB")
+            background_rgb.save(f"{output_image_filepath_noext}.jpg", quality=95)
+
+        if duration > 0:
+            self._create_video_from_image(f"{output_image_filepath_noext}.png", output_video_filepath, duration, resolution)
+
+    def _create_video_from_image(self, image_path, video_path, duration, resolution=(3840, 2160)):
+        """Create a video from a static image."""
+        ffmpeg_command = (
+            f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{image_path}" '
+            f"-f lavfi -i anullsrc -c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p "
+            f'-vf scale={resolution[0]}:{resolution[1]} -c:a aac -shortest "{video_path}"'
+        )
+
+        self.logger.info("Generating video...")
+        self.logger.debug(f"Running command: {ffmpeg_command}")
+        os.system(ffmpeg_command)
 
     def create_title_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
         title_text = title.upper()
         artist_text = artist.upper()
         self.create_video(
-            extra_text=None,
             title_text=title_text,
             artist_text=artist_text,
+            extra_text=format["extra_text"],
             format=format,
             output_image_filepath_noext=output_image_filepath_noext,
             output_video_filepath=output_video_filepath,
             existing_image=self.existing_title_image,
-            title_color=format["title_color"],
-            artist_color=format["artist_color"],
-            duration=self.title_video_duration,
-            title_region=self.title_region,
-            artist_region=self.artist_region,
+            duration=self.intro_video_duration,
             render_bounding_boxes=self.render_bounding_boxes,
             output_png=self.output_png,
             output_jpg=self.output_jpg,
         )
 
     def create_end_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
-        extra_text = self.end_extra_text
         title_text = title.upper()
         artist_text = artist.upper()
         self.create_video(
-            extra_text=extra_text,
             title_text=title_text,
             artist_text=artist_text,
+            extra_text=format["extra_text"],
             format=format,
             output_image_filepath_noext=output_image_filepath_noext,
             output_video_filepath=output_video_filepath,
             existing_image=self.existing_end_image,
-            title_color=format["title_color"],
-            artist_color=format["artist_color"],
             duration=self.end_video_duration,
-            title_region=self.title_region,
-            artist_region=self.artist_region,
             render_bounding_boxes=self.render_bounding_boxes,
             output_png=self.output_png,
             output_jpg=self.output_jpg,

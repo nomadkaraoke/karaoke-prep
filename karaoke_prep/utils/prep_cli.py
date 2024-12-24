@@ -213,25 +213,15 @@ def main():
     )
 
     parser.add_argument(
-        "--title_region",
-        help="Optional: Region for title text in title video (x, y, width, height; default: 370,470,3100,480). Example: --title_region=370,470,3100,480",
-    )
-
-    parser.add_argument(
-        "--artist_region",
-        help="Optional: Region for artist text in title video (x, y, width, height; default: 370,1210,3100,480). Example: --artist_region=370,1210,3100,480",
-    )
-
-    parser.add_argument(
         "--existing_end_image",
         help="Optional: Path to an existing end screen image file. If provided, end screen image generation will be skipped.",
     )
 
     parser.add_argument(
-        "--title_video_duration",
+        "--intro_video_duration",
         type=int,
         default=5,
-        help="Optional: duration of the title video in seconds (default: 5). Example: --title_video_duration=10",
+        help="Optional: duration of the title video in seconds (default: 5). Example: --intro_video_duration=10",
     )
 
     parser.add_argument(
@@ -275,6 +265,47 @@ def main():
         type=lambda x: (str(x).lower() == "true"),
         default=True,
         help="Optional: output JPG format for title and end images (default: %(default)s). Example: --output_jpg=False",
+    )
+
+    parser.add_argument(
+        "--intro_extra_text",
+        help="Optional: Extra text to display on the intro video. Example: --intro_extra_text='GET READY TO SING!'",
+    )
+
+    parser.add_argument(
+        "--intro_extra_text_color",
+        default="#ffffff",
+        help="Optional: Font color for intro video extra text (default: #ffffff). Example: --intro_extra_text_color=#123456",
+    )
+
+    parser.add_argument(
+        "--intro_extra_text_region",
+        help="Optional: Region for extra text in intro video (x, y, width, height; default: 370,1950,3100,480). Example: --intro_extra_text_region=370,1950,3100,480",
+    )
+
+    parser.add_argument(
+        "--end_extra_text_region",
+        help="Optional: Region for extra text in end video (x, y, width, height; default: 370,1950,3100,480). Example: --end_extra_text_region=370,1950,3100,480",
+    )
+
+    parser.add_argument(
+        "--intro_title_region",
+        help="Optional: Region for title text in intro video (x, y, width, height; default: 370,470,3100,480). Example: --intro_title_region=370,470,3100,480",
+    )
+
+    parser.add_argument(
+        "--intro_artist_region",
+        help="Optional: Region for artist text in intro video (x, y, width, height; default: 370,1210,3100,480). Example: --intro_artist_region=370,1210,3100,480",
+    )
+
+    parser.add_argument(
+        "--end_title_region",
+        help="Optional: Region for title text in end video (x, y, width, height; default: 370,470,3100,480). Example: --end_title_region=370,470,3100,480",
+    )
+
+    parser.add_argument(
+        "--end_artist_region",
+        help="Optional: Region for artist text in end video (x, y, width, height; default: 370,1210,3100,480). Example: --end_artist_region=370,1210,3100,480",
     )
 
     args = parser.parse_args()
@@ -352,28 +383,34 @@ def main():
         existing_instrumental=args.existing_instrumental,
         existing_title_image=args.existing_title_image,
         existing_end_image=args.existing_end_image,
-        title_video_duration=args.title_video_duration,
+        intro_video_duration=args.intro_video_duration,
         intro_background_color=args.intro_background_color,
         intro_background_image=args.intro_background_image,
         intro_font=args.intro_font,
         intro_artist_color=args.intro_artist_color,
         intro_title_color=args.intro_title_color,
+        intro_title_region=args.intro_title_region,
+        intro_artist_region=args.intro_artist_region,
         end_video_duration=args.end_video_duration,
-        end_extra_text=args.end_extra_text,
         end_background_color=args.end_background_color,
         end_background_image=args.end_background_image,
         end_font=args.end_font,
         end_extra_text_color=args.end_extra_text_color,
         end_artist_color=args.end_artist_color,
         end_title_color=args.end_title_color,
-        title_region=args.title_region,
-        artist_region=args.artist_region,
+        end_title_region=args.end_title_region,
+        end_artist_region=args.end_artist_region,
         lyrics_artist=args.lyrics_artist,
         lyrics_title=args.lyrics_title,
         skip_lyrics=args.skip_lyrics,
         render_bounding_boxes=args.render_bounding_boxes,
         output_png=args.output_png,
         output_jpg=args.output_jpg,
+        intro_extra_text=args.intro_extra_text,
+        intro_extra_text_color=args.intro_extra_text_color,
+        intro_extra_text_region=args.intro_extra_text_region,
+        end_extra_text=args.end_extra_text,
+        end_extra_text_region=args.end_extra_text_region,
     )
 
     tracks = kprep.process()
