@@ -10,6 +10,7 @@ import sys
 from PIL import ImageFont, Image
 from cdgmaker.render import get_wrapped_text
 import itertools
+import os
 
 # Keep only the truly constant values that aren't style-related
 CDG_VISIBLE_WIDTH = 280
@@ -102,7 +103,7 @@ def generate_toml(
     artist_color="#ffdf6b",
     background_color="#111427",
     border_color="#111427",
-    font_path=None,
+    font_path="AvenirNext-Bold.ttf",
     font_size=18,
     stroke_width=0,
     stroke_style="octagon",
@@ -307,7 +308,7 @@ def generate_cdg(
     artist_color="#ffdf6b",
     background_color="#111427",
     border_color="#111427",
-    font_path="/Users/andrew/AvenirNext-Bold.ttf",
+    font_path="AvenirNext-Bold.ttf",
     font_size=18,
     stroke_width=0,
     stroke_style="octagon",
@@ -324,6 +325,16 @@ def generate_cdg(
     Generate a CDG file from an LRC file and audio file.
     All style parameters have default values but can be overridden.
     """
+    # Check if font_path is just a filename and look for it in the package's fonts directory
+    if font_path and not os.path.isabs(font_path) and not os.path.exists(font_path):
+        package_font_path = os.path.join(os.path.dirname(__file__), "fonts", font_path)
+        if os.path.exists(package_font_path):
+            font_path = package_font_path
+            logger.debug(f"Found font in package fonts directory: {font_path}")
+        else:
+            logger.warning(f"Font file {font_path} not found in package fonts directory, will use default font")
+            font_path = None
+
     # Set up logging for this function if it hasn't been configured
     if not logger.handlers:
         handler = logging.StreamHandler()

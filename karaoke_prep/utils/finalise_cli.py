@@ -133,7 +133,7 @@ def main():
 
     parser.add_argument(
         "--cdg_font_path",
-        default="/Users/andrew/AvenirNext-Bold.ttf",
+        default="AvenirNext-Bold.ttf",
         help="Optional: Path to font file for CDG (default: %(default)s). Example: --cdg_font_path='/path/to/font.ttf'",
     )
 
