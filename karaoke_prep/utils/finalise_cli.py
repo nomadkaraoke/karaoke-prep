@@ -119,6 +119,73 @@ def main():
         help="Optional: Test the email template functionality with fake data. Example: --test_email_template",
     )
 
+    parser.add_argument(
+        "--cdg_background_color",
+        default="#111427",
+        help="Optional: Background color for CDG (default: %(default)s). Example: --cdg_background_color='#000000'",
+    )
+
+    parser.add_argument(
+        "--cdg_border_color",
+        default="#111427",
+        help="Optional: Border color for CDG (default: %(default)s). Example: --cdg_border_color='#000000'",
+    )
+
+    parser.add_argument(
+        "--cdg_font_path",
+        default="/Users/andrew/AvenirNext-Bold.ttf",
+        help="Optional: Path to font file for CDG (default: %(default)s). Example: --cdg_font_path='/path/to/font.ttf'",
+    )
+
+    parser.add_argument(
+        "--cdg_font_size",
+        type=int,
+        default=18,
+        help="Optional: Font size for CDG (default: %(default)s). Example: --cdg_font_size=20",
+    )
+
+    parser.add_argument(
+        "--cdg_active_fill",
+        default="#7070F7",
+        help="Optional: Active text fill color for CDG (default: %(default)s). Example: --cdg_active_fill='#FFFFFF'",
+    )
+
+    parser.add_argument(
+        "--cdg_active_stroke",
+        default="#000000",
+        help="Optional: Active text stroke color for CDG (default: %(default)s). Example: --cdg_active_stroke='#000000'",
+    )
+
+    parser.add_argument(
+        "--cdg_inactive_fill",
+        default="#ff7acc",
+        help="Optional: Inactive text fill color for CDG (default: %(default)s). Example: --cdg_inactive_fill='#888888'",
+    )
+
+    parser.add_argument(
+        "--cdg_inactive_stroke",
+        default="#000000",
+        help="Optional: Inactive text stroke color for CDG (default: %(default)s). Example: --cdg_inactive_stroke='#000000'",
+    )
+
+    parser.add_argument(
+        "--cdg_title_screen_background",
+        default="/Users/andrew/cdg-title-screen-background-nomad-simple.png",
+        help="Optional: Path to title screen background image for CDG. Example: --cdg_title_screen_background='/path/to/background.png'",
+    )
+
+    parser.add_argument(
+        "--cdg_instrumental_background",
+        default="/Users/andrew/cdg-instrumental-background-nomad-notes.png",
+        help="Optional: Path to instrumental screen background image for CDG. Example: --cdg_instrumental_background='/path/to/instrumental.png'",
+    )
+
+    parser.add_argument(
+        "--cdg_instrumental_transition",
+        default="cdginstrumentalwipepatternnomad",
+        help="Optional: Transition effect for instrumental sections (default: %(default)s). Example: --cdg_instrumental_transition='wipe'",
+    )
+
     args = parser.parse_args()
 
     log_level = getattr(logging, args.log_level.upper())
@@ -143,6 +210,17 @@ def main():
         rclone_destination=args.rclone_destination,
         discord_webhook_url=args.discord_webhook_url,
         email_template_file=args.email_template_file,
+        cdg_background_color=args.cdg_background_color,
+        cdg_border_color=args.cdg_border_color,
+        cdg_font_path=args.cdg_font_path,
+        cdg_font_size=args.cdg_font_size,
+        cdg_active_fill=args.cdg_active_fill,
+        cdg_active_stroke=args.cdg_active_stroke,
+        cdg_inactive_fill=args.cdg_inactive_fill,
+        cdg_inactive_stroke=args.cdg_inactive_stroke,
+        cdg_title_screen_background=args.cdg_title_screen_background,
+        cdg_instrumental_background=args.cdg_instrumental_background,
+        cdg_instrumental_transition=args.cdg_instrumental_transition,
     )
 
     if args.test_email_template:

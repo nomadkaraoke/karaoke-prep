@@ -42,6 +42,17 @@ class KaraokeFinalise:
         discord_webhook_url=None,
         non_interactive=False,
         email_template_file=None,
+        cdg_background_color="#111427",
+        cdg_border_color="#111427",
+        cdg_font_path=None,
+        cdg_font_size=18,
+        cdg_active_fill="#7070F7",
+        cdg_active_stroke="#000000",
+        cdg_inactive_fill="#ff7acc",
+        cdg_inactive_stroke="#000000",
+        cdg_title_screen_background=None,
+        cdg_instrumental_background=None,
+        cdg_instrumental_transition="cdginstrumentalwipepatternnomad",
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -123,6 +134,21 @@ class KaraokeFinalise:
 
         self.email_template_file = email_template_file
         self.gmail_service = None
+
+        # Store CDG style parameters
+        self.cdg_style = {
+            "background_color": cdg_background_color,
+            "border_color": cdg_border_color,
+            "font_path": cdg_font_path,
+            "font_size": cdg_font_size,
+            "active_fill": cdg_active_fill,
+            "active_stroke": cdg_active_stroke,
+            "inactive_fill": cdg_inactive_fill,
+            "inactive_stroke": cdg_inactive_stroke,
+            "title_screen_background": cdg_title_screen_background,
+            "instrumental_background": cdg_instrumental_background,
+            "instrumental_transition": cdg_instrumental_transition,
+        }
 
     def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
         self.logger.info(f"Checking required input files exist...")
@@ -467,19 +493,26 @@ class KaraokeFinalise:
     def choose_instrumental_audio_file(self, base_name):
         self.logger.info(f"Choosing instrumental audio file to use as karaoke audio...")
 
-        search_string = " (Instrumental "
+        search_string = " (Instrumental"
         self.logger.info(f"Searching for files in current directory containing {search_string}")
 
         all_instrumental_files = [f for f in os.listdir(".") if search_string in f]
         flac_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.endswith(".flac"))
         mp3_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.endswith(".mp3"))
+        wav_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.endswith(".wav"))
 
         self.logger.debug(f"FLAC files found: {flac_files}")
         self.logger.debug(f"MP3 files found: {mp3_files}")
+        self.logger.debug(f"WAV files found: {wav_files}")
 
-        # Filter out MP3 files if their FLAC counterpart exists
+        # Filter out MP3 files if their FLAC or WAV counterpart exists
+        # Filter out WAV files if their FLAC counterpart exists
         filtered_files = [
-            f for f in all_instrumental_files if f.endswith(".flac") or (f.endswith(".mp3") and f.rsplit(".", 1)[0] not in flac_files)
+            f
+            for f in all_instrumental_files
+            if f.endswith(".flac")
+            or (f.endswith(".wav") and f.rsplit(".", 1)[0] not in flac_files)
+            or (f.endswith(".mp3") and f.rsplit(".", 1)[0] not in flac_files and f.rsplit(".", 1)[0] not in wav_files)
         ]
 
         self.logger.debug(f"Filtered instrumental files: {filtered_files}")
@@ -606,36 +639,53 @@ class KaraokeFinalise:
         else:
             self.logger.info(f"Generating CDG and MP3 files")
 
-            generate_cdg(input_files["karaoke_lrc"], input_files["instrumental_audio"], title, artist)
+            # Pass the style parameters to generate_cdg
+            generate_cdg(
+                input_files["karaoke_lrc"],
+                input_files["instrumental_audio"],
+                title,
+                artist,
+                background_color=self.cdg_style["background_color"],
+                border_color=self.cdg_style["border_color"],
+                font_path=self.cdg_style["font_path"],
+                font_size=self.cdg_style["font_size"],
+                active_fill=self.cdg_style["active_fill"],
+                active_stroke=self.cdg_style["active_stroke"],
+                inactive_fill=self.cdg_style["inactive_fill"],
+                inactive_stroke=self.cdg_style["inactive_stroke"],
+                title_screen_background=self.cdg_style["title_screen_background"],
+                instrumental_background=self.cdg_style["instrumental_background"],
+                instrumental_transition=self.cdg_style["instrumental_transition"],
+            )
 
-            # Look for the generated ZIP file
-            expected_zip = f"{artist} - {title} (Karaoke).zip"
+        # Look for the generated ZIP file
+        expected_zip = f"{artist} - {title} (Karaoke).zip"
 
-            self.logger.info(f"Searching for CDG ZIP file. Expected: {expected_zip}")
+        self.logger.info(f"Searching for CDG ZIP file. Expected: {expected_zip}")
 
-            if os.path.isfile(expected_zip):
-                self.logger.info(f"Found expected CDG ZIP file: {expected_zip}")
-                os.rename(expected_zip, output_files["final_karaoke_cdg_zip"])
-                self.logger.info(f"Renamed CDG ZIP file from {expected_zip} to {output_files['final_karaoke_cdg_zip']}")
+        if os.path.isfile(expected_zip):
+            self.logger.info(f"Found expected CDG ZIP file: {expected_zip}")
+            os.rename(expected_zip, output_files["final_karaoke_cdg_zip"])
+            self.logger.info(f"Renamed CDG ZIP file from {expected_zip} to {output_files['final_karaoke_cdg_zip']}")
 
-            if not os.path.isfile(output_files["final_karaoke_cdg_zip"]):
-                self.logger.error(f"Failed to find any CDG ZIP file. Listing directory contents:")
-                for file in os.listdir():
-                    self.logger.error(f" - {file}")
-                raise Exception(f"Failed to create CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
+        if not os.path.isfile(output_files["final_karaoke_cdg_zip"]):
+            self.logger.error(f"Failed to find any CDG ZIP file. Listing directory contents:")
+            for file in os.listdir():
+                self.logger.error(f" - {file}")
+            raise Exception(f"Failed to create CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
 
-            self.logger.info(f"CDG ZIP file created: {output_files['final_karaoke_cdg_zip']}")
+        self.logger.info(f"CDG ZIP file created: {output_files['final_karaoke_cdg_zip']}")
 
-            # Extract the CDG ZIP file
-            self.logger.info(f"Extracting CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
-            with zipfile.ZipFile(output_files["final_karaoke_cdg_zip"], "r") as zip_ref:
-                zip_ref.extractall()
+        # Extract the CDG ZIP file
+        self.logger.info(f"Extracting CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
+        with zipfile.ZipFile(output_files["final_karaoke_cdg_zip"], "r") as zip_ref:
+            zip_ref.extractall()
 
-            if os.path.isfile(output_files["karaoke_mp3"]):
-                self.logger.info(f"Found extracted MP3 file: {output_files['karaoke_mp3']}")
-            else:
-                self.logger.error("Failed to find extracted MP3 file")
-                raise Exception("Failed to extract MP3 file from CDG ZIP")
+        if os.path.isfile(output_files["karaoke_mp3"]):
+            self.logger.info(f"Found extracted MP3 file: {output_files['karaoke_mp3']}")
+        else:
+            self.logger.error("Failed to find extracted MP3 file")
+            raise Exception("Failed to extract MP3 file from CDG ZIP")
 
     def create_txt_zip_file(self, input_files, output_files):
         self.logger.info(f"Creating TXT ZIP file...")
