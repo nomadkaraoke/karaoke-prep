@@ -8,10 +8,14 @@ from PIL import ImageColor
 
 # NOTE RGBColor is specifically an RGB 3-tuple (red, green, blue).
 RGBColor: TypeAlias = tuple[int, int, int]
+
+
 def to_rgbcolor(val: Any) -> RGBColor:
     if isinstance(val, str):
         return ImageColor.getrgb(val)[:3]
     raise TypeError("color value not convertible to RGBColor")
+
+
 def to_rgbcolor_or_none(val: Any) -> RGBColor | None:
     if val is None or val == "":
         return None
@@ -76,10 +80,10 @@ class SettingsInstrumental:
 
 @define
 class SettingsSinger:
-    active_fill: RGBColor = field(converter=to_rgbcolor, default="#33f")
-    active_stroke: RGBColor = field(converter=to_rgbcolor, default="#004")
-    inactive_fill: RGBColor = field(converter=to_rgbcolor, default="#ddf")
-    inactive_stroke: RGBColor = field(converter=to_rgbcolor, default="#009")
+    active_fill: RGBColor = field(converter=to_rgbcolor, default="#000")
+    active_stroke: RGBColor = field(converter=to_rgbcolor, default="#000")
+    inactive_fill: RGBColor = field(converter=to_rgbcolor, default="#000")
+    inactive_stroke: RGBColor = field(converter=to_rgbcolor, default="#000")
 
 
 @define
@@ -118,14 +122,19 @@ class Settings:
     singers: list[SettingsSinger] = field(factory=list)
     lyrics: list[SettingsLyric] = field(factory=list)
     title_color: RGBColor = field(converter=to_rgbcolor, default="#ffffff")
-    artist_color: RGBColor = field(converter=to_rgbcolor, default="#ffdf6b")
+    artist_color: RGBColor = field(converter=to_rgbcolor, default="#ffffff")
+    title_screen_transition: str = "centertexttoplogobottomtext"
+    title_artist_gap: int = 30
 
 
 __all__ = [
     "RGBColor",
-
-    "LyricClearMode", "TextAlign", "TextPlacement", "StrokeType",
-
-    "SettingsInstrumental", "SettingsSinger", "SettingsLyric",
+    "LyricClearMode",
+    "TextAlign",
+    "TextPlacement",
+    "StrokeType",
+    "SettingsInstrumental",
+    "SettingsSinger",
+    "SettingsLyric",
     "Settings",
 ]

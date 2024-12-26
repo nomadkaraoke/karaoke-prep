@@ -7,23 +7,13 @@ import argparse
 from pathlib import Path
 from cdgmaker.composer import KaraokeComposer
 import sys
-from PIL import ImageFont, Image
+from PIL import ImageFont
 from cdgmaker.render import get_wrapped_text
-import itertools
 import os
+import json
 
 # Keep only the truly constant values that aren't style-related
 CDG_VISIBLE_WIDTH = 280
-
-# Constants for lead-in behavior
-LEAD_IN_THRESHOLD = 300  # 3 seconds in centiseconds
-LEAD_IN_SYMBOLS = ["/>", ">", ">", ">"]
-LEAD_IN_DURATION = 30  # 300 ms in centiseconds
-LEAD_IN_TOTAL = 200  # 2 seconds in centiseconds
-
-# Constants for instrumental detection
-INSTRUMENTAL_GAP_THRESHOLD = 1500  # 15 seconds in centiseconds
-DEFAULT_INSTRUMENTAL_TEXT = "INSTRUMENTAL"
 
 # Create a logger specific to this module
 logger = logging.getLogger(__name__)
@@ -55,24 +45,26 @@ def parse_lrc(lrc_file):
 
 def detect_instrumentals(
     lyrics_data,
-    line_tile_height=3,
-    instrumental_font_color="#ffdf6b",
-    instrumental_background=None,
-    instrumental_transition="cdginstrumentalwipepatternnomad",
+    line_tile_height,
+    instrumental_font_color,
+    instrumental_background,
+    instrumental_transition,
+    instrumental_gap_threshold,
+    instrumental_text,
 ):
     instrumentals = []
     for i in range(len(lyrics_data) - 1):
         current_end = lyrics_data[i]["timestamp"]
         next_start = lyrics_data[i + 1]["timestamp"]
         gap = next_start - current_end
-        if gap >= INSTRUMENTAL_GAP_THRESHOLD:
+        if gap >= instrumental_gap_threshold:
             instrumental_start = current_end + 200  # Add 2 seconds (200 centiseconds) delay
             instrumental_duration = (gap - 200) // 100  # Convert to seconds
             instrumentals.append(
                 {
                     "sync": instrumental_start,
                     "wait": True,
-                    "text": f"{DEFAULT_INSTRUMENTAL_TEXT}\n{instrumental_duration} seconds\n",
+                    "text": f"{instrumental_text}\n{instrumental_duration} seconds\n",
                     "text_align": "center",
                     "text_placement": "bottom middle",
                     "line_tile_height": line_tile_height,
@@ -96,26 +88,80 @@ def generate_toml(
     title,
     artist,
     output_file,
-    row=4,
-    line_tile_height=3,
-    lines_per_page=4,
-    title_color="#ffffff",
-    artist_color="#ffdf6b",
-    background_color="#111427",
-    border_color="#111427",
-    font_path="AvenirNext-Bold.ttf",
-    font_size=18,
-    stroke_width=0,
-    stroke_style="octagon",
-    active_fill="#7070F7",
-    active_stroke="#000000",
-    inactive_fill="#ff7acc",
-    inactive_stroke="#000000",
-    title_screen_background=None,
-    instrumental_background=None,
-    instrumental_transition="cdginstrumentalwipepatternnomad",
-    instrumental_font_color="#ffdf6b",
+    cdg_styles,
 ):
+    """
+    Generate a TOML configuration file for CDG creation.
+
+    Args:
+        cdg_styles (dict): Must contain all style-related parameters:
+            - title_color
+            - artist_color
+            - background_color
+            - border_color
+            - font_path
+            - font_size
+            - stroke_width
+            - stroke_style
+            - active_fill
+            - active_stroke
+            - inactive_fill
+            - inactive_stroke
+            - title_screen_background
+            - instrumental_background
+            - instrumental_transition
+            - instrumental_font_color
+            - title_screen_transition
+            - row
+            - line_tile_height
+            - lines_per_page
+            - clear_mode
+            - sync_offset
+            - instrumental_gap_threshold
+            - instrumental_text
+            - lead_in_threshold
+            - lead_in_symbols
+            - lead_in_duration
+            - lead_in_total
+            - title_artist_gap
+    """
+    # Validate required style parameters
+    required_styles = {
+        "title_color",
+        "artist_color",
+        "background_color",
+        "border_color",
+        "font_path",
+        "font_size",
+        "stroke_width",
+        "stroke_style",
+        "active_fill",
+        "active_stroke",
+        "inactive_fill",
+        "inactive_stroke",
+        "title_screen_background",
+        "instrumental_background",
+        "instrumental_transition",
+        "instrumental_font_color",
+        "title_screen_transition",
+        "row",
+        "line_tile_height",
+        "lines_per_page",
+        "clear_mode",
+        "sync_offset",
+        "instrumental_gap_threshold",
+        "instrumental_text",
+        "lead_in_threshold",
+        "lead_in_symbols",
+        "lead_in_duration",
+        "lead_in_total",
+        "title_artist_gap",
+    }
+
+    missing_styles = required_styles - set(cdg_styles.keys())
+    if missing_styles:
+        raise ValueError(f"Missing required style parameters: {', '.join(missing_styles)}")
+
     try:
         lyrics_data = parse_lrc(lrc_file)
     except ValueError as e:
@@ -132,11 +178,11 @@ def generate_toml(
     for i, lyric in enumerate(lyrics_data):
         logger.debug(f"Processing lyric {i}: timestamp {lyric['timestamp']}, text '{lyric['text']}'")
 
-        if i == 0 or lyric["timestamp"] - lyrics_data[i - 1]["timestamp"] >= LEAD_IN_THRESHOLD:
-            lead_in_start = lyric["timestamp"] - LEAD_IN_TOTAL
+        if i == 0 or lyric["timestamp"] - lyrics_data[i - 1]["timestamp"] >= cdg_styles["lead_in_threshold"]:
+            lead_in_start = lyric["timestamp"] - cdg_styles["lead_in_total"]
             logger.debug(f"Adding lead-in before lyric {i} at timestamp {lead_in_start}")
-            for j, symbol in enumerate(LEAD_IN_SYMBOLS):
-                sync_time = lead_in_start + j * LEAD_IN_DURATION
+            for j, symbol in enumerate(cdg_styles["lead_in_symbols"]):
+                sync_time = lead_in_start + j * cdg_styles["lead_in_duration"]
                 sync_times.append(sync_time)
                 formatted_lyrics.append(symbol)
                 logger.debug(f"  Added lead-in symbol {j+1}: '{symbol}' at {sync_time}")
@@ -147,43 +193,53 @@ def generate_toml(
 
     instrumentals = detect_instrumentals(
         lyrics_data,
-        line_tile_height=line_tile_height,
-        instrumental_font_color=instrumental_font_color,
-        instrumental_background=instrumental_background,
-        instrumental_transition=instrumental_transition,
+        line_tile_height=cdg_styles["line_tile_height"],
+        instrumental_font_color=cdg_styles["instrumental_font_color"],
+        instrumental_background=cdg_styles["instrumental_background"],
+        instrumental_transition=cdg_styles["instrumental_transition"],
+        instrumental_gap_threshold=cdg_styles["instrumental_gap_threshold"],
+        instrumental_text=cdg_styles["instrumental_text"],
     )
 
-    formatted_lyrics = format_lyrics(formatted_lyrics, instrumentals, sync_times, font_path=font_path, font_size=font_size)
+    formatted_lyrics = format_lyrics(
+        formatted_lyrics, instrumentals, sync_times, font_path=cdg_styles["font_path"], font_size=cdg_styles["font_size"]
+    )
 
     toml_data = {
         "title": title,
         "artist": artist,
         "file": audio_file,
         "outname": Path(lrc_file).stem,
-        "clear_mode": "eager",
-        "sync_offset": 0,
-        "background": background_color,
-        "border": border_color,
-        "font": font_path,
-        "font_size": font_size,
-        "stroke_width": stroke_width,
-        "stroke_style": stroke_style,
+        "clear_mode": cdg_styles["clear_mode"],
+        "sync_offset": cdg_styles["sync_offset"],
+        "background": cdg_styles["background_color"],
+        "border": cdg_styles["border_color"],
+        "font": cdg_styles["font_path"],
+        "font_size": cdg_styles["font_size"],
+        "stroke_width": cdg_styles["stroke_width"],
+        "stroke_style": cdg_styles["stroke_style"],
         "singers": [
-            {"active_fill": active_fill, "active_stroke": active_stroke, "inactive_fill": inactive_fill, "inactive_stroke": inactive_stroke}
+            {
+                "active_fill": cdg_styles["active_fill"],
+                "active_stroke": cdg_styles["active_stroke"],
+                "inactive_fill": cdg_styles["inactive_fill"],
+                "inactive_stroke": cdg_styles["inactive_stroke"],
+            }
         ],
         "lyrics": [
             {
                 "singer": 1,
                 "sync": sync_times,
-                "row": row,
-                "line_tile_height": line_tile_height,
-                "lines_per_page": lines_per_page,
+                "row": cdg_styles["row"],
+                "line_tile_height": cdg_styles["line_tile_height"],
+                "lines_per_page": cdg_styles["lines_per_page"],
                 "text": formatted_lyrics,
             }
         ],
-        "title_color": title_color,
-        "artist_color": artist_color,
-        "title_screen_background": title_screen_background,
+        "title_color": cdg_styles["title_color"],
+        "artist_color": cdg_styles["artist_color"],
+        "title_screen_background": cdg_styles["title_screen_background"],
+        "title_screen_transition": cdg_styles["title_screen_transition"],
         "instrumentals": instrumentals,
     }
 
@@ -301,39 +357,27 @@ def generate_cdg(
     audio_file,
     title,
     artist,
-    row=4,
-    line_tile_height=3,
-    lines_per_page=4,
-    title_color="#ffffff",
-    artist_color="#ffdf6b",
-    background_color="#111427",
-    border_color="#111427",
-    font_path="AvenirNext-Bold.ttf",
-    font_size=18,
-    stroke_width=0,
-    stroke_style="octagon",
-    active_fill="#7070F7",
-    active_stroke="#000000",
-    inactive_fill="#ff7acc",
-    inactive_stroke="#000000",
-    title_screen_background="/Users/andrew/cdg-title-screen-background-nomad-simple.png",
-    instrumental_background="/Users/andrew/cdg-instrumental-background-nomad-notes.png",
-    instrumental_transition="cdginstrumentalwipepatternnomad",
-    instrumental_font_color="#ffdf6b",
+    cdg_styles,
 ):
     """
     Generate a CDG file from an LRC file and audio file.
-    All style parameters have default values but can be overridden.
+
+    Args:
+        lrc_file (str): Path to the LRC file
+        audio_file (str): Path to the audio file
+        title (str): Title of the song
+        artist (str): Artist of the song
+        cdg_styles (dict): Dictionary containing all style and layout parameters
     """
     # Check if font_path is just a filename and look for it in the package's fonts directory
-    if font_path and not os.path.isabs(font_path) and not os.path.exists(font_path):
-        package_font_path = os.path.join(os.path.dirname(__file__), "fonts", font_path)
+    if cdg_styles["font_path"] and not os.path.isabs(cdg_styles["font_path"]) and not os.path.exists(cdg_styles["font_path"]):
+        package_font_path = os.path.join(os.path.dirname(__file__), "fonts", cdg_styles["font_path"])
         if os.path.exists(package_font_path):
-            font_path = package_font_path
-            logger.debug(f"Found font in package fonts directory: {font_path}")
+            cdg_styles["font_path"] = package_font_path
+            logger.debug(f"Found font in package fonts directory: {cdg_styles['font_path']}")
         else:
-            logger.warning(f"Font file {font_path} not found in package fonts directory, will use default font")
-            font_path = None
+            logger.warning(f"Font file {cdg_styles['font_path']} not found in package fonts directory, will use default font")
+            cdg_styles["font_path"] = None
 
     # Set up logging for this function if it hasn't been configured
     if not logger.handlers:
@@ -345,32 +389,13 @@ def generate_cdg(
 
     toml_file = f"{Path(lrc_file).stem}.toml"
 
-    # Pass all style parameters to generate_toml
     generate_toml(
         lrc_file,
         audio_file,
         title,
         artist,
         toml_file,
-        row=row,
-        line_tile_height=line_tile_height,
-        lines_per_page=lines_per_page,
-        title_color=title_color,
-        artist_color=artist_color,
-        background_color=background_color,
-        border_color=border_color,
-        font_path=font_path,
-        font_size=font_size,
-        stroke_width=stroke_width,
-        stroke_style=stroke_style,
-        active_fill=active_fill,
-        active_stroke=active_stroke,
-        inactive_fill=inactive_fill,
-        inactive_stroke=inactive_stroke,
-        title_screen_background=title_screen_background,
-        instrumental_background=instrumental_background,
-        instrumental_transition=instrumental_transition,
-        instrumental_font_color=instrumental_font_color,
+        cdg_styles,
     )
 
     try:
@@ -393,50 +418,31 @@ def cli_main():
     parser.add_argument("audio_file", help="Path to the audio file")
     parser.add_argument("--title", required=True, help="Title of the song")
     parser.add_argument("--artist", required=True, help="Artist of the song")
-    parser.add_argument("--row", type=int, default=4, help="Starting row for lyrics (0-17)")
-    parser.add_argument("--line-tile-height", type=int, default=3, help="Height of each line in tile rows")
-    parser.add_argument("--lines-per-page", type=int, default=4, help="Number of lines per page")
-    parser.add_argument("--title-color", default="#ffffff", help="Color of the title text")
-    parser.add_argument("--artist-color", default="#ffdf6b", help="Color of the artist text")
-    # Add all the new style parameters as CLI arguments
-    parser.add_argument("--background-color", default="#111427", help="Background color")
-    parser.add_argument("--border-color", default="#111427", help="Border color")
-    parser.add_argument("--font-path", help="Path to font file")
-    parser.add_argument("--font-size", type=int, default=18, help="Font size")
-    parser.add_argument("--active-fill", default="#7070F7", help="Active text fill color")
-    parser.add_argument("--active-stroke", default="#000000", help="Active text stroke color")
-    parser.add_argument("--inactive-fill", default="#ff7acc", help="Inactive text fill color")
-    parser.add_argument("--inactive-stroke", default="#000000", help="Inactive text stroke color")
-    parser.add_argument("--title-screen-background", help="Path to title screen background image")
-    parser.add_argument("--instrumental-background", help="Path to instrumental background image")
-    parser.add_argument("--instrumental-transition", default="cdginstrumentalwipepatternnomad", help="Instrumental transition effect")
-    parser.add_argument("--instrumental-font-color", default="#ffdf6b", help="Instrumental text color")
+    parser.add_argument("--cdg-styles-json", required=True, help="Path to JSON file containing CDG style configuration")
 
     args = parser.parse_args()
 
-    generate_cdg(
-        args.lrc_file,
-        args.audio_file,
-        args.title,
-        args.artist,
-        row=args.row,
-        line_tile_height=args.line_tile_height,
-        lines_per_page=args.lines_per_page,
-        title_color=args.title_color,
-        artist_color=args.artist_color,
-        background_color=args.background_color,
-        border_color=args.border_color,
-        font_path=args.font_path,
-        font_size=args.font_size,
-        active_fill=args.active_fill,
-        active_stroke=args.active_stroke,
-        inactive_fill=args.inactive_fill,
-        inactive_stroke=args.inactive_stroke,
-        title_screen_background=args.title_screen_background,
-        instrumental_background=args.instrumental_background,
-        instrumental_transition=args.instrumental_transition,
-        instrumental_font_color=args.instrumental_font_color,
-    )
+    try:
+        with open(args.cdg_styles_json, "r") as f:
+            cdg_styles = json.loads(f.read())
+    except FileNotFoundError:
+        logger.error(f"Style configuration file not found: {args.cdg_styles_json}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in style configuration file: {e}")
+        sys.exit(1)
+
+    try:
+        generate_cdg(
+            args.lrc_file,
+            args.audio_file,
+            args.title,
+            args.artist,
+            cdg_styles,
+        )
+    except ValueError as e:
+        logger.error(f"Invalid style configuration: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

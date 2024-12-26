@@ -42,17 +42,7 @@ class KaraokeFinalise:
         discord_webhook_url=None,
         non_interactive=False,
         email_template_file=None,
-        cdg_background_color="#111427",
-        cdg_border_color="#111427",
-        cdg_font_path=None,
-        cdg_font_size=18,
-        cdg_active_fill="#7070F7",
-        cdg_active_stroke="#000000",
-        cdg_inactive_fill="#ff7acc",
-        cdg_inactive_stroke="#000000",
-        cdg_title_screen_background=None,
-        cdg_instrumental_background=None,
-        cdg_instrumental_transition="cdginstrumentalwipepatternnomad",
+        cdg_styles=None,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -135,20 +125,7 @@ class KaraokeFinalise:
         self.email_template_file = email_template_file
         self.gmail_service = None
 
-        # Store CDG style parameters
-        self.cdg_style = {
-            "background_color": cdg_background_color,
-            "border_color": cdg_border_color,
-            "font_path": cdg_font_path,
-            "font_size": cdg_font_size,
-            "active_fill": cdg_active_fill,
-            "active_stroke": cdg_active_stroke,
-            "inactive_fill": cdg_inactive_fill,
-            "inactive_stroke": cdg_inactive_stroke,
-            "title_screen_background": cdg_title_screen_background,
-            "instrumental_background": cdg_instrumental_background,
-            "instrumental_transition": cdg_instrumental_transition,
-        }
+        self.cdg_styles = cdg_styles
 
     def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
         self.logger.info(f"Checking required input files exist...")
@@ -639,23 +616,15 @@ class KaraokeFinalise:
         else:
             self.logger.info(f"Generating CDG and MP3 files")
 
-            # Pass the style parameters to generate_cdg
+            if self.cdg_styles is None:
+                raise ValueError("CDG styles configuration is required when enable_cdg is True")
+
             generate_cdg(
                 input_files["karaoke_lrc"],
                 input_files["instrumental_audio"],
                 title,
                 artist,
-                background_color=self.cdg_style["background_color"],
-                border_color=self.cdg_style["border_color"],
-                font_path=self.cdg_style["font_path"],
-                font_size=self.cdg_style["font_size"],
-                active_fill=self.cdg_style["active_fill"],
-                active_stroke=self.cdg_style["active_stroke"],
-                inactive_fill=self.cdg_style["inactive_fill"],
-                inactive_stroke=self.cdg_style["inactive_stroke"],
-                title_screen_background=self.cdg_style["title_screen_background"],
-                instrumental_background=self.cdg_style["instrumental_background"],
-                instrumental_transition=self.cdg_style["instrumental_transition"],
+                self.cdg_styles,
             )
 
         # Look for the generated ZIP file

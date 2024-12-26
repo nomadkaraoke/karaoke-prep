@@ -4,6 +4,7 @@ import logging
 import pkg_resources
 import os
 import sys
+import json
 from karaoke_prep.karaoke_finalise import KaraokeFinalise
 
 
@@ -16,7 +17,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="Render, remux and join intermediate files to create final karaoke video, as the third stage after using karaoke-prep. Processes all (Karaoke).mov files in current directory.",
-        formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, max_help_position=54),
+        formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, max_help_position=62),
     )
 
     package_version = pkg_resources.get_distribution("karaoke-prep").version
@@ -120,70 +121,9 @@ def main():
     )
 
     parser.add_argument(
-        "--cdg_background_color",
-        default="#111427",
-        help="Optional: Background color for CDG (default: %(default)s). Example: --cdg_background_color='#000000'",
-    )
-
-    parser.add_argument(
-        "--cdg_border_color",
-        default="#111427",
-        help="Optional: Border color for CDG (default: %(default)s). Example: --cdg_border_color='#000000'",
-    )
-
-    parser.add_argument(
-        "--cdg_font_path",
-        default="AvenirNext-Bold.ttf",
-        help="Optional: Path to font file for CDG (default: %(default)s). Example: --cdg_font_path='/path/to/font.ttf'",
-    )
-
-    parser.add_argument(
-        "--cdg_font_size",
-        type=int,
-        default=18,
-        help="Optional: Font size for CDG (default: %(default)s). Example: --cdg_font_size=20",
-    )
-
-    parser.add_argument(
-        "--cdg_active_fill",
-        default="#7070F7",
-        help="Optional: Active text fill color for CDG (default: %(default)s). Example: --cdg_active_fill='#FFFFFF'",
-    )
-
-    parser.add_argument(
-        "--cdg_active_stroke",
-        default="#000000",
-        help="Optional: Active text stroke color for CDG (default: %(default)s). Example: --cdg_active_stroke='#000000'",
-    )
-
-    parser.add_argument(
-        "--cdg_inactive_fill",
-        default="#ff7acc",
-        help="Optional: Inactive text fill color for CDG (default: %(default)s). Example: --cdg_inactive_fill='#888888'",
-    )
-
-    parser.add_argument(
-        "--cdg_inactive_stroke",
-        default="#000000",
-        help="Optional: Inactive text stroke color for CDG (default: %(default)s). Example: --cdg_inactive_stroke='#000000'",
-    )
-
-    parser.add_argument(
-        "--cdg_title_screen_background",
-        default="/Users/andrew/cdg-title-screen-background-nomad-simple.png",
-        help="Optional: Path to title screen background image for CDG. Example: --cdg_title_screen_background='/path/to/background.png'",
-    )
-
-    parser.add_argument(
-        "--cdg_instrumental_background",
-        default="/Users/andrew/cdg-instrumental-background-nomad-notes.png",
-        help="Optional: Path to instrumental screen background image for CDG. Example: --cdg_instrumental_background='/path/to/instrumental.png'",
-    )
-
-    parser.add_argument(
-        "--cdg_instrumental_transition",
-        default="cdginstrumentalwipepatternnomad",
-        help="Optional: Transition effect for instrumental sections (default: %(default)s). Example: --cdg_instrumental_transition='wipe'",
+        "--cdg_styles_json",
+        default=None,
+        help="Optional: Path to JSON file containing CDG style configuration. Required if --enable_cdg is used. Example: --cdg_styles_json='/path/to/cdg_styles.json'",
     )
 
     args = parser.parse_args()
@@ -192,6 +132,22 @@ def main():
     logger.setLevel(log_level)
 
     logger.info(f"KaraokeFinalise CLI beginning initialisation...")
+
+    # Load CDG styles if CDG generation is enabled
+    cdg_styles = None
+    if args.enable_cdg:
+        if not args.cdg_styles_json:
+            logger.error("CDG styles JSON file path (--cdg_styles_json) is required when --enable_cdg is used")
+            sys.exit(1)
+        try:
+            with open(args.cdg_styles_json, "r") as f:
+                cdg_styles = json.loads(f.read())
+        except FileNotFoundError:
+            logger.error(f"CDG styles configuration file not found: {args.cdg_styles_json}")
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
+            sys.exit(1)
 
     kfinalise = KaraokeFinalise(
         log_formatter=log_formatter,
@@ -210,17 +166,7 @@ def main():
         rclone_destination=args.rclone_destination,
         discord_webhook_url=args.discord_webhook_url,
         email_template_file=args.email_template_file,
-        cdg_background_color=args.cdg_background_color,
-        cdg_border_color=args.cdg_border_color,
-        cdg_font_path=args.cdg_font_path,
-        cdg_font_size=args.cdg_font_size,
-        cdg_active_fill=args.cdg_active_fill,
-        cdg_active_stroke=args.cdg_active_stroke,
-        cdg_inactive_fill=args.cdg_inactive_fill,
-        cdg_inactive_stroke=args.cdg_inactive_stroke,
-        cdg_title_screen_background=args.cdg_title_screen_background,
-        cdg_instrumental_background=args.cdg_instrumental_background,
-        cdg_instrumental_transition=args.cdg_instrumental_transition,
+        cdg_styles=cdg_styles,
     )
 
     if args.test_email_template:

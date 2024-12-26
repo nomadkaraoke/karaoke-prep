@@ -1591,6 +1591,9 @@ class KaraokeComposer:
                 )
                 y += int(bigfont.size)
 
+            # Add vertical gap between title and artist using configured value
+            y += self.config.title_artist_gap
+
             # Draw song artist
             for image in render_lines(
                 get_wrapped_text(
@@ -1650,7 +1653,7 @@ class KaraokeComposer:
 
         # Queue background image packets (and apply transition)
         transition = Image.open(
-            package_dir / "transitions" / "cdgtitlescreenwipepatternnomad.png"
+            package_dir / "transitions" / f"{self.config.title_screen_transition}.png"
         )
         for coord in self._gradient_to_tile_positions(transition):
             self.writer.queue_packets(packets.get(coord, []))
@@ -1775,7 +1778,7 @@ class KaraokeComposer:
 
         # Queue background image packets (and apply transition)
         transition = Image.open(
-            package_dir / "transitions" / "cdgtitlescreenwipepatternnomad.png"
+            package_dir / "transitions" / f"{self.config.title_screen_transition}.png"
         )
         for coord in self._gradient_to_tile_positions(transition):
             self.writer.queue_packets(packets.get(coord, []))
