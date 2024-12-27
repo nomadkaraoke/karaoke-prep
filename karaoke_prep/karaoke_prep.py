@@ -3,7 +3,6 @@ import sys
 import re
 import glob
 import logging
-import lyricsgenius
 import tempfile
 import shutil
 import importlib.resources as pkg_resources
@@ -305,43 +304,6 @@ class KaraokePrep:
             os.system(ffmpeg_command)
         return output_filename
 
-    def write_lyrics_from_genius(self, artist, title, filename):
-        if self._file_exists(filename):
-            with open(filename, "r") as f:
-                return f.read().split("\n")
-
-        genius = lyricsgenius.Genius(access_token=os.environ["GENIUS_API_TOKEN"], verbose=False, remove_section_headers=True)
-        song = genius.search_song(title, artist)
-        if song:
-            lyrics = self.clean_genius_lyrics(song.lyrics)
-
-            if not self.dry_run:
-                with open(filename, "w") as f:
-                    f.write(lyrics)
-
-            self.logger.info("Lyrics for %s by %s fetched successfully", title, artist)
-            return lyrics.split("\n")
-        else:
-            self.logger.warning("Could not find lyrics for %s by %s", title, artist)
-            return None
-
-    def clean_genius_lyrics(self, lyrics):
-        lyrics = lyrics.replace("\\n", "\n")
-        lyrics = re.sub(r"You might also like", "", lyrics)
-        lyrics = re.sub(
-            r".*?Lyrics([A-Z])", r"\1", lyrics
-        )  # Remove the song name and word "Lyrics" if this has a non-newline char at the start
-        lyrics = re.sub(r"^[0-9]* Contributors.*Lyrics", "", lyrics)  # Remove this example: 27 ContributorsSex Bomb Lyrics
-        lyrics = re.sub(
-            r"See.*Live.*Get tickets as low as \$[0-9]+", "", lyrics
-        )  # Remove this example: See Tom Jones LiveGet tickets as low as $71
-        lyrics = re.sub(r"[0-9]+Embed$", "", lyrics)  # Remove the word "Embed" at end of line with preceding numbers if found
-        lyrics = re.sub(r"(\S)Embed$", r"\1", lyrics)  # Remove the word "Embed" if it has been tacked onto a word at the end of a line
-        lyrics = re.sub(r"^Embed$", r"", lyrics)  # Remove the word "Embed" if it has been tacked onto a word at the end of a line
-        lyrics = re.sub(r".*?\[.*?\].*?", "", lyrics)  # Remove lines containing square brackets
-        # add any additional cleaning rules here
-        return lyrics
-
     def find_best_split_point(self, line):
         """
         Find the best split point in a line based on the specified criteria.
@@ -423,12 +385,13 @@ class KaraokePrep:
 
         return processed_lines
 
-    def transcribe_lyrics(self, input_audio_wav, track_output_dir):
-        self.logger.info(f"Transcribing lyrics from audio file: {input_audio_wav} with output directory: {track_output_dir}")
+    def transcribe_lyrics(self, input_audio_wav, artist, title, track_output_dir):
+        self.logger.info(
+            f"Transcribing lyrics for track {artist} - {title} from audio file: {input_audio_wav} with output directory: {track_output_dir}"
+        )
 
         if os.environ.get("AUDIOSHAKE_API_TOKEN") is None:
-            self.logger.warning("Error: AUDIOSHAKE_API_TOKEN environment variable is not set, skipping transcription")
-            return
+            self.logger.warning("AUDIOSHAKE_API_TOKEN environment variable is not set, AudioShake transcription will be skipped")
 
         self.logger.debug("Loading LyricsTranscriber class")
 
@@ -436,18 +399,20 @@ class KaraokePrep:
             input_audio_wav,
             log_level=self.log_level,
             log_formatter=self.log_formatter,
-            audioshake_api_token=os.environ["AUDIOSHAKE_API_TOKEN"],
+            artist=artist,
+            title=title,
             output_dir=track_output_dir,
-            artist=self.artist,
-            title=self.title,
         )
 
         transcriber_outputs = transcriber.generate()
 
-        self.logger.info(f"*** Outputs: ***")
-        self.logger.info(f"Transcription output data file: {transcriber_outputs['transcription_data_filepath']}")
-        self.logger.info(f"Transcribed lyrics text file: {transcriber_outputs['transcribed_lyrics_text_filepath']}")
-        self.logger.info(f"MidiCo LRC output file: {transcriber_outputs['midico_lrc_filepath']}")
+        if transcriber_outputs:
+            self.logger.info(f"*** Outputs: ***")
+            self.logger.info(f"Transcription output data file: {transcriber_outputs.get('transcription_data_filepath')}")
+            self.logger.info(f"Transcribed lyrics text file: {transcriber_outputs.get('transcribed_lyrics_text_filepath')}")
+            self.logger.info(f"MidiCo LRC output file: {transcriber_outputs.get('midico_lrc_filepath')}")
+
+        return transcriber_outputs
 
     def write_processed_lyrics(self, lyrics_file, processed_lyrics_file):
         if self._file_exists(processed_lyrics_file):
@@ -825,6 +790,7 @@ class KaraokePrep:
 
         stems_dir = self._create_stems_directory(track_output_dir)
         result = {"clean_instrumental": {}, "other_stems": {}, "backing_vocals": {}, "combined_instrumentals": {}}
+        return result
 
         result["clean_instrumental"] = self._separate_clean_instrumental(separator, audio_file, artist_title, track_output_dir, stems_dir)
         result["other_stems"] = self._separate_other_stems(separator, audio_file, artist_title, stems_dir)
@@ -1087,23 +1053,56 @@ class KaraokePrep:
             processed_track["lyrics"] = None
             processed_track["processed_lyrics"] = None
         else:
-            processed_track["lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics).txt")
-            if os.path.exists(processed_track["lyrics"]):
-                self.logger.debug(f"Lyrics file already exists, skipping fetch: {processed_track['lyrics']}")
+            # transcriber_outputs = {
+            #     "transcription_data_dict_whisper": None,
+            #     "transcription_data_whisper_filepath": None,
+            #     "transcribed_lyrics_text_whisper": None,
+            #     "transcribed_lyrics_text_whisper_filepath": None,
+            #     "transcription_data_dict_audioshake": None,
+            #     "transcription_data_audioshake_filepath": None,
+            #     "transcribed_lyrics_text_audioshake": None,
+            #     "transcribed_lyrics_text_audioshake_filepath": None,
+            #     "transcription_data_dict_primary": None,
+            #     "transcription_data_primary_filepath": None,
+            #     "transcribed_lyrics_text_primary": None,
+            #     "transcribed_lyrics_text_primary_filepath": None,
+            #     "genius_lyrics_text": None,
+            #     "genius_lyrics_filepath": None,
+            #     "spotify_lyrics_data_dict": None,
+            #     "spotify_lyrics_data_filepath": None,
+            #     "spotify_lyrics_text_filepath": None,
+            #     "llm_token_usage": {"input": 0, "output": 0},
+            #     "llm_costs_usd": {"input": 0.0, "output": 0.0, "total": 0.0},
+            #     "llm_transcript": None,
+            #     "llm_transcript_filepath": None,
+            #     "corrected_lyrics_text": None,
+            #     "corrected_lyrics_text_filepath": None,
+            #     "midico_lrc_filepath": None,
+            #     "ass_subtitles_filepath": None,
+            #     "karaoke_video_filepath": None,
+            #     "singing_percentage": None,
+            #     "total_singing_duration": None,
+            #     "song_duration": None,
+            #     "output_dir": None,
+            # }
+
+            lyrics_artist = self.lyrics_artist or self.artist
+            lyrics_title = self.lyrics_title or self.title
+
+            transcriber_outputs = self.transcribe_lyrics(processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir)
+            if transcriber_outputs:
+                self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
+                processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
             else:
-                self.logger.info("Fetching lyrics from Genius...")
-                lyrics_artist = self.lyrics_artist or self.artist
-                lyrics_title = self.lyrics_title or self.title
-                self.lyrics = self.write_lyrics_from_genius(lyrics_artist, lyrics_title, processed_track["lyrics"])
+                self.lyrics = None
+                processed_track["lyrics"] = None
 
-                processed_track["processed_lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics Processed).txt")
-                if self.lyrics is None:
-                    processed_track["lyrics"] = None
-                    processed_track["processed_lyrics"] = None
-                else:
-                    self.write_processed_lyrics(processed_track["lyrics"], processed_track["processed_lyrics"])
-
-        self.transcribe_lyrics(processed_track["input_audio_wav"], track_output_dir)
+            processed_track["processed_lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics Corrected Processed).txt")
+            if self.lyrics is None:
+                processed_track["lyrics"] = None
+                processed_track["processed_lyrics"] = None
+            else:
+                self.write_processed_lyrics(processed_track["lyrics"], processed_track["processed_lyrics"])
 
         output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
         processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"
