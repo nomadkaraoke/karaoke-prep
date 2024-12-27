@@ -390,10 +390,10 @@ class KaraokePrep:
             f"Transcribing lyrics for track {artist} - {title} from audio file: {input_audio_wav} with output directory: {track_output_dir}"
         )
 
-        if os.environ.get("AUDIOSHAKE_API_TOKEN") is None:
-            self.logger.warning("AUDIOSHAKE_API_TOKEN environment variable is not set, AudioShake transcription will be skipped")
-
-        self.logger.debug("Loading LyricsTranscriber class")
+        # Create lyrics subdirectory
+        lyrics_dir = os.path.join(track_output_dir, "lyrics")
+        os.makedirs(lyrics_dir, exist_ok=True)
+        self.logger.info(f"Created lyrics directory: {lyrics_dir}")
 
         transcriber = LyricsTranscriber(
             input_audio_wav,
@@ -401,7 +401,7 @@ class KaraokePrep:
             log_formatter=self.log_formatter,
             artist=artist,
             title=title,
-            output_dir=track_output_dir,
+            output_dir=lyrics_dir,  # Use lyrics subdirectory
         )
 
         transcriber_outputs = transcriber.generate()
@@ -415,6 +415,10 @@ class KaraokePrep:
         return transcriber_outputs
 
     def write_processed_lyrics(self, lyrics_file, processed_lyrics_file):
+        # Update processed_lyrics_file path to be in lyrics subdirectory
+        lyrics_dir = os.path.dirname(lyrics_file)  # This will now be the lyrics subdirectory
+        processed_lyrics_file = os.path.join(lyrics_dir, os.path.basename(processed_lyrics_file))
+
         if self._file_exists(processed_lyrics_file):
             return processed_lyrics_file
 
@@ -426,7 +430,7 @@ class KaraokePrep:
                 log_formatter=self.log_formatter,
                 input_filename=lyrics_file,
                 output_filename=processed_lyrics_file,
-                max_line_length=36,  # Using the default max line length
+                max_line_length=36,
             )
             processor.process()
             processor.write_to_output_file()
@@ -790,7 +794,9 @@ class KaraokePrep:
 
         stems_dir = self._create_stems_directory(track_output_dir)
         result = {"clean_instrumental": {}, "other_stems": {}, "backing_vocals": {}, "combined_instrumentals": {}}
-        return result
+
+        if os.environ.get("KARAOKE_PREP_SKIP_AUDIO_SEPARATION"):
+            return result
 
         result["clean_instrumental"] = self._separate_clean_instrumental(separator, audio_file, artist_title, track_output_dir, stems_dir)
         result["other_stems"] = self._separate_other_stems(separator, audio_file, artist_title, stems_dir)
@@ -1053,39 +1059,6 @@ class KaraokePrep:
             processed_track["lyrics"] = None
             processed_track["processed_lyrics"] = None
         else:
-            # transcriber_outputs = {
-            #     "transcription_data_dict_whisper": None,
-            #     "transcription_data_whisper_filepath": None,
-            #     "transcribed_lyrics_text_whisper": None,
-            #     "transcribed_lyrics_text_whisper_filepath": None,
-            #     "transcription_data_dict_audioshake": None,
-            #     "transcription_data_audioshake_filepath": None,
-            #     "transcribed_lyrics_text_audioshake": None,
-            #     "transcribed_lyrics_text_audioshake_filepath": None,
-            #     "transcription_data_dict_primary": None,
-            #     "transcription_data_primary_filepath": None,
-            #     "transcribed_lyrics_text_primary": None,
-            #     "transcribed_lyrics_text_primary_filepath": None,
-            #     "genius_lyrics_text": None,
-            #     "genius_lyrics_filepath": None,
-            #     "spotify_lyrics_data_dict": None,
-            #     "spotify_lyrics_data_filepath": None,
-            #     "spotify_lyrics_text_filepath": None,
-            #     "llm_token_usage": {"input": 0, "output": 0},
-            #     "llm_costs_usd": {"input": 0.0, "output": 0.0, "total": 0.0},
-            #     "llm_transcript": None,
-            #     "llm_transcript_filepath": None,
-            #     "corrected_lyrics_text": None,
-            #     "corrected_lyrics_text_filepath": None,
-            #     "midico_lrc_filepath": None,
-            #     "ass_subtitles_filepath": None,
-            #     "karaoke_video_filepath": None,
-            #     "singing_percentage": None,
-            #     "total_singing_duration": None,
-            #     "song_duration": None,
-            #     "output_dir": None,
-            # }
-
             lyrics_artist = self.lyrics_artist or self.artist
             lyrics_title = self.lyrics_title or self.title
 
@@ -1097,7 +1070,9 @@ class KaraokePrep:
                 self.lyrics = None
                 processed_track["lyrics"] = None
 
-            processed_track["processed_lyrics"] = os.path.join(track_output_dir, f"{artist_title} (Lyrics Corrected Processed).txt")
+            # Update processed_lyrics path to be in lyrics subdirectory
+            lyrics_dir = os.path.join(track_output_dir, "lyrics")
+            processed_track["processed_lyrics"] = os.path.join(lyrics_dir, f"{artist_title} (Lyrics Corrected Processed).txt")
             if self.lyrics is None:
                 processed_track["lyrics"] = None
                 processed_track["processed_lyrics"] = None
@@ -1109,7 +1084,7 @@ class KaraokePrep:
         processed_track["title_image_jpg"] = f"{output_image_filepath_noext}.jpg"
         processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
 
-        if not self._file_exists(processed_track["title_video"]):
+        if not self._file_exists(processed_track["title_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
             self.logger.info(f"Creating title video...")
             self.create_title_video(self.artist, self.title, self.title_format, output_image_filepath_noext, processed_track["title_video"])
 
@@ -1118,7 +1093,7 @@ class KaraokePrep:
         processed_track["end_image_jpg"] = f"{output_image_filepath_noext}.jpg"
         processed_track["end_video"] = os.path.join(track_output_dir, f"{artist_title} (End).mov")
 
-        if not self._file_exists(processed_track["end_video"]):
+        if not self._file_exists(processed_track["end_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
             self.logger.info(f"Creating end screen video...")
             self.create_end_video(self.artist, self.title, self.end_format, output_image_filepath_noext, processed_track["end_video"])
 
