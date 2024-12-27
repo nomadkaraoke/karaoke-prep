@@ -9,7 +9,6 @@ import importlib.resources as pkg_resources
 import yt_dlp.YoutubeDL as ydl
 from PIL import Image, ImageDraw, ImageFont
 from lyrics_transcriber import LyricsTranscriber
-from karaoke_lyrics_processor import KaraokeLyricsProcessor
 from pydub import AudioSegment
 
 
@@ -38,6 +37,7 @@ class KaraokePrep:
         lyrics_artist=None,
         lyrics_title=None,
         skip_lyrics=False,
+        skip_transcription=False,
         output_png=True,
         output_jpg=True,
         render_bounding_boxes=False,
@@ -103,6 +103,8 @@ class KaraokePrep:
         self.create_track_subfolders = create_track_subfolders
         self.existing_instrumental = existing_instrumental
         self.existing_title_image = existing_title_image
+
+        self.lyrics = None
         self.lyrics_artist = lyrics_artist
         self.lyrics_title = lyrics_title
         self.skip_lyrics = skip_lyrics
@@ -111,6 +113,7 @@ class KaraokePrep:
         self.output_jpg = output_jpg
         self.intro_video_duration = intro_video_duration
         self.end_video_duration = end_video_duration
+        self.skip_transcription = skip_transcription
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
@@ -401,45 +404,19 @@ class KaraokePrep:
             log_formatter=self.log_formatter,
             artist=artist,
             title=title,
-            output_dir=lyrics_dir,  # Use lyrics subdirectory
+            output_dir=lyrics_dir,
+            skip_transcription=self.skip_transcription,
         )
 
         transcriber_outputs = transcriber.generate()
 
         if transcriber_outputs:
-            self.logger.info(f"*** Outputs: ***")
-            self.logger.info(f"Transcription output data file: {transcriber_outputs.get('transcription_data_filepath')}")
-            self.logger.info(f"Transcribed lyrics text file: {transcriber_outputs.get('transcribed_lyrics_text_filepath')}")
-            self.logger.info(f"MidiCo LRC output file: {transcriber_outputs.get('midico_lrc_filepath')}")
+            self.logger.info(f"*** Transcriber Filepath Outputs: ***")
+            for key, value in transcriber_outputs.items():
+                if key.endswith("_filepath"):
+                    self.logger.info(f"  {key}: {value}")
 
         return transcriber_outputs
-
-    def write_processed_lyrics(self, lyrics_file, processed_lyrics_file):
-        # Update processed_lyrics_file path to be in lyrics subdirectory
-        lyrics_dir = os.path.dirname(lyrics_file)  # This will now be the lyrics subdirectory
-        processed_lyrics_file = os.path.join(lyrics_dir, os.path.basename(processed_lyrics_file))
-
-        if self._file_exists(processed_lyrics_file):
-            return processed_lyrics_file
-
-        self.logger.info(f"Processing lyrics from {lyrics_file} and writing to {processed_lyrics_file}")
-
-        if not self.dry_run:
-            processor = KaraokeLyricsProcessor(
-                log_level=self.log_level,
-                log_formatter=self.log_formatter,
-                input_filename=lyrics_file,
-                output_filename=processed_lyrics_file,
-                max_line_length=36,
-            )
-            processor.process()
-            processor.write_to_output_file()
-
-            self.logger.info(f"Lyrics processing complete, processed lyrics written to: {processed_lyrics_file}")
-        else:
-            self.logger.info(f"DRY RUN: Would process lyrics from {lyrics_file} and write to: {processed_lyrics_file}")
-
-        return processed_lyrics_file
 
     def sanitize_filename(self, filename):
         """Replace or remove characters that are unsafe for filenames."""
@@ -1063,21 +1040,10 @@ class KaraokePrep:
             lyrics_title = self.lyrics_title or self.title
 
             transcriber_outputs = self.transcribe_lyrics(processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir)
+
             if transcriber_outputs:
                 self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
                 processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
-            else:
-                self.lyrics = None
-                processed_track["lyrics"] = None
-
-            # Update processed_lyrics path to be in lyrics subdirectory
-            lyrics_dir = os.path.join(track_output_dir, "lyrics")
-            processed_track["processed_lyrics"] = os.path.join(lyrics_dir, f"{artist_title} (Lyrics Corrected Processed).txt")
-            if self.lyrics is None:
-                processed_track["lyrics"] = None
-                processed_track["processed_lyrics"] = None
-            else:
-                self.write_processed_lyrics(processed_track["lyrics"], processed_track["processed_lyrics"])
 
         output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
         processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"

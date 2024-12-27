@@ -308,6 +308,12 @@ def main():
         help="Optional: Region for artist text in end video (x, y, width, height; default: 370,1210,3100,480). Example: --end_artist_region=370,1210,3100,480",
     )
 
+    parser.add_argument(
+        "--skip_transcription",
+        action="store_true",
+        help="Optional: Skip audio transcription but still attempt to fetch lyrics from Spotify/Genius. Example: --skip_transcription",
+    )
+
     args = parser.parse_args()
 
     input_media, artist, title, filename_pattern = None, None, None, None
@@ -411,6 +417,7 @@ def main():
         intro_extra_text_region=args.intro_extra_text_region,
         end_extra_text=args.end_extra_text,
         end_extra_text_region=args.end_extra_text_region,
+        skip_transcription=args.skip_transcription,
     )
 
     tracks = kprep.process()
