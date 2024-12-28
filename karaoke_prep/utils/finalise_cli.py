@@ -121,9 +121,9 @@ def main():
     )
 
     parser.add_argument(
-        "--cdg_styles_json",
+        "--style_params_json",
         default=None,
-        help="Optional: Path to JSON file containing CDG style configuration. Required if --enable_cdg is used. Example: --cdg_styles_json='/path/to/cdg_styles.json'",
+        help="Optional: Path to JSON file containing CDG style configuration. Required if --enable_cdg is used. Example: --style_params_json='/path/to/cdg_styles.json'",
     )
 
     args = parser.parse_args()
@@ -136,14 +136,15 @@ def main():
     # Load CDG styles if CDG generation is enabled
     cdg_styles = None
     if args.enable_cdg:
-        if not args.cdg_styles_json:
-            logger.error("CDG styles JSON file path (--cdg_styles_json) is required when --enable_cdg is used")
+        if not args.style_params_json:
+            logger.error("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
             sys.exit(1)
         try:
-            with open(args.cdg_styles_json, "r") as f:
-                cdg_styles = json.loads(f.read())
+            with open(args.style_params_json, "r") as f:
+                style_params = json.loads(f.read())
+                cdg_styles = style_params["cdg"]
         except FileNotFoundError:
-            logger.error(f"CDG styles configuration file not found: {args.cdg_styles_json}")
+            logger.error(f"CDG styles configuration file not found: {args.style_params_json}")
             sys.exit(1)
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in CDG styles configuration file: {e}")

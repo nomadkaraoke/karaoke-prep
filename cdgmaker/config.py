@@ -104,6 +104,7 @@ class Settings:
     file: Path
     font: Path
     title_screen_background: Path
+    outro_background: Path
 
     outname: str = "output"
     clear_mode: LyricClearMode = LyricClearMode.LINE_DELAYED
@@ -125,6 +126,16 @@ class Settings:
     artist_color: RGBColor = field(converter=to_rgbcolor, default="#ffffff")
     title_screen_transition: str = "centertexttoplogobottomtext"
     title_artist_gap: int = 30
+
+    intro_duration_seconds: float = 5.0
+    first_syllable_buffer_seconds: float = 3.0
+
+    outro_transition: str = "centertexttoplogobottomtext"
+    outro_text_line1: str = "THANK YOU FOR SINGING!"
+    outro_text_line2: str = "nomadkaraoke.com"
+    outro_line1_line2_gap: int = 30
+    outro_line1_color: RGBColor = field(converter=to_rgbcolor, default="#ffffff")
+    outro_line2_color: RGBColor = field(converter=to_rgbcolor, default="#ffffff")
 
 
 __all__ = [

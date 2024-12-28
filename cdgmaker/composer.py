@@ -1558,8 +1558,8 @@ class KaraokeComposer:
         background_image = self._load_image(
             self.config.title_screen_background,
             [
-                (17, 20, 39),  # background
-                (255, 170, 204),  # border
+                self.config.background,  # background
+                self.config.border,  # border
                 self.config.title_color,   # title color
                 self.config.artist_color,  # artist color
             ],
@@ -1658,8 +1658,9 @@ class KaraokeComposer:
         for coord in self._gradient_to_tile_positions(transition):
             self.writer.queue_packets(packets.get(coord, []))
 
-        INTRO_DURATION = 5 * CDG_FPS  # 5 seconds * 300 frames per second = 1500 frames
-        FIRST_SYLLABLE_BUFFER = 3 * CDG_FPS  # 3 seconds * 300 frames per second = 900 frames
+        # Replace hardcoded values with configured ones
+        INTRO_DURATION = int(self.config.intro_duration_seconds * CDG_FPS)
+        FIRST_SYLLABLE_BUFFER = int(self.config.first_syllable_buffer_seconds * CDG_FPS)
 
         # Queue the intro screen for 5 seconds
         end_time = INTRO_DURATION
@@ -1676,14 +1677,14 @@ class KaraokeComposer:
         logger.debug(f"first syllable starts at {first_syllable_start_offset}")
 
         MINIMUM_FIRST_SYLLABLE_TIME_FOR_NO_SILENCE = INTRO_DURATION + FIRST_SYLLABLE_BUFFER
-        # If the first syllable is within 8 seconds, add 5 seconds of silence
+        # If the first syllable is within buffer+intro time, add silence
         # Otherwise, don't add any silence
         if first_syllable_start_offset < MINIMUM_FIRST_SYLLABLE_TIME_FOR_NO_SILENCE:
             self.intro_delay = MINIMUM_FIRST_SYLLABLE_TIME_FOR_NO_SILENCE
-            logger.info(f"First syllable within 8 seconds. Adding {self.intro_delay} frames of silence.")
+            logger.info(f"First syllable within {self.config.intro_duration_seconds + self.config.first_syllable_buffer_seconds} seconds. Adding {self.intro_delay} frames of silence.")
         else:
             self.intro_delay = 0
-            logger.info("First syllable after 8 seconds. No additional silence needed.")
+            logger.info("First syllable after buffer period. No additional silence needed.")
 
     def _compose_outro(self, end: int):
         # TODO Make it so the outro screen is not hardcoded
@@ -1695,12 +1696,12 @@ class KaraokeComposer:
         logger.debug("loading outro background image")
         # Load background image
         background_image = self._load_image(
-            self.config.title_screen_background,
+            self.config.outro_background,
             [
-                (17, 20, 39),  # background
-                (255, 170, 204),  # border
-                self.config.artist_color,  # "Thank you for singing" color
-                self.config.title_color,   # "nomadkaraoke.com" color
+                self.config.background,  # background
+                self.config.border,  # border
+                self.config.outro_line1_color,
+                self.config.outro_line2_color,
             ],
         )
 
@@ -1712,33 +1713,41 @@ class KaraokeComposer:
         text_image = Image.new("P", (CDG_VISIBLE_WIDTH, MAX_HEIGHT * 2), 0)
         y = 0
 
-        # Render "Thank you for singing" text
+        # Render first line of outro text
+        outro_text_line1 = self.config.outro_text_line1.replace("$artist", self.config.artist).replace("$title", self.config.title)
+        
         for image in render_lines(
             get_wrapped_text(
-                "THANK YOU FOR SINGING!",
+                outro_text_line1,
                 font=smallfont,
                 width=text_image.width,
             ).split("\n"),
             font=smallfont,
         ):
             text_image.paste(
-                image.point(lambda v: v and 2, "P"),  # Use index 2 for artist color
+                image.point(lambda v: v and 2, "P"),  # Use index 2 for line 1 color
                 ((text_image.width - image.width) // 2, y),
                 mask=image.point(lambda v: v and 255, "1"),
             )
             y += int(smallfont.size)
 
-        # Render "nomadkaraoke.com" text
+
+        # Add vertical gap between title and artist using configured value
+        y += self.config.outro_line1_line2_gap
+
+        # Render second line of outro text
+        outro_text_line2 = self.config.outro_text_line2.replace("$artist", self.config.artist).replace("$title", self.config.title)
+
         for image in render_lines(
             get_wrapped_text(
-                "nomadkaraoke.com",
+                outro_text_line2,
                 font=smallfont,
                 width=text_image.width,
             ).split("\n"),
             font=smallfont,
         ):
             text_image.paste(
-                image.point(lambda v: v and 3, "P"),  # Use index 3 for title color
+                image.point(lambda v: v and 3, "P"),  # Use index 3 for line 2 color
                 ((text_image.width - image.width) // 2, y),
                 mask=image.point(lambda v: v and 255, "1"),
             )
@@ -1778,7 +1787,7 @@ class KaraokeComposer:
 
         # Queue background image packets (and apply transition)
         transition = Image.open(
-            package_dir / "transitions" / f"{self.config.title_screen_transition}.png"
+            package_dir / "transitions" / f"{self.config.outro_transition}.png"
         )
         for coord in self._gradient_to_tile_positions(transition):
             self.writer.queue_packets(packets.get(coord, []))

@@ -124,6 +124,15 @@ def generate_toml(
             - lead_in_duration
             - lead_in_total
             - title_artist_gap
+            - intro_duration_seconds
+            - first_syllable_buffer_seconds
+            - outro_background
+            - outro_transition
+            - outro_text_line1
+            - outro_text_line2
+            - outro_line1_color
+            - outro_line2_color
+            - outro_line1_line2_gap
     """
     # Validate required style parameters
     required_styles = {
@@ -156,6 +165,15 @@ def generate_toml(
         "lead_in_duration",
         "lead_in_total",
         "title_artist_gap",
+        "intro_duration_seconds",
+        "first_syllable_buffer_seconds",
+        "outro_background",
+        "outro_transition",
+        "outro_text_line1",
+        "outro_text_line2",
+        "outro_line1_color",
+        "outro_line2_color",
+        "outro_line1_line2_gap",
     }
 
     missing_styles = required_styles - set(cdg_styles.keys())
@@ -241,6 +259,15 @@ def generate_toml(
         "title_screen_background": cdg_styles["title_screen_background"],
         "title_screen_transition": cdg_styles["title_screen_transition"],
         "instrumentals": instrumentals,
+        "intro_duration_seconds": cdg_styles["intro_duration_seconds"],
+        "first_syllable_buffer_seconds": cdg_styles["first_syllable_buffer_seconds"],
+        "outro_background": cdg_styles["outro_background"],
+        "outro_transition": cdg_styles["outro_transition"],
+        "outro_text_line1": cdg_styles["outro_text_line1"],
+        "outro_text_line2": cdg_styles["outro_text_line2"],
+        "outro_line1_color": cdg_styles["outro_line1_color"],
+        "outro_line2_color": cdg_styles["outro_line2_color"],
+        "outro_line1_line2_gap": cdg_styles["outro_line1_line2_gap"],
     }
 
     with open(output_file, "w", encoding="utf-8") as f:

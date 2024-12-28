@@ -15,56 +15,40 @@ from pydub import AudioSegment
 class KaraokePrep:
     def __init__(
         self,
+        # Basic inputs
         input_media=None,
         artist=None,
         title=None,
         filename_pattern=None,
+        # Logging & Debugging
         dry_run=False,
         log_level=logging.DEBUG,
         log_formatter=None,
+        render_bounding_boxes=False,
+        # Input/Output Configuration
+        output_dir=".",
+        create_track_subfolders=False,
+        lossless_output_format="FLAC",
+        output_png=True,
+        output_jpg=True,
+        # Audio Processing Configuration
         clean_instrumental_model="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
         backing_vocals_models=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"],
         other_stems_models=["htdemucs_6s.yaml"],
         model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
-        output_dir=".",
         existing_instrumental=None,
-        lossless_output_format="FLAC",
+        denoise_enabled=True,
+        normalization_enabled=True,
+        # Hardware Acceleration
         use_cuda=False,
         use_coreml=False,
-        normalization_enabled=True,
-        denoise_enabled=True,
-        create_track_subfolders=False,
+        # Lyrics Configuration
         lyrics_artist=None,
         lyrics_title=None,
         skip_lyrics=False,
         skip_transcription=False,
-        output_png=True,
-        output_jpg=True,
-        render_bounding_boxes=False,
-        existing_title_image=None,
-        intro_video_duration=5,
-        intro_background_color="#000000",
-        intro_background_image=None,
-        intro_font="Montserrat-Bold.ttf",
-        intro_artist_color="#ffffff",
-        intro_title_color="#ffdf6b",
-        intro_extra_text=None,
-        intro_extra_text_color="#ffffff",
-        intro_extra_text_region=None,
-        intro_title_region=None,
-        intro_artist_region=None,
-        existing_end_image=None,
-        end_video_duration=5,
-        end_background_color="#000000",
-        end_background_image=None,
-        end_font="Montserrat-Bold.ttf",
-        end_artist_color="#ffffff",
-        end_title_color="#ffdf6b",
-        end_extra_text="THANK YOU FOR SINGING!",
-        end_extra_text_color="#ffffff",
-        end_extra_text_region=None,
-        end_title_region=None,
-        end_artist_region=None,
+        # Style Configuration
+        style_params=None,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -82,7 +66,6 @@ class KaraokePrep:
         self.logger.debug(f"KaraokePrep instantiating with input_media: {input_media} artist: {artist} title: {title}")
 
         self.dry_run = dry_run
-
         self.extractor = None
         self.media_id = None
         self.url = None
@@ -90,30 +73,103 @@ class KaraokePrep:
         self.artist = artist
         self.title = title
         self.filename_pattern = filename_pattern
+
+        # Audio Processing
         self.clean_instrumental_model = clean_instrumental_model
         self.backing_vocals_models = backing_vocals_models
         self.other_stems_models = other_stems_models
         self.model_file_dir = model_file_dir
+        self.existing_instrumental = existing_instrumental
+        self.denoise_enabled = denoise_enabled
+        self.normalization_enabled = normalization_enabled
+
+        # Input/Output
         self.output_dir = output_dir
         self.lossless_output_format = lossless_output_format.lower()
+        self.create_track_subfolders = create_track_subfolders
+        self.output_png = output_png
+        self.output_jpg = output_jpg
+
+        # Hardware
         self.use_cuda = use_cuda
         self.use_coreml = use_coreml
-        self.normalization_enabled = normalization_enabled
-        self.denoise_enabled = denoise_enabled
-        self.create_track_subfolders = create_track_subfolders
-        self.existing_instrumental = existing_instrumental
-        self.existing_title_image = existing_title_image
 
+        # Lyrics
         self.lyrics = None
         self.lyrics_artist = lyrics_artist
         self.lyrics_title = lyrics_title
         self.skip_lyrics = skip_lyrics
-        self.render_bounding_boxes = render_bounding_boxes
-        self.output_png = output_png
-        self.output_jpg = output_jpg
-        self.intro_video_duration = intro_video_duration
-        self.end_video_duration = end_video_duration
         self.skip_transcription = skip_transcription
+
+        # Style
+        self.render_bounding_boxes = render_bounding_boxes
+
+        # Set default style parameters if none provided
+        if style_params is None:
+            style_params = {
+                "intro": {
+                    "video_duration": 5,
+                    "existing_image": None,
+                    "background_color": "#000000",
+                    "background_image": None,
+                    "font": "Montserrat-Bold.ttf",
+                    "artist_color": "#ffdf6b",
+                    "title_color": "#ffffff",
+                    "title_region": "370, 200, 3100, 480",
+                    "artist_region": "370, 700, 3100, 480",
+                    "extra_text": None,
+                    "extra_text_color": "#ffffff",
+                    "extra_text_region": "370, 1200, 3100, 480",
+                },
+                "end": {
+                    "video_duration": 5,
+                    "existing_image": None,
+                    "background_color": "#000000",
+                    "background_image": None,
+                    "font": "Montserrat-Bold.ttf",
+                    "artist_color": "#ffdf6b",
+                    "title_color": "#ffffff",
+                    "title_region": None,
+                    "artist_region": None,
+                    "extra_text": "THANK YOU FOR SINGING!",
+                    "extra_text_color": "#ff7acc",
+                    "extra_text_region": None,
+                },
+            }
+
+        # Set up title format from style params
+        self.title_format = {
+            "background_color": style_params["intro"]["background_color"],
+            "background_image": style_params["intro"]["background_image"],
+            "font": style_params["intro"]["font"],
+            "artist_color": style_params["intro"]["artist_color"],
+            "title_color": style_params["intro"]["title_color"],
+            "extra_text": style_params["intro"]["extra_text"],
+            "extra_text_color": style_params["intro"]["extra_text_color"],
+            "extra_text_region": style_params["intro"]["extra_text_region"],
+            "title_region": style_params["intro"]["title_region"],
+            "artist_region": style_params["intro"]["artist_region"],
+        }
+
+        # Set up end format from style params
+        self.end_format = {
+            "background_color": style_params["end"]["background_color"],
+            "background_image": style_params["end"]["background_image"],
+            "font": style_params["end"]["font"],
+            "artist_color": style_params["end"]["artist_color"],
+            "title_color": style_params["end"]["title_color"],
+            "extra_text": style_params["end"]["extra_text"],
+            "extra_text_color": style_params["end"]["extra_text_color"],
+            "extra_text_region": style_params["end"]["extra_text_region"],
+            "title_region": style_params["end"]["title_region"],
+            "artist_region": style_params["end"]["artist_region"],
+        }
+
+        # Store video durations and existing images
+        self.intro_video_duration = style_params["intro"]["video_duration"]
+        self.end_video_duration = style_params["end"]["video_duration"]
+        self.existing_title_image = style_params["intro"]["existing_image"]
+        self.existing_end_image = style_params["end"]["existing_image"]
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
@@ -125,39 +181,11 @@ class KaraokePrep:
         else:
             self.ffmpeg_base_command += " -loglevel fatal"
 
-        self.title_format = {
-            "background_color": intro_background_color,
-            "background_image": intro_background_image,
-            "font": intro_font,
-            "artist_color": intro_artist_color,
-            "title_color": intro_title_color,
-            "extra_text": intro_extra_text,
-            "extra_text_color": intro_extra_text_color,
-            "extra_text_region": self.parse_region(intro_extra_text_region) or (370, 1200, 3100, 480),
-            "title_region": self.parse_region(intro_title_region) or (370, 200, 3100, 480),
-            "artist_region": self.parse_region(intro_artist_region) or (370, 700, 3100, 480),
-        }
-
         self.logger.debug(f"Initialized title_format with extra_text: {self.title_format['extra_text']}")
         self.logger.debug(f"Initialized title_format with extra_text_region: {self.title_format['extra_text_region']}")
 
-        self.end_format = {
-            "background_color": end_background_color,
-            "background_image": end_background_image,
-            "font": end_font,
-            "artist_color": end_artist_color,
-            "title_color": end_title_color,
-            "extra_text": end_extra_text,
-            "extra_text_color": end_extra_text_color,
-            "extra_text_region": self.parse_region(end_extra_text_region) or (370, 300, 3100, 400),
-            "title_region": self.parse_region(end_title_region) or (370, 800, 3100, 400),
-            "artist_region": self.parse_region(end_artist_region) or (370, 1300, 3100, 400),
-        }
-
         self.logger.debug(f"Initialized end_format with extra_text: {self.end_format['extra_text']}")
         self.logger.debug(f"Initialized end_format with extra_text_region: {self.end_format['extra_text_region']}")
-
-        self.existing_end_image = existing_end_image
 
         self.extracted_info = None
         self.persistent_artist = None
@@ -262,6 +290,13 @@ class KaraokePrep:
         self.logger.debug(f"Copying media from local path {input_media} to filename {output_filename_no_extension} + existing extension")
 
         copied_file_name = output_filename_no_extension + os.path.splitext(input_media)[1]
+        self.logger.debug(f"Target filename: {copied_file_name}")
+
+        # Check if source and destination are the same
+        if os.path.abspath(input_media) == os.path.abspath(copied_file_name):
+            self.logger.info("Source and destination are the same file, skipping copy")
+            return input_media
+
         self.logger.debug(f"Copying {input_media} to {copied_file_name}")
         shutil.copy2(input_media, copied_file_name)
 
@@ -673,20 +708,23 @@ class KaraokePrep:
     def _render_all_text(self, draw, font_path, title_text, artist_text, format, render_bounding_boxes):
         """Render all text elements on the image."""
         # Render title
-        region = self._render_text_in_region(draw, title_text.upper(), font_path, format["title_region"], format["title_color"])
-        if render_bounding_boxes:
-            self._draw_bounding_box(draw, region, format["title_color"])
+        if format["title_region"]:
+            region_parsed = self.parse_region(format["title_region"])
+            region = self._render_text_in_region(draw, title_text.upper(), font_path, region_parsed, format["title_color"])
+            if render_bounding_boxes:
+                self._draw_bounding_box(draw, region, format["title_color"])
 
         # Render artist
-        region = self._render_text_in_region(draw, artist_text.upper(), font_path, format["artist_region"], format["artist_color"])
-        if render_bounding_boxes:
-            self._draw_bounding_box(draw, region, format["artist_color"])
+        if format["artist_region"]:
+            region_parsed = self.parse_region(format["artist_region"])
+            region = self._render_text_in_region(draw, artist_text.upper(), font_path, region_parsed, format["artist_color"])
+            if render_bounding_boxes:
+                self._draw_bounding_box(draw, region, format["artist_color"])
 
         # Render extra text if provided
         if format["extra_text"]:
-            region = self._render_text_in_region(
-                draw, format["extra_text"], font_path, format["extra_text_region"], format["extra_text_color"]
-            )
+            region_parsed = self.parse_region(format["extra_text_region"])
+            region = self._render_text_in_region(draw, format["extra_text"], font_path, region_parsed, format["extra_text_color"])
             if render_bounding_boxes:
                 self._draw_bounding_box(draw, region, format["extra_text_color"])
 
