@@ -114,12 +114,17 @@ class KaraokePrep:
                     "background_image": None,
                     "font": "Montserrat-Bold.ttf",
                     "artist_color": "#ffdf6b",
+                    "artist_gradient": None,
                     "title_color": "#ffffff",
+                    "title_gradient": None,
                     "title_region": "370, 200, 3100, 480",
                     "artist_region": "370, 700, 3100, 480",
                     "extra_text": None,
                     "extra_text_color": "#ffffff",
+                    "extra_text_gradient": None,
                     "extra_text_region": "370, 1200, 3100, 480",
+                    "title_text_transform": None,  # none, uppercase, lowercase, propercase
+                    "artist_text_transform": None,  # none, uppercase, lowercase, propercase
                 },
                 "end": {
                     "video_duration": 5,
@@ -128,12 +133,17 @@ class KaraokePrep:
                     "background_image": None,
                     "font": "Montserrat-Bold.ttf",
                     "artist_color": "#ffdf6b",
+                    "artist_gradient": None,
                     "title_color": "#ffffff",
+                    "title_gradient": None,
                     "title_region": None,
                     "artist_region": None,
                     "extra_text": "THANK YOU FOR SINGING!",
                     "extra_text_color": "#ff7acc",
+                    "extra_text_gradient": None,
                     "extra_text_region": None,
+                    "title_text_transform": None,  # none, uppercase, lowercase, propercase
+                    "artist_text_transform": None,  # none, uppercase, lowercase, propercase
                 },
             }
 
@@ -143,12 +153,17 @@ class KaraokePrep:
             "background_image": style_params["intro"]["background_image"],
             "font": style_params["intro"]["font"],
             "artist_color": style_params["intro"]["artist_color"],
+            "artist_gradient": style_params["intro"]["artist_gradient"],
             "title_color": style_params["intro"]["title_color"],
+            "title_gradient": style_params["intro"]["title_gradient"],
             "extra_text": style_params["intro"]["extra_text"],
             "extra_text_color": style_params["intro"]["extra_text_color"],
+            "extra_text_gradient": style_params["intro"]["extra_text_gradient"],
             "extra_text_region": style_params["intro"]["extra_text_region"],
             "title_region": style_params["intro"]["title_region"],
             "artist_region": style_params["intro"]["artist_region"],
+            "title_text_transform": style_params["intro"]["title_text_transform"],
+            "artist_text_transform": style_params["intro"]["artist_text_transform"],
         }
 
         # Set up end format from style params
@@ -157,12 +172,17 @@ class KaraokePrep:
             "background_image": style_params["end"]["background_image"],
             "font": style_params["end"]["font"],
             "artist_color": style_params["end"]["artist_color"],
+            "artist_gradient": style_params["end"]["artist_gradient"],
             "title_color": style_params["end"]["title_color"],
+            "title_gradient": style_params["end"]["title_gradient"],
             "extra_text": style_params["end"]["extra_text"],
             "extra_text_color": style_params["end"]["extra_text_color"],
+            "extra_text_gradient": style_params["end"]["extra_text_gradient"],
             "extra_text_region": style_params["end"]["extra_text_region"],
             "title_region": style_params["end"]["title_region"],
             "artist_region": style_params["end"]["artist_region"],
+            "title_text_transform": style_params["end"]["title_text_transform"],
+            "artist_text_transform": style_params["end"]["artist_text_transform"],
         }
 
         # Store video durations and existing images
@@ -536,6 +556,54 @@ class KaraokePrep:
 
         return track_output_dir, artist_title
 
+    def _create_gradient_mask(self, size, gradient_config):
+        """Create a gradient mask for text coloring.
+
+        Args:
+            size (tuple): (width, height) of the mask
+            gradient_config (dict): Configuration with keys:
+                - color1: First color (hex)
+                - color2: Second color (hex)
+                - direction: 'horizontal' or 'vertical'
+                - start: Start point of gradient transition (0-1)
+                - stop: Stop point of gradient transition (0-1)
+        """
+        mask = Image.new("L", size)
+        draw = ImageDraw.Draw(mask)
+
+        width, height = size
+        start = gradient_config["start"]
+        stop = gradient_config["stop"]
+
+        if gradient_config["direction"] == "horizontal":
+            for x in range(width):
+                # Calculate position in gradient (0 to 1)
+                pos = x / width
+
+                # Calculate color intensity
+                if pos < start:
+                    intensity = 0
+                elif pos > stop:
+                    intensity = 255
+                else:
+                    # Linear interpolation between start and stop
+                    intensity = int(255 * (pos - start) / (stop - start))
+
+                draw.line([(x, 0), (x, height)], fill=intensity)
+        else:  # vertical
+            for y in range(height):
+                pos = y / height
+                if pos < start:
+                    intensity = 0
+                elif pos > stop:
+                    intensity = 255
+                else:
+                    intensity = int(255 * (pos - start) / (stop - start))
+
+                draw.line([(0, y), (width, y)], fill=intensity)
+
+        return mask
+
     def calculate_text_size_to_fit(self, draw, text, font_path, region):
         font_size = 500  # Start with a large font size
         font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
@@ -576,9 +644,9 @@ class KaraokePrep:
 
         return font, text
 
-    def _render_text_in_region(self, draw, text, font_path, region, color, font=None):
+    def _render_text_in_region(self, draw, text, font_path, region, color, gradient=None, font=None):
         """Helper method to render text within a specified region."""
-        self.logger.debug(f"Rendering text: '{text}' in region: {region} with color: {color}")
+        self.logger.debug(f"Rendering text: '{text}' in region: {region} with color: {color} gradient: {gradient}")
 
         if text is None:
             self.logger.debug("Text is None, skipping rendering")
@@ -593,6 +661,31 @@ class KaraokePrep:
 
         x, y, width, height = region
 
+        def render_text_with_gradient(text, position, bbox):
+            if gradient is None:
+                draw.text(position, text, fill=color, font=font)
+            else:
+                # Create a temporary image for this text
+                text_layer = Image.new("RGBA", (bbox[2], bbox[3]), (0, 0, 0, 0))
+                text_draw = ImageDraw.Draw(text_layer)
+
+                # Draw text in first color
+                text_draw.text((0, 0), text, fill=gradient["color1"], font=font)
+
+                # Create and apply gradient mask
+                mask = self._create_gradient_mask((bbox[2], bbox[3]), gradient)
+
+                # Create second color layer
+                color2_layer = Image.new("RGBA", (bbox[2], bbox[3]), (0, 0, 0, 0))
+                color2_draw = ImageDraw.Draw(color2_layer)
+                color2_draw.text((0, 0), text, fill=gradient["color2"], font=font)
+
+                # Composite using gradient mask
+                text_layer.paste(color2_layer, mask=mask)
+
+                # Paste onto main image
+                draw._image.paste(text_layer, position, text_layer)
+
         if isinstance(text_lines, tuple):  # Two lines
             line1, line2 = text_lines
             bbox1 = draw.textbbox((0, 0), line1, font=font)
@@ -602,10 +695,12 @@ class KaraokePrep:
             y_offset = (height - total_height) // 2
 
             # Draw first line
-            draw.text((x + (width - bbox1[2]) // 2, y + y_offset), line1, fill=color, font=font)
+            pos1 = (x + (width - bbox1[2]) // 2, y + y_offset)
+            render_text_with_gradient(line1, pos1, bbox1)
 
             # Draw second line
-            draw.text((x + (width - bbox2[2]) // 2, y + y_offset + bbox1[3]), line2, fill=color, font=font)
+            pos2 = (x + (width - bbox2[2]) // 2, y + y_offset + bbox1[3])
+            render_text_with_gradient(line2, pos2, bbox2)
         else:
             # Single line
             bbox = draw.textbbox((0, 0), text_lines, font=font)
@@ -613,7 +708,7 @@ class KaraokePrep:
                 x + (width - bbox[2]) // 2,
                 y + (height - bbox[3]) // 2,
             )
-            draw.text(position, text_lines, fill=color, font=font)
+            render_text_with_gradient(text_lines, position, bbox)
 
         return region
 
@@ -710,21 +805,27 @@ class KaraokePrep:
         # Render title
         if format["title_region"]:
             region_parsed = self.parse_region(format["title_region"])
-            region = self._render_text_in_region(draw, title_text.upper(), font_path, region_parsed, format["title_color"])
+            region = self._render_text_in_region(
+                draw, title_text, font_path, region_parsed, format["title_color"], gradient=format.get("title_gradient")
+            )
             if render_bounding_boxes:
                 self._draw_bounding_box(draw, region, format["title_color"])
 
         # Render artist
         if format["artist_region"]:
             region_parsed = self.parse_region(format["artist_region"])
-            region = self._render_text_in_region(draw, artist_text.upper(), font_path, region_parsed, format["artist_color"])
+            region = self._render_text_in_region(
+                draw, artist_text, font_path, region_parsed, format["artist_color"], gradient=format.get("artist_gradient")
+            )
             if render_bounding_boxes:
                 self._draw_bounding_box(draw, region, format["artist_color"])
 
         # Render extra text if provided
         if format["extra_text"]:
             region_parsed = self.parse_region(format["extra_text_region"])
-            region = self._render_text_in_region(draw, format["extra_text"], font_path, region_parsed, format["extra_text_color"])
+            region = self._render_text_in_region(
+                draw, format["extra_text"], font_path, region_parsed, format["extra_text_color"], gradient=format.get("extra_text_gradient")
+            )
             if render_bounding_boxes:
                 self._draw_bounding_box(draw, region, format["extra_text_color"])
 
@@ -756,9 +857,19 @@ class KaraokePrep:
         self.logger.debug(f"Running command: {ffmpeg_command}")
         os.system(ffmpeg_command)
 
+    def _transform_text(self, text, transform_type):
+        """Helper method to transform text based on specified type."""
+        if transform_type == "uppercase":
+            return text.upper()
+        elif transform_type == "lowercase":
+            return text.lower()
+        elif transform_type == "propercase":
+            return text.title()
+        return text  # "none" or any other value returns original text
+
     def create_title_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
-        title_text = title.upper()
-        artist_text = artist.upper()
+        title_text = self._transform_text(title, format["title_text_transform"])
+        artist_text = self._transform_text(artist, format["artist_text_transform"])
         self.create_video(
             title_text=title_text,
             artist_text=artist_text,
@@ -774,8 +885,8 @@ class KaraokePrep:
         )
 
     def create_end_video(self, artist, title, format, output_image_filepath_noext, output_video_filepath):
-        title_text = title.upper()
-        artist_text = artist.upper()
+        title_text = self._transform_text(title, format["title_text_transform"])
+        artist_text = self._transform_text(artist, format["artist_text_transform"])
         self.create_video(
             title_text=title_text,
             artist_text=artist_text,
