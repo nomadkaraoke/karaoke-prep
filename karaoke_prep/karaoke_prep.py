@@ -609,11 +609,14 @@ class KaraokePrep:
         font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
 
         def get_text_size(text, font):
-            return draw.textbbox((0, 0), text, font=font)[2:]
+            bbox = draw.textbbox((0, 0), text, font=font)
+            # Use the actual text height without the font's internal padding
+            return bbox[2], bbox[3] - bbox[1]
 
         text_width, text_height = get_text_size(text, font)
+        target_height = region[3]  # Use full region height as target
 
-        while text_width > region[2] or text_height > region[3]:
+        while text_width > region[2] or text_height > target_height:
             font_size -= 10
             if font_size <= 150:
                 # Split the text into two lines
@@ -631,7 +634,11 @@ class KaraokePrep:
                     text_width2, text_height2 = get_text_size(line2, font)
                     total_height = text_height1 + text_height2
 
-                    if max(text_width1, text_width2) <= region[2] and total_height <= region[3]:
+                    # Add a small gap between lines (10% of line height)
+                    line_gap = text_height1 * 0.1
+                    total_height_with_gap = total_height + line_gap
+
+                    if max(text_width1, text_width2) <= region[2] and total_height_with_gap <= target_height:
                         return font, (line1, line2)
 
                     font_size -= 10
@@ -660,6 +667,10 @@ class KaraokePrep:
         self.logger.debug(f"Using text_lines: {text_lines}")
 
         x, y, width, height = region
+
+        # Get font metrics
+        ascent, descent = font.getmetrics()
+        font_height = ascent + descent
 
         def render_text_with_gradient(text, position, bbox):
             if gradient is None:
@@ -691,23 +702,29 @@ class KaraokePrep:
             bbox1 = draw.textbbox((0, 0), line1, font=font)
             bbox2 = draw.textbbox((0, 0), line2, font=font)
 
-            total_height = bbox1[3] + bbox2[3]
-            y_offset = (height - total_height) // 2
+            # Calculate positions using font metrics
+            total_height = font_height * 2  # Height for both lines
+            line_gap = font_height * 0.1  # 10% of font height for gap
+            total_space = total_height + line_gap
+
+            # Center the entire text block vertically
+            y_start = y + (height - total_space) // 2
 
             # Draw first line
-            pos1 = (x + (width - bbox1[2]) // 2, y + y_offset)
+            pos1 = (x + (width - bbox1[2]) // 2, y_start)
             render_text_with_gradient(line1, pos1, bbox1)
 
             # Draw second line
-            pos2 = (x + (width - bbox2[2]) // 2, y + y_offset + bbox1[3])
+            pos2 = (x + (width - bbox2[2]) // 2, y_start + font_height + line_gap)
             render_text_with_gradient(line2, pos2, bbox2)
         else:
             # Single line
             bbox = draw.textbbox((0, 0), text_lines, font=font)
-            position = (
-                x + (width - bbox[2]) // 2,
-                y + (height - bbox[3]) // 2,
-            )
+
+            # Center text vertically using font metrics
+            y_pos = y + (height - font_height) // 2
+
+            position = (x + (width - bbox[2]) // 2, y_pos)
             render_text_with_gradient(text_lines, position, bbox)
 
         return region
