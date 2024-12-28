@@ -659,6 +659,10 @@ class KaraokePrep:
             self.logger.debug("Text is None, skipping rendering")
             return region
 
+        if region is None:
+            self.logger.debug("Region is None, skipping rendering")
+            return region
+
         if font is None:
             font, text_lines = self.calculate_text_size_to_fit(draw, text, font_path, region)
         else:
@@ -673,6 +677,9 @@ class KaraokePrep:
         font_height = ascent + descent
 
         def render_text_with_gradient(text, position, bbox):
+            # Convert position coordinates to integers
+            position = (int(position[0]), int(position[1]))
+
             if gradient is None:
                 draw.text(position, text, fill=color, font=font)
             else:
@@ -702,20 +709,25 @@ class KaraokePrep:
             bbox1 = draw.textbbox((0, 0), line1, font=font)
             bbox2 = draw.textbbox((0, 0), line2, font=font)
 
-            # Calculate positions using font metrics
-            total_height = font_height * 2  # Height for both lines
-            line_gap = font_height * 0.1  # 10% of font height for gap
-            total_space = total_height + line_gap
+            # Calculate line heights using bounding boxes
+            line1_height = bbox1[3] - bbox1[1]
+            line2_height = bbox2[3] - bbox2[1]
 
-            # Center the entire text block vertically
-            y_start = y + (height - total_space) // 2
+            # Use a small gap between lines (20% of average line height)
+            line_gap = int((line1_height + line2_height) * 0.1)
+
+            # Calculate total height needed
+            total_height = line1_height + line_gap + line2_height
+
+            # Center the entire text block vertically in the region
+            y_start = y + (height - total_height) // 2
 
             # Draw first line
             pos1 = (x + (width - bbox1[2]) // 2, y_start)
             render_text_with_gradient(line1, pos1, bbox1)
 
             # Draw second line
-            pos2 = (x + (width - bbox2[2]) // 2, y_start + font_height + line_gap)
+            pos2 = (x + (width - bbox2[2]) // 2, y_start + line1_height + line_gap)
             render_text_with_gradient(line2, pos2, bbox2)
         else:
             # Single line
@@ -731,6 +743,10 @@ class KaraokePrep:
 
     def _draw_bounding_box(self, draw, region, color):
         """Helper method to draw a bounding box around a region."""
+        if region is None:
+            self.logger.debug("Region is None, skipping drawing bounding box")
+            return
+
         x, y, width, height = region
         draw.rectangle([x, y, x + width, y + height], outline=color, width=2)
 

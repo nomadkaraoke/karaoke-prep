@@ -1,3 +1,5 @@
+#! /usr/bin/env python3
+
 import os
 import json
 import logging
@@ -23,57 +25,21 @@ with open("data/artist-titles.json", "r", encoding="utf-8") as f:
 
 # Sort by length and get shortest and longest 20
 sorted_combinations = sorted(all_combinations, key=total_length)
-artist_title_combinations = sorted_combinations[:10] + sorted_combinations[-10:]
+artist_title_combinations = sorted_combinations[:20] + sorted_combinations[-20:]
 
 # Define the format dictionary with expanded configurations
 formats = [
     {
-        "name": "vocalstar",
-        "intro_background_image": "/Users/andrew/AB Dropbox/Andrew Beveridge/MediaUnsynced/Karaoke/Tracks-NonPublished/VocalStar/Resources/vocal-star-title-background-black.4k.png",
-        "end_background_image": "/Users/andrew/AB Dropbox/Andrew Beveridge/MediaUnsynced/Karaoke/Tracks-NonPublished/VocalStar/Resources/vocal-star-end-card-black.4k.png",
-        "font": "Zurich_Cn_BT_Bold.ttf",
-        "artist_color": "#FCDF01",
-        "title_color": "#FCDF01",
-        "intro_title_region": "370,470,3100,480",
-        "intro_artist_region": "370,1210,3100,480",
-        "intro_extra_text": "GET READY TO SING!",
-        "intro_extra_text_color": "#FFFFFF",
-        "intro_extra_text_region": "370,1800,3100,280",
-        "end_title_region": "370,670,3100,480",
-        "end_artist_region": "370,1410,3100,480",
-        "end_extra_text": "THANK YOU FOR SINGING!",
-        "end_extra_text_color": "#FFFFFF",
-        "end_extra_text_region": "370,1800,3100,280",
+        "name": "nomadkaraoke",
+        "style_params_json": "/Users/andrew/AB Dropbox/Andrew Beveridge/MediaUnsynced/Karaoke/NomadBranding/karaoke-prep-styles-nomad.json",
     },
     {
-        "name": "nomadkaraoke",
-        "intro_background_image": "/Users/andrew/AB Dropbox/Andrew Beveridge/MediaUnsynced/Karaoke/NomadBranding/karaoke-title-screen-background-nomad-4k.png",
-        "end_background_color": "#000000",  # Using solid color for end screen
-        "font": "AvenirNext-Bold.ttf",
-        "artist_color": "#FFFFFF",
-        "title_color": "#ffdf6b",
-        "intro_title_region": "370,950,3100,350",
-        "intro_artist_region": "370,1350,3100,450",
-        "intro_extra_text": None,  # No extra text on intro
-        "end_title_region": "370,800,3100,350",
-        "end_artist_region": "370,1200,3100,450",
-        "end_extra_text": "Follow us @NomadKaraoke",
-        "end_extra_text_color": "#ffdf6b",
-        "end_extra_text_region": "370,1700,3100,280",
+        "name": "vocalstar",
+        "style_params_json": "/Users/andrew/AB Dropbox/Andrew Beveridge/MediaUnsynced/Karaoke/Tracks-NonPublished/VocalStar/Resources/karaoke-prep-styles-vocalstar.json",
     },
     {
         "name": "minimal",
-        "intro_background_color": "#000033",
-        "end_background_color": "#000033",
-        "font": "Montserrat-Bold.ttf",
-        "artist_color": "#FFFFFF",
-        "title_color": "#ffdf6b",
-        "intro_title_region": "370,800,3100,400",
-        "intro_artist_region": "370,1300,3100,400",
-        "intro_extra_text": None,  # No extra text on either screen
-        "end_title_region": "370,800,3100,400",
-        "end_artist_region": "370,1300,3100,400",
-        "end_extra_text": None,
+        "style_params_json": None,
     },
 ]
 
@@ -87,34 +53,18 @@ for format in formats:
     format_output_dir = os.path.join(base_output_dir, format["name"])
     os.makedirs(format_output_dir, exist_ok=True)
 
+    style_params = None
+    if format["style_params_json"]:
+        with open(format["style_params_json"], "r") as f:
+            style_params = json.loads(f.read())
+
     # Instantiate KaraokePrep for this format
     kprep = KaraokePrep(
         log_level=logging.INFO,
         log_formatter=log_formatter,
         output_dir=format_output_dir,
-        intro_background_image=format.get("intro_background_image"),
-        intro_background_color=format.get("intro_background_color", "#000000"),
-        end_background_image=format.get("end_background_image"),
-        end_background_color=format.get("end_background_color", "#000000"),
-        intro_font=format["font"],
-        end_font=format["font"],
-        intro_artist_color=format["artist_color"],
-        intro_title_color=format["title_color"],
-        end_artist_color=format["artist_color"],
-        end_title_color=format["title_color"],
-        intro_title_region=format.get("intro_title_region"),
-        intro_artist_region=format.get("intro_artist_region"),
-        intro_extra_text=format.get("intro_extra_text"),
-        intro_extra_text_color=format.get("intro_extra_text_color"),
-        intro_extra_text_region=format.get("intro_extra_text_region"),
-        end_title_region=format.get("end_title_region"),
-        end_artist_region=format.get("end_artist_region"),
-        end_extra_text=format.get("end_extra_text"),
-        end_extra_text_color=format.get("end_extra_text_color"),
-        end_extra_text_region=format.get("end_extra_text_region"),
-        intro_video_duration=0,
-        end_video_duration=0,
-        render_bounding_boxes=True,
+        style_params=style_params,
+        render_bounding_boxes=False,
         output_jpg=False,
         output_png=True,
     )
@@ -128,6 +78,7 @@ for format in formats:
         title_image_filepath_noext = os.path.join(format_output_dir, f"{sanitized_artist}_{sanitized_title}_title")
         title_video_filepath = os.path.join(format_output_dir, f"{sanitized_artist}_{sanitized_title}_title.mov")
 
+        kprep.intro_video_duration = 0
         kprep.create_title_video(
             artist=artist,
             title=title,
@@ -141,6 +92,7 @@ for format in formats:
         end_image_filepath_noext = os.path.join(format_output_dir, f"{sanitized_artist}_{sanitized_title}_end")
         end_video_filepath = os.path.join(format_output_dir, f"{sanitized_artist}_{sanitized_title}_end.mov")
 
+        kprep.end_video_duration = 0
         kprep.create_end_video(
             artist=artist,
             title=title,
