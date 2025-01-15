@@ -108,8 +108,10 @@ class KaraokeFinalise:
             "karaoke_txt": " (Karaoke).txt",
             "karaoke_mp3": " (Karaoke).mp3",
             "karaoke_mp4": " (Karaoke).mp4",
-            "final_karaoke_mp4": " (Final Karaoke).mp4",
-            "final_karaoke_720p_mp4": " (Final Karaoke 720p).mp4",
+            "final_karaoke_lossless_mp4": " (Final Karaoke Lossless 4k).mp4",
+            "final_karaoke_lossless_mkv": " (Final Karaoke Lossless 4k).mkv",
+            "final_karaoke_lossy_mp4": " (Final Karaoke Lossy 4k).mp4",
+            "final_karaoke_lossy_720p_mp4": " (Final Karaoke Lossy 720p).mp4",
             "final_karaoke_cdg_zip": " (Final Karaoke CDG).zip",
             "final_karaoke_txt_zip": " (Final Karaoke TXT).zip",
         }
@@ -126,6 +128,9 @@ class KaraokeFinalise:
         self.gmail_service = None
 
         self.cdg_styles = cdg_styles
+
+        # Determine best available AAC codec
+        self.aac_codec = self.detect_best_aac_codec()
 
     def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
         self.logger.info(f"Checking required input files exist...")
@@ -165,8 +170,10 @@ class KaraokeFinalise:
             "karaoke_mp4": f"{base_name}{self.suffixes['karaoke_mp4']}",
             "karaoke_mp3": f"{base_name}{self.suffixes['karaoke_mp3']}",
             "with_vocals_mp4": f"{base_name}{self.suffixes['with_vocals_mp4']}",
-            "final_karaoke_mp4": f"{base_name}{self.suffixes['final_karaoke_mp4']}",
-            "final_karaoke_720p_mp4": f"{base_name}{self.suffixes['final_karaoke_720p_mp4']}",
+            "final_karaoke_lossless_mp4": f"{base_name}{self.suffixes['final_karaoke_lossless_mp4']}",
+            "final_karaoke_lossless_mkv": f"{base_name}{self.suffixes['final_karaoke_lossless_mkv']}",
+            "final_karaoke_lossy_mp4": f"{base_name}{self.suffixes['final_karaoke_lossy_mp4']}",
+            "final_karaoke_lossy_720p_mp4": f"{base_name}{self.suffixes['final_karaoke_lossy_720p_mp4']}",
         }
 
         if self.enable_cdg:
@@ -349,10 +356,10 @@ class KaraokeFinalise:
         return truncated_title
 
     def upload_final_mp4_to_youtube_with_title_thumbnail(self, artist, title, input_files, output_files):
-        self.logger.info(f"Uploading final MP4 to YouTube with title thumbnail...")
+        self.logger.info(f"Uploading final MKV to YouTube with title thumbnail...")
         if self.dry_run:
             self.logger.info(
-                f'DRY RUN: Would upload {output_files["final_karaoke_mp4"]} to YouTube with thumbnail {input_files["title_jpg"]} using client secrets file: {self.youtube_client_secrets_file}'
+                f'DRY RUN: Would upload {output_files["final_karaoke_lossless_mkv"]} to YouTube with thumbnail {input_files["title_jpg"]} using client secrets file: {self.youtube_client_secrets_file}'
             )
         else:
             youtube_title = f"{artist} - {title} (Karaoke)"
@@ -387,11 +394,11 @@ class KaraokeFinalise:
                 "status": {"privacyStatus": "public"},
             }
 
-            # Use MediaFileUpload to handle the video file - now using the lossless MKV
-            media_file = MediaFileUpload(output_files["final_karaoke_mp4"], mimetype="video/mp4", resumable=True)
+            # Use MediaFileUpload to handle the video file - using the MKV with FLAC audio
+            media_file = MediaFileUpload(output_files["final_karaoke_lossless_mkv"], mimetype="video/x-matroska", resumable=True)
 
             # Call the API's videos.insert method to create and upload the video.
-            self.logger.info(f"Uploading final lossless MKV to YouTube...")
+            self.logger.info(f"Uploading final MKV to YouTube...")
             request = youtube.videos().insert(part="snippet,status", body=body, media_body=media_file)
             response = request.execute()
 
@@ -548,57 +555,125 @@ class KaraokeFinalise:
             self.logger.info(f"Running command: {command}")
             os.system(command)
 
-    def remux_and_encode_output_video_files(self, with_vocals_file, input_files, output_files):
-        self.logger.info(f"Remuxing and encoding output video files...")
+    def remux_with_instrumental(self, with_vocals_file, instrumental_audio, output_file):
+        """Remux the video with instrumental audio to create karaoke version"""
+        # fmt: off
+        ffmpeg_command = (
+            f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" '
+            f'-vn -i "{instrumental_audio}" -c:v copy -c:a pcm_s16le "{output_file}"'
+        )
+        # fmt: on
+        self.execute_command(ffmpeg_command, "Remuxing video with instrumental audio")
 
-        # Check if output files already exist
-        if os.path.isfile(output_files["karaoke_mp4"]) and os.path.isfile(output_files["final_karaoke_mp4"]):
-            if not self.prompt_user_bool(
-                f"Found existing Final Karaoke output files. Overwrite (y) or skip (n)?",
-            ):
-                self.logger.info(f"Skipping Karaoke MP4 remux and Final video renders, existing files will be used.")
-                return
+    def convert_mov_to_mp4(self, input_file, output_file):
+        """Convert MOV file to MP4 format"""
+        # fmt: off
+        ffmpeg_command = (
+            f'{self.ffmpeg_base_command} -i "{input_file}" '
+            f'-c:v libx264 -c:a {self.aac_codec} "{output_file}"'
+        )
+        # fmt: on
+        self.execute_command(ffmpeg_command, "Converting MOV video to MP4")
 
-        # Convert the with vocals video to MP4 if it isn't already
-        if not with_vocals_file.endswith(".mp4"):
-            with_vocals_mp4_command = (
-                f'{self.ffmpeg_base_command} -i "{with_vocals_file}" -c:v libx264 -c:a pcm_s16le "{output_files["with_vocals_mp4"]}"'
-            )
-            self.execute_command(with_vocals_mp4_command, "Converting with vocals video to MP4")
+    def encode_lossless_mp4(self, title_mov_file, karaoke_mp4_file, env_mov_input, ffmpeg_filter, output_file):
+        """Create the final MP4 with PCM audio (lossless)"""
+        # fmt: off
+        ffmpeg_command = (
+            f"{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mp4_file} {env_mov_input} "
+            f'{ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a pcm_s16le "{output_file}"'
+        )
+        # fmt: on
+        self.execute_command(ffmpeg_command, "Creating MP4 version with PCM audio")
 
-            # Delete the with vocals mov after successfully converting it to mp4
-            if not self.dry_run and os.path.isfile(with_vocals_file):
-                self.logger.info(f"Deleting with vocals MOV file: {with_vocals_file}")
-                os.remove(with_vocals_file)
+    def encode_lossy_mp4(self, input_file, output_file):
+        """Create MP4 with AAC audio (lossy, for wider compatibility)"""
+        # fmt: off
+        ffmpeg_command = (
+            f'{self.ffmpeg_base_command} -i "{input_file}" '
+            f'-c:v copy -c:a {self.aac_codec} -b:a 320k "{output_file}"'
+        )
+        # fmt: on
+        self.execute_command(ffmpeg_command, "Creating MP4 version with AAC audio")
 
-        # Remux the synced video with the instrumental audio to produce an instrumental karaoke MP4 file
-        remux_ffmpeg_command = f'{self.ffmpeg_base_command} -an -i "{output_files["with_vocals_mp4"]}" -vn -i "{input_files["instrumental_audio"]}" -c:v copy -c:a pcm_s16le "{output_files["karaoke_mp4"]}"'
-        self.execute_command(remux_ffmpeg_command, "Remuxing video with instrumental audio")
+    def encode_lossless_mkv(self, input_file, output_file):
+        """Create MKV with FLAC audio (for YouTube)"""
+        # fmt: off
+        ffmpeg_command = (
+            f'{self.ffmpeg_base_command} -i "{input_file}" '
+            f'-c:v copy -c:a flac "{output_file}"'
+        )
+        # fmt: on
+        self.execute_command(ffmpeg_command, "Creating MKV version with FLAC audio for YouTube")
 
-        # Quote file paths to handle special characters
-        title_mov_file = shlex.quote(os.path.abspath(input_files["title_mov"]))
-        karaoke_mp4_file = shlex.quote(os.path.abspath(output_files["karaoke_mp4"]))
-        output_final_mp4_file = shlex.quote(output_files["final_karaoke_mp4"])
+    def encode_720p_version(self, input_file, output_file):
+        """Create 720p MP4 with AAC audio (for smaller file size)"""
+        # fmt: off
+        ffmpeg_command = (
+            f'{self.ffmpeg_base_command} -i "{input_file}" '
+            f'-c:v libx264 -vf "scale=1280:720" -b:v 200k -preset medium -tune animation '
+            f'-c:a {self.aac_codec} -b:a 128k "{output_file}"'
+        )
+        # fmt: on
+        self.execute_command(ffmpeg_command, "Encoding 720p version of the final video")
 
+    def prepare_concat_filter(self, input_files):
+        """Prepare the concat filter and additional input for end credits if present"""
         env_mov_input = ""
         ffmpeg_filter = '-filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]"'
 
-        # Check if end_mov file exists and include it in the concat command
         if "end_mov" in input_files and os.path.isfile(input_files["end_mov"]):
             self.logger.info(f"Found end_mov file: {input_files['end_mov']}, including in final MP4")
             end_mov_file = shlex.quote(os.path.abspath(input_files["end_mov"]))
             env_mov_input = f"-i {end_mov_file}"
             ffmpeg_filter = '-filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0][2:v:0][2:a:0]concat=n=3:v=1:a=1[outv][outa]"'
 
-        # Create the final MP4 with PCM audio
-        join_ffmpeg_command = f'{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mp4_file} {env_mov_input} {ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a pcm_s16le "{output_files["final_karaoke_mp4"]}"'
+        return env_mov_input, ffmpeg_filter
 
-        self.execute_command(join_ffmpeg_command, "Creating MP4 version with PCM audio")
+    def remux_and_encode_output_video_files(self, with_vocals_file, input_files, output_files):
+        self.logger.info(f"Remuxing and encoding output video files...")
 
-        # Prompt user to check final video file before proceeding
+        # Check if output files already exist
+        if os.path.isfile(output_files["final_karaoke_lossless_mp4"]) and os.path.isfile(output_files["final_karaoke_lossless_mkv"]):
+            if not self.prompt_user_bool(
+                f"Found existing Final Karaoke output files. Overwrite (y) or skip (n)?",
+            ):
+                self.logger.info(f"Skipping Karaoke MP4 remux and Final video renders, existing files will be used.")
+                return
+
+        # Create karaoke version with instrumental audio
+        self.remux_with_instrumental(with_vocals_file, input_files["instrumental_audio"], output_files["karaoke_mp4"])
+
+        # Convert the with vocals video to MP4 if needed
+        if not with_vocals_file.endswith(".mp4"):
+            self.convert_mov_to_mp4(with_vocals_file, output_files["with_vocals_mp4"])
+
+            # Delete the with vocals mov after successfully converting it to mp4
+            if not self.dry_run and os.path.isfile(with_vocals_file):
+                self.logger.info(f"Deleting with vocals MOV file: {with_vocals_file}")
+                os.remove(with_vocals_file)
+
+        # Quote file paths to handle special characters
+        title_mov_file = shlex.quote(os.path.abspath(input_files["title_mov"]))
+        karaoke_mp4_file = shlex.quote(os.path.abspath(output_files["karaoke_mp4"]))
+
+        # Prepare concat filter for combining videos
+        env_mov_input, ffmpeg_filter = self.prepare_concat_filter(input_files)
+
+        # Create all output versions
+        self.encode_lossless_mp4(title_mov_file, karaoke_mp4_file, env_mov_input, ffmpeg_filter, output_files["final_karaoke_lossless_mp4"])
+        self.encode_lossy_mp4(output_files["final_karaoke_lossless_mp4"], output_files["final_karaoke_lossy_mp4"])
+        self.encode_lossless_mkv(output_files["final_karaoke_lossless_mp4"], output_files["final_karaoke_lossless_mkv"])
+        self.encode_720p_version(output_files["final_karaoke_lossless_mp4"], output_files["final_karaoke_lossy_720p_mp4"])
+
+        # Prompt user to check final video files before proceeding
         self.prompt_user_confirmation_or_raise_exception(
-            f"Final video file created: {output_files['final_karaoke_mp4']}, please check it! Proceed?",
-            "Refusing to proceed without user confirmation they're happy with the Final video.",
+            f"Final video files created:\n"
+            f"- Lossless 4K MP4: {output_files['final_karaoke_lossless_mp4']}\n"
+            f"- Lossless 4K MKV: {output_files['final_karaoke_lossless_mkv']}\n"
+            f"- Lossy 4K MP4: {output_files['final_karaoke_lossy_mp4']}\n"
+            f"- Lossy 720p MP4: {output_files['final_karaoke_lossy_720p_mp4']}\n"
+            f"Please check them! Proceed?",
+            "Refusing to proceed without user confirmation they're happy with the Final videos.",
             allow_empty=True,
         )
 
@@ -692,15 +767,6 @@ class KaraokeFinalise:
 
             self.logger.info(f"TXT ZIP file created: {output_files['final_karaoke_txt_zip']}")
 
-    def encode_720p_version(self, input_file, output_file):
-        ffmpeg_command = (
-            f'{self.ffmpeg_base_command} -i "{input_file}" '
-            f'-c:v libx264 -vf "scale=1280:720" -b:v 200k -preset medium -tune animation '
-            f'-c:a copy "{output_file}"'
-        )
-
-        self.execute_command(ffmpeg_command, "Encoding 720p version of the final video")
-
     def move_files_to_brand_code_folder(self, brand_code, artist, title, output_files):
         self.logger.info(f"Moving files to new brand-prefixed directory...")
 
@@ -757,8 +823,8 @@ class KaraokeFinalise:
                 f"DRY RUN: Would copy final MP4, 720p MP4, and ZIP to {dest_mp4_file}, {dest_720p_mp4_file}, and {dest_zip_file}"
             )
         else:
-            shutil.copy2(output_files["final_karaoke_mp4"], dest_mp4_file)
-            shutil.copy2(output_files["final_karaoke_720p_mp4"], dest_720p_mp4_file)
+            shutil.copy2(output_files["final_karaoke_lossy_mp4"], dest_mp4_file)  # Changed to use lossy MP4
+            shutil.copy2(output_files["final_karaoke_lossy_720p_mp4"], dest_720p_mp4_file)
             shutil.copy2(output_files["final_karaoke_cdg_zip"], dest_zip_file)
             self.logger.info(f"Copied final files to public share directory")
 
@@ -909,6 +975,23 @@ class KaraokeFinalise:
 
         self.logger.info("Email template test complete. Check your Gmail drafts for the test email.")
 
+    def detect_best_aac_codec(self):
+        """Detect the best available AAC codec (aac_at > libfdk_aac > aac)"""
+        self.logger.info("Detecting best available AAC codec...")
+
+        codec_check_command = f"{self.ffmpeg_base_command} -codecs"
+        result = os.popen(codec_check_command).read()
+
+        if "aac_at" in result:
+            self.logger.info("Using aac_at codec (best quality)")
+            return "aac_at"
+        elif "libfdk_aac" in result:
+            self.logger.info("Using libfdk_aac codec (good quality)")
+            return "libfdk_aac"
+        else:
+            self.logger.info("Using built-in aac codec (basic quality)")
+            return "aac"
+
     def process(self):
         if self.dry_run:
             self.logger.warning("Dry run enabled. No actions will be performed.")
@@ -931,7 +1014,6 @@ class KaraokeFinalise:
             self.create_txt_zip_file(input_files, output_files)
 
         self.remux_and_encode_output_video_files(with_vocals_file, input_files, output_files)
-        self.encode_720p_version(output_files["final_karaoke_mp4"], output_files["final_karaoke_720p_mp4"])
 
         self.execute_optional_features(artist, title, base_name, input_files, output_files)
 
@@ -940,8 +1022,10 @@ class KaraokeFinalise:
             "title": title,
             "video_with_vocals": output_files["with_vocals_mp4"],
             "video_with_instrumental": output_files["karaoke_mp4"],
-            "final_video": output_files["final_karaoke_mp4"],
-            "final_video_720p": output_files["final_karaoke_720p_mp4"],
+            "final_video": output_files["final_karaoke_lossless_mp4"],
+            "final_video_mkv": output_files["final_karaoke_lossless_mkv"],
+            "final_video_lossy": output_files["final_karaoke_lossy_mp4"],
+            "final_video_720p": output_files["final_karaoke_lossy_720p_mp4"],
             "youtube_url": self.youtube_url,
             "brand_code": self.brand_code,
             "new_brand_code_dir_path": self.new_brand_code_dir_path,

@@ -5,6 +5,8 @@ import pkg_resources
 import os
 import sys
 import json
+import pyperclip
+import time
 from karaoke_prep.karaoke_finalise import KaraokeFinalise
 
 
@@ -183,23 +185,53 @@ def main():
     logger.info(f"Karaoke finalisation processing complete! Output files:")
     logger.info(f"")
     logger.info(f"Track: {track['artist']} - {track['title']}")
+    logger.info(f"")
+    logger.info(f"Working Files:")
     logger.info(f" Video With Vocals: {track['video_with_vocals']}")
     logger.info(f" Video With Instrumental: {track['video_with_instrumental']}")
+    logger.info(f"")
+    logger.info(f"Final Videos:")
+    logger.info(f" Lossless 4K MP4 (PCM): {track['final_video']}")
+    logger.info(f" Lossless 4K MKV (FLAC): {track['final_video_mkv']}")
+    logger.info(f" Lossy 4K MP4 (AAC): {track['final_video_lossy']}")
+    logger.info(f" Lossy 720p MP4 (AAC): {track['final_video_720p']}")
+
+    if "final_karaoke_cdg_zip" in track or "final_karaoke_txt_zip" in track:
+        logger.info(f"")
+        logger.info(f"Karaoke Files:")
 
     if "final_karaoke_cdg_zip" in track:
-        logger.info(f" Final CDG+MP3 ZIP: {track['final_karaoke_cdg_zip']}")
+        logger.info(f" CDG+MP3 ZIP: {track['final_karaoke_cdg_zip']}")
 
     if "final_karaoke_txt_zip" in track:
-        logger.info(f" Final TXT+MP3 ZIP: {track['final_karaoke_txt_zip']}")
+        logger.info(f" TXT+MP3 ZIP: {track['final_karaoke_txt_zip']}")
 
-    logger.info(f" Final Video with Title: {track['final_video']}")
-    logger.info(f" Final Video 720p: {track['final_video_720p']}")
+    if track["brand_code"]:
+        logger.info(f"")
+        logger.info(f"Organization:")
+        logger.info(f" Brand Code: {track['brand_code']}")
+        logger.info(f" New Directory: {track['new_brand_code_dir_path']}")
 
-    logger.info(f" Brand Code: {track['brand_code']}")
-    logger.info(f" New Brand Code Directory: {track['new_brand_code_dir_path']}")
+    if track["youtube_url"] or track["brand_code_dir_sharing_link"]:
+        logger.info(f"")
+        logger.info(f"Sharing:")
 
-    logger.info(f" YouTube URL: {track['youtube_url']}")
-    logger.info(f" Folder Sharing Link: {track['brand_code_dir_sharing_link']}")
+    if track["youtube_url"]:
+        logger.info(f" YouTube URL: {track['youtube_url']}")
+        try:
+            pyperclip.copy(track["youtube_url"])
+            logger.info(f" (YouTube URL copied to clipboard)")
+        except Exception as e:
+            logger.warning(f" Failed to copy YouTube URL to clipboard: {str(e)}")
+
+    if track["brand_code_dir_sharing_link"]:
+        logger.info(f" Folder Link: {track['brand_code_dir_sharing_link']}")
+        try:
+            time.sleep(1)  # Brief pause between clipboard operations
+            pyperclip.copy(track["brand_code_dir_sharing_link"])
+            logger.info(f" (Folder link copied to clipboard)")
+        except Exception as e:
+            logger.warning(f" Failed to copy folder link to clipboard: {str(e)}")
 
 
 if __name__ == "__main__":
