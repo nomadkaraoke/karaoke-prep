@@ -128,6 +128,12 @@ def main():
         help="Optional: Path to JSON file containing CDG style configuration. Required if --enable_cdg is used. Example: --style_params_json='/path/to/cdg_styles.json'",
     )
 
+    parser.add_argument(
+        "--keep-brand-code",
+        action="store_true",
+        help="Optional: Use existing brand code from current directory instead of generating new one (default: disabled). Example: --keep-brand-code",
+    )
+
     args = parser.parse_args()
 
     log_level = getattr(logging, args.log_level.upper())
@@ -170,6 +176,7 @@ def main():
         discord_webhook_url=args.discord_webhook_url,
         email_template_file=args.email_template_file,
         cdg_styles=cdg_styles,
+        keep_brand_code=args.keep_brand_code,
     )
 
     if args.test_email_template:

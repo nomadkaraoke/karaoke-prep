@@ -43,6 +43,7 @@ class KaraokeFinalise:
         non_interactive=False,
         email_template_file=None,
         cdg_styles=None,
+        keep_brand_code=False,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -131,6 +132,8 @@ class KaraokeFinalise:
 
         # Determine best available AAC codec
         self.aac_codec = self.detect_best_aac_codec()
+
+        self.keep_brand_code = keep_brand_code
 
     def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
         self.logger.info(f"Checking required input files exist...")
@@ -882,6 +885,19 @@ class KaraokeFinalise:
             self.logger.error(f"Command output (stderr): {e.stderr}")
             self.logger.error(f"Full exception: {e}")
 
+    def get_existing_brand_code(self):
+        """Extract brand code from current directory name"""
+        current_dir = os.path.basename(os.getcwd())
+        if " - " not in current_dir:
+            raise Exception(f"Current directory '{current_dir}' does not match expected format 'BRAND-XXXX - Artist - Title'")
+
+        brand_code = current_dir.split(" - ")[0]
+        if not brand_code or "-" not in brand_code:
+            raise Exception(f"Could not extract valid brand code from directory name '{current_dir}'")
+
+        self.logger.info(f"Using existing brand code: {brand_code}")
+        return brand_code
+
     def execute_optional_features(self, artist, title, base_name, input_files, output_files):
         self.logger.info(f"Executing optional features...")
 
@@ -900,15 +916,19 @@ class KaraokeFinalise:
                 self.post_discord_notification()
 
         if self.folder_organisation_enabled:
-            self.brand_code = self.get_next_brand_code()
+            if self.keep_brand_code:
+                self.brand_code = self.get_existing_brand_code()
+                self.new_brand_code_dir = os.path.basename(os.getcwd())
+                self.new_brand_code_dir_path = os.getcwd()
+            else:
+                self.brand_code = self.get_next_brand_code()
+                self.move_files_to_brand_code_folder(self.brand_code, artist, title, output_files)
 
             if self.public_share_copy_enabled:
                 self.copy_final_files_to_public_share_dirs(self.brand_code, base_name, output_files)
 
             if self.public_share_rclone_enabled:
                 self.sync_public_share_dir_to_rclone_destination()
-
-            self.move_files_to_brand_code_folder(self.brand_code, artist, title, output_files)
 
             self.generate_organised_folder_sharing_link()
 
