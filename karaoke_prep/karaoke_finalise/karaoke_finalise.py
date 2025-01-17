@@ -776,11 +776,11 @@ class KaraokeFinalise:
         self.new_brand_code_dir = f"{brand_code} - {artist} - {title}"
         self.new_brand_code_dir_path = os.path.join(self.organised_dir, self.new_brand_code_dir)
 
-        self.prompt_user_confirmation_or_raise_exception(
-            f"Move files to new brand-prefixed directory {self.new_brand_code_dir_path} and delete current dir?",
-            "Refusing to move files without user confirmation of move.",
-            allow_empty=True,
-        )
+        # self.prompt_user_confirmation_or_raise_exception(
+        #     f"Move files to new brand-prefixed directory {self.new_brand_code_dir_path} and delete current dir?",
+        #     "Refusing to move files without user confirmation of move.",
+        #     allow_empty=True,
+        # )
 
         orig_dir = os.getcwd()
         os.chdir(os.path.dirname(orig_dir))
@@ -923,6 +923,9 @@ class KaraokeFinalise:
             else:
                 self.brand_code = self.get_next_brand_code()
                 self.move_files_to_brand_code_folder(self.brand_code, artist, title, output_files)
+                # Update output file paths after moving
+                for key in output_files:
+                    output_files[key] = os.path.join(self.new_brand_code_dir_path, os.path.basename(output_files[key]))
 
             if self.public_share_copy_enabled:
                 self.copy_final_files_to_public_share_dirs(self.brand_code, base_name, output_files)

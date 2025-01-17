@@ -223,14 +223,6 @@ def main():
         logger.info(f"")
         logger.info(f"Sharing:")
 
-    if track["youtube_url"]:
-        logger.info(f" YouTube URL: {track['youtube_url']}")
-        try:
-            pyperclip.copy(track["youtube_url"])
-            logger.info(f" (YouTube URL copied to clipboard)")
-        except Exception as e:
-            logger.warning(f" Failed to copy YouTube URL to clipboard: {str(e)}")
-
     if track["brand_code_dir_sharing_link"]:
         logger.info(f" Folder Link: {track['brand_code_dir_sharing_link']}")
         try:
@@ -239,6 +231,14 @@ def main():
             logger.info(f" (Folder link copied to clipboard)")
         except Exception as e:
             logger.warning(f" Failed to copy folder link to clipboard: {str(e)}")
+
+    if track["youtube_url"]:
+        logger.info(f" YouTube URL: {track['youtube_url']}")
+        try:
+            pyperclip.copy(track["youtube_url"])
+            logger.info(f" (YouTube URL copied to clipboard)")
+        except Exception as e:
+            logger.warning(f" Failed to copy YouTube URL to clipboard: {str(e)}")
 
 
 if __name__ == "__main__":
