@@ -104,6 +104,7 @@ class KaraokeFinalise:
             "end_jpg": " (End).jpg",
             "with_vocals_mov": " (With Vocals).mov",
             "with_vocals_mp4": " (With Vocals).mp4",
+            "with_vocals_mkv": " (With Vocals).mkv",
             "karaoke_lrc": " (Karaoke).lrc",
             "karaoke_cdg": " (Karaoke).cdg",
             "karaoke_txt": " (Karaoke).txt",
@@ -445,30 +446,32 @@ class KaraokeFinalise:
         self.logger.info("Message posted to Discord")
 
     def find_with_vocals_file(self):
-        self.logger.info("Finding input file ending in (With Vocals).mov/.mp4 or (Karaoke).mov/.mp4")
+        self.logger.info("Finding input file ending in (With Vocals).mov/.mp4/.mkv or (Karaoke).mov/.mp4/.mkv")
 
-        # First try to find a properly named with vocals file in either format
-        with_vocals_files = [
-            f for f in os.listdir(".") if f.endswith(self.suffixes["with_vocals_mov"]) or f.endswith(self.suffixes["with_vocals_mp4"])
+        # Define all possible suffixes for with vocals files
+        with_vocals_suffixes = [
+            self.suffixes["with_vocals_mov"],
+            self.suffixes["with_vocals_mp4"],
+            self.suffixes["with_vocals_mkv"],
         ]
+
+        # First try to find a properly named with vocals file in any supported format
+        with_vocals_files = [f for f in os.listdir(".") if any(f.endswith(suffix) for suffix in with_vocals_suffixes)]
 
         if with_vocals_files:
             self.logger.info(f"Found with vocals file: {with_vocals_files[0]}")
             return with_vocals_files[0]
 
         # If no with vocals file found, look for potentially misnamed karaoke files
-        karaoke_files = [f for f in os.listdir(".") if f.endswith(self.suffixes["karaoke_mp4"]) or f.endswith(" (Karaoke).mov")]
+        karaoke_suffixes = [" (Karaoke).mov", " (Karaoke).mp4", " (Karaoke).mkv"]
+        karaoke_files = [f for f in os.listdir(".") if any(f.endswith(suffix) for suffix in karaoke_suffixes)]
 
         if karaoke_files:
             for file in karaoke_files:
-                # Determine the correct extension to keep when renaming
-                current_ext = ".mov" if file.endswith(".mov") else ".mp4"
-                base_without_suffix = file.replace(" (Karaoke)" + current_ext, "")
-                new_file = (
-                    f"{base_without_suffix}{self.suffixes['with_vocals_mov']}"
-                    if current_ext == ".mov"
-                    else f"{base_without_suffix}{self.suffixes['with_vocals_mp4']}"
-                )
+                # Get the current extension
+                current_ext = os.path.splitext(file)[1]
+                base_without_suffix = file.replace(f" (Karaoke){current_ext}", "")
+                new_file = f"{base_without_suffix}{self.suffixes[f'with_vocals{current_ext[1:]}']}"
 
                 self.prompt_user_confirmation_or_raise_exception(
                     f"Found '{file}' but no '(With Vocals)', rename to {new_file} for vocal input?",
@@ -542,10 +545,15 @@ class KaraokeFinalise:
 
         # Remove both possible suffixes and their extensions
         base_name = with_vocals_file
-        for suffix in [self.suffixes["with_vocals_mov"], self.suffixes["with_vocals_mp4"]]:
+        for suffix_key in ["with_vocals_mov", "with_vocals_mp4", "with_vocals_mkv"]:
+            suffix = self.suffixes[suffix_key]
             if suffix in base_name:
                 base_name = base_name.replace(suffix, "")
                 break
+
+        # If we didn't find a match above, try removing just the extension
+        if base_name == with_vocals_file:
+            base_name = os.path.splitext(base_name)[0]
 
         artist, title = base_name.split(" - ", 1)
         return base_name, artist, title
