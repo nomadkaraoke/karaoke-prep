@@ -40,10 +40,10 @@ class KaraokeFinalise:
         youtube_description_file=None,
         rclone_destination=None,
         discord_webhook_url=None,
-        non_interactive=False,
         email_template_file=None,
         cdg_styles=None,
         keep_brand_code=False,
+        non_interactive=False,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -136,6 +136,10 @@ class KaraokeFinalise:
 
         self.keep_brand_code = keep_brand_code
 
+        # Update ffmpeg base command to include -y if non-interactive
+        if self.non_interactive:
+            self.ffmpeg_base_command += " -y"
+
     def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
         self.logger.info(f"Checking required input files exist...")
 
@@ -190,13 +194,17 @@ class KaraokeFinalise:
         return output_files
 
     def prompt_user_confirmation_or_raise_exception(self, prompt_message, exit_message, allow_empty=False):
+        if self.non_interactive:
+            self.logger.info(f"Non-interactive mode, automatically confirming: {prompt_message}")
+            return True
+
         if not self.prompt_user_bool(prompt_message, allow_empty=allow_empty):
             self.logger.error(exit_message)
             raise Exception(exit_message)
 
     def prompt_user_bool(self, prompt_message, allow_empty=False):
         if self.non_interactive:
-            self.logger.warning(f"Non-interactive mode, responding True for prompt: {prompt_message}")
+            self.logger.info(f"Non-interactive mode, automatically answering yes to: {prompt_message}")
             return True
 
         options_string = "[y]/n" if allow_empty else "y/[n]"
@@ -516,6 +524,11 @@ class KaraokeFinalise:
             raise Exception(f"No instrumental audio files found containing {search_string}")
 
         if len(filtered_files) == 1:
+            return filtered_files[0]
+
+        # In non-interactive mode, always choose the first option
+        if self.non_interactive:
+            self.logger.info(f"Non-interactive mode, automatically choosing first instrumental file: {filtered_files[0]}")
             return filtered_files[0]
 
         # Sort the remaining instrumental options alphabetically

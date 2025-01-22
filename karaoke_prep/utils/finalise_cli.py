@@ -134,6 +134,13 @@ def main():
         help="Optional: Use existing brand code from current directory instead of generating new one (default: disabled). Example: --keep-brand-code",
     )
 
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Optional: Run in non-interactive mode, assuming yes to all prompts (default: disabled). Example: -y",
+    )
+
     args = parser.parse_args()
 
     log_level = getattr(logging, args.log_level.upper())
@@ -177,6 +184,7 @@ def main():
         email_template_file=args.email_template_file,
         cdg_styles=cdg_styles,
         keep_brand_code=args.keep_brand_code,
+        non_interactive=args.yes,
     )
 
     if args.test_email_template:
