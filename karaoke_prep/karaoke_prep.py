@@ -369,6 +369,21 @@ class KaraokePrep:
         return output_filename
 
     def convert_to_wav(self, input_filename, output_filename_no_extension):
+        """Convert input audio to WAV format, with input validation."""
+        # Validate input file exists and is readable
+        if not os.path.isfile(input_filename):
+            raise Exception(f"Input audio file not found: {input_filename}")
+
+        if os.path.getsize(input_filename) == 0:
+            raise Exception(f"Input audio file is empty: {input_filename}")
+
+        # Validate input file format using ffprobe
+        probe_command = f'ffprobe -v error -show_entries stream=codec_type -of default=noprint_wrappers=1 "{input_filename}"'
+        probe_output = os.popen(probe_command).read()
+
+        if "codec_type=audio" not in probe_output:
+            raise Exception(f"No valid audio stream found in file: {input_filename}")
+
         output_filename = output_filename_no_extension + ".wav"
         self.logger.info(f"Converting input media to audio WAV file")
         ffmpeg_command = f'{self.ffmpeg_base_command} -n -i "{input_filename}" "{output_filename}"'
@@ -493,7 +508,7 @@ class KaraokePrep:
             output_dir=lyrics_dir,
             render_video=True,
             fetch_lyrics=True,
-            run_transcription=True,
+            run_transcription=not self.skip_transcription,
             run_correction=True,
             generate_plain_text=True,
             generate_lrc=True,
@@ -602,9 +617,17 @@ class KaraokePrep:
         self.logger.info(f"Separation complete! Output file(s): {vocals_path} {instrumental_path}")
 
     def setup_output_paths(self, artist, title):
-        sanitized_artist = self.sanitize_filename(artist)
-        sanitized_title = self.sanitize_filename(title)
-        artist_title = f"{sanitized_artist} - {sanitized_title}"
+        if title is None and artist is None:
+            raise ValueError("Error: At least title or artist must be provided")
+
+        # If only title is provided, use it for both artist and title portions of paths
+        if artist is None:
+            sanitized_title = self.sanitize_filename(title)
+            artist_title = sanitized_title
+        else:
+            sanitized_artist = self.sanitize_filename(artist)
+            sanitized_title = self.sanitize_filename(title)
+            artist_title = f"{sanitized_artist} - {sanitized_title}"
 
         track_output_dir = self.output_dir
         if self.create_track_subfolders:
