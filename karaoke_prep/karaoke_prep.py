@@ -534,11 +534,21 @@ class KaraokePrep:
         transcriber_outputs = {}
         if results.lrc_filepath:
             transcriber_outputs["lrc_filepath"] = results.lrc_filepath
+            # Move LRC file to parent directory
+            parent_lrc_path = os.path.join(track_output_dir, f"{artist} - {title} (Karaoke).lrc")
+            self.logger.info(f"Moving LRC file from {results.lrc_filepath} to {parent_lrc_path}")
+            shutil.copy2(results.lrc_filepath, parent_lrc_path)
+
         if results.ass_filepath:
             transcriber_outputs["ass_filepath"] = results.ass_filepath
+            # Move video file to parent directory
+            parent_video_path = os.path.join(track_output_dir, f"{artist} - {title} (With Vocals).mkv")
+            self.logger.info(f"Moving video file from {results.ass_filepath[:-4]}.mkv to {parent_video_path}")
+            shutil.copy2(f"{results.ass_filepath[:-4]}.mkv", parent_video_path)
+
         if results.transcription_corrected:
             transcriber_outputs["corrected_lyrics_text"] = results.transcription_corrected.corrected_text
-            transcriber_outputs["corrected_lyrics_text_filepath"] = results.transcription_corrected.filepath
+            transcriber_outputs["corrected_lyrics_text_filepath"] = results.corrected_txt
 
         if transcriber_outputs:
             self.logger.info(f"*** Transcriber Filepath Outputs: ***")

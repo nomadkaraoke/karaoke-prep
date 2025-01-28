@@ -2100,14 +2100,14 @@ files = [
 
 [[package]]
 name = "lyrics-transcriber"
-version = "0.32.2"
+version = "0.34.0"
 description = "Automatically create synchronised lyrics files in ASS and MidiCo LRC formats with word-level timestamps, using Whisper and lyrics from Genius and Spotify"
 optional = false
 python-versions = "<3.13,>=3.9"
 groups = ["main"]
 files = [
-    {file = "lyrics_transcriber-0.32.2-py3-none-any.whl", hash = "sha256:52e39864f0bacc2ec60d83fe1760077416baf7ba3f44adf0952a8d59d8fa229e"},
-    {file = "lyrics_transcriber-0.32.2.tar.gz", hash = "sha256:6b1c71a1f0932ac6b0af9224dfff237698d6853c88163538c1e4caf615111c6f"},
+    {file = "lyrics_transcriber-0.34.0-py3-none-any.whl", hash = "sha256:58d886784cf1ad7b8b528cb38140c55b17484e1aa7e57d0672496516698a0973"},
+    {file = "lyrics_transcriber-0.34.0.tar.gz", hash = "sha256:c606dd88d553dd1b1c79e4fae69a359ffebe421b1c177a153cf4154e9dad5e53"},
 ]
 
 [package.dependencies]
@@ -5557,4 +5557,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.13"
-content-hash = "467e75f5725577c6e70c6c835fd80550f93fb122f30ee5faed7f32421152644e"
+content-hash = "18276ba1f2861a31ee72354af13b6536191afe07f19b39e4aceb58f11c89c1b9"
