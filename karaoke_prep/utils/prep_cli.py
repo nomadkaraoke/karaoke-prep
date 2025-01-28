@@ -223,56 +223,6 @@ def main():
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
 
-    # Load style parameters if JSON file is provided
-    style_params = None
-    if args.style_params_json:
-        try:
-            with open(args.style_params_json, "r") as f:
-                style_params = json.loads(f.read())
-        except FileNotFoundError:
-            logger.error(f"Style parameters configuration file not found: {args.style_params_json}")
-            sys.exit(1)
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in style parameters configuration file: {e}")
-            sys.exit(1)
-    else:
-        # Use default values
-        style_params = {
-            "intro": {
-                "video_duration": 5,
-                "existing_image": None,
-                "background_color": "#000000",
-                "background_image": None,
-                "font": "Montserrat-Bold.ttf",
-                "artist_color": "#ffdf6b",
-                "title_color": "#ffffff",
-                "title_region": "370, 200, 3100, 480",
-                "artist_region": "370, 700, 3100, 480",
-                "extra_text": None,
-                "extra_text_color": "#ffffff",
-                "extra_text_region": "370, 1200, 3100, 480",
-            },
-            "end": {
-                "video_duration": 5,
-                "existing_image": None,
-                "background_color": "#000000",
-                "background_image": None,
-                "font": "Montserrat-Bold.ttf",
-                "artist_color": "#ffdf6b",
-                "title_color": "#ffffff",
-                "title_region": None,
-                "artist_region": None,
-                "extra_text": "THANK YOU FOR SINGING!",
-                "extra_text_color": "#ff7acc",
-                "extra_text_region": None,
-            },
-        }
-
-    if args.existing_instrumental:
-        args.clean_instrumental_model = None
-        args.backing_vocals_models = []
-        args.other_stems_models = []
-
     logger.info(f"KaraokePrep beginning with input_media: {input_media} artist: {artist} and title: {title}")
 
     kprep = KaraokePrep(
@@ -309,7 +259,7 @@ def main():
         skip_lyrics=args.skip_lyrics,
         skip_transcription=args.skip_transcription,
         # Style Configuration
-        style_params=style_params,
+        style_params_json=args.style_params_json,
     )
 
     tracks = kprep.process()

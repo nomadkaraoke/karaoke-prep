@@ -8,8 +8,10 @@ import shutil
 import importlib.resources as pkg_resources
 import yt_dlp.YoutubeDL as ydl
 from PIL import Image, ImageDraw, ImageFont
-from lyrics_transcriber import LyricsTranscriber
+from lyrics_transcriber import LyricsTranscriber, OutputConfig, TranscriberConfig, LyricsConfig
 from pydub import AudioSegment
+import json
+from dotenv import load_dotenv
 
 
 class KaraokePrep:
@@ -48,7 +50,7 @@ class KaraokePrep:
         skip_lyrics=False,
         skip_transcription=False,
         # Style Configuration
-        style_params=None,
+        style_params_json=None,
     ):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
@@ -104,9 +106,22 @@ class KaraokePrep:
         # Style
         self.render_bounding_boxes = render_bounding_boxes
 
-        # Set default style parameters if none provided
-        if style_params is None:
-            style_params = {
+        self.style_params_json = style_params_json
+
+        # Load style parameters from JSON or use defaults
+        if style_params_json:
+            try:
+                with open(style_params_json, "r") as f:
+                    self.style_params = json.loads(f.read())
+            except FileNotFoundError:
+                self.logger.error(f"Style parameters configuration file not found: {style_params_json}")
+                sys.exit(1)
+            except json.JSONDecodeError as e:
+                self.logger.error(f"Invalid JSON in style parameters configuration file: {e}")
+                sys.exit(1)
+        else:
+            # Use default values
+            self.style_params = {
                 "intro": {
                     "video_duration": 5,
                     "existing_image": None,
@@ -149,47 +164,47 @@ class KaraokePrep:
 
         # Set up title format from style params
         self.title_format = {
-            "background_color": style_params["intro"]["background_color"],
-            "background_image": style_params["intro"]["background_image"],
-            "font": style_params["intro"]["font"],
-            "artist_color": style_params["intro"]["artist_color"],
-            "artist_gradient": style_params["intro"]["artist_gradient"],
-            "title_color": style_params["intro"]["title_color"],
-            "title_gradient": style_params["intro"]["title_gradient"],
-            "extra_text": style_params["intro"]["extra_text"],
-            "extra_text_color": style_params["intro"]["extra_text_color"],
-            "extra_text_gradient": style_params["intro"]["extra_text_gradient"],
-            "extra_text_region": style_params["intro"]["extra_text_region"],
-            "title_region": style_params["intro"]["title_region"],
-            "artist_region": style_params["intro"]["artist_region"],
-            "title_text_transform": style_params["intro"]["title_text_transform"],
-            "artist_text_transform": style_params["intro"]["artist_text_transform"],
+            "background_color": self.style_params["intro"]["background_color"],
+            "background_image": self.style_params["intro"]["background_image"],
+            "font": self.style_params["intro"]["font"],
+            "artist_color": self.style_params["intro"]["artist_color"],
+            "artist_gradient": self.style_params["intro"].get("artist_gradient"),
+            "title_color": self.style_params["intro"]["title_color"],
+            "title_gradient": self.style_params["intro"].get("title_gradient"),
+            "extra_text": self.style_params["intro"]["extra_text"],
+            "extra_text_color": self.style_params["intro"]["extra_text_color"],
+            "extra_text_gradient": self.style_params["intro"].get("extra_text_gradient"),
+            "extra_text_region": self.style_params["intro"]["extra_text_region"],
+            "title_region": self.style_params["intro"]["title_region"],
+            "artist_region": self.style_params["intro"]["artist_region"],
+            "title_text_transform": self.style_params["intro"].get("title_text_transform"),
+            "artist_text_transform": self.style_params["intro"].get("artist_text_transform"),
         }
 
         # Set up end format from style params
         self.end_format = {
-            "background_color": style_params["end"]["background_color"],
-            "background_image": style_params["end"]["background_image"],
-            "font": style_params["end"]["font"],
-            "artist_color": style_params["end"]["artist_color"],
-            "artist_gradient": style_params["end"]["artist_gradient"],
-            "title_color": style_params["end"]["title_color"],
-            "title_gradient": style_params["end"]["title_gradient"],
-            "extra_text": style_params["end"]["extra_text"],
-            "extra_text_color": style_params["end"]["extra_text_color"],
-            "extra_text_gradient": style_params["end"]["extra_text_gradient"],
-            "extra_text_region": style_params["end"]["extra_text_region"],
-            "title_region": style_params["end"]["title_region"],
-            "artist_region": style_params["end"]["artist_region"],
-            "title_text_transform": style_params["end"]["title_text_transform"],
-            "artist_text_transform": style_params["end"]["artist_text_transform"],
+            "background_color": self.style_params["end"]["background_color"],
+            "background_image": self.style_params["end"]["background_image"],
+            "font": self.style_params["end"]["font"],
+            "artist_color": self.style_params["end"]["artist_color"],
+            "artist_gradient": self.style_params["end"].get("artist_gradient"),
+            "title_color": self.style_params["end"]["title_color"],
+            "title_gradient": self.style_params["end"].get("title_gradient"),
+            "extra_text": self.style_params["end"]["extra_text"],
+            "extra_text_color": self.style_params["end"]["extra_text_color"],
+            "extra_text_gradient": self.style_params["end"].get("extra_text_gradient"),
+            "extra_text_region": self.style_params["end"]["extra_text_region"],
+            "title_region": self.style_params["end"]["title_region"],
+            "artist_region": self.style_params["end"]["artist_region"],
+            "title_text_transform": self.style_params["end"].get("title_text_transform"),
+            "artist_text_transform": self.style_params["end"].get("artist_text_transform"),
         }
 
         # Store video durations and existing images
-        self.intro_video_duration = style_params["intro"]["video_duration"]
-        self.end_video_duration = style_params["end"]["video_duration"]
-        self.existing_title_image = style_params["intro"]["existing_image"]
-        self.existing_end_image = style_params["end"]["existing_image"]
+        self.intro_video_duration = self.style_params["intro"]["video_duration"]
+        self.end_video_duration = self.style_params["end"]["video_duration"]
+        self.existing_title_image = self.style_params["intro"]["existing_image"]
+        self.existing_end_image = self.style_params["end"]["existing_image"]
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
@@ -453,17 +468,62 @@ class KaraokePrep:
         os.makedirs(lyrics_dir, exist_ok=True)
         self.logger.info(f"Created lyrics directory: {lyrics_dir}")
 
-        transcriber = LyricsTranscriber(
-            input_audio_wav,
-            log_level=self.log_level,
-            log_formatter=self.log_formatter,
-            artist=artist,
-            title=title,
-            output_dir=lyrics_dir,
-            skip_transcription=self.skip_transcription,
+        # Load environment variables
+        load_dotenv()
+        env_config = {
+            "audioshake_api_token": os.getenv("AUDIOSHAKE_API_TOKEN"),
+            "genius_api_token": os.getenv("GENIUS_API_TOKEN"),
+            "spotify_cookie": os.getenv("SPOTIFY_COOKIE_SP_DC"),
+            "runpod_api_key": os.getenv("RUNPOD_API_KEY"),
+            "whisper_runpod_id": os.getenv("WHISPER_RUNPOD_ID"),
+        }
+
+        # Create config objects for LyricsTranscriber
+        transcriber_config = TranscriberConfig(
+            audioshake_api_token=env_config.get("audioshake_api_token"),
         )
 
-        transcriber_outputs = transcriber.generate()
+        lyrics_config = LyricsConfig(
+            genius_api_token=env_config.get("genius_api_token"),
+            spotify_cookie=env_config.get("spotify_cookie"),
+        )
+
+        output_config = OutputConfig(
+            output_styles_json=self.style_params_json,
+            output_dir=lyrics_dir,
+            render_video=True,
+            fetch_lyrics=True,
+            run_transcription=True,
+            run_correction=True,
+            generate_plain_text=True,
+            generate_lrc=True,
+            generate_cdg=True,
+            video_resolution="4k",
+        )
+
+        # Initialize transcriber with new config objects
+        transcriber = LyricsTranscriber(
+            audio_filepath=input_audio_wav,
+            artist=artist,
+            title=title,
+            transcriber_config=transcriber_config,
+            lyrics_config=lyrics_config,
+            output_config=output_config,
+            logger=self.logger,
+        )
+
+        # Process and get results
+        results = transcriber.process()
+
+        # Build output dictionary
+        transcriber_outputs = {}
+        if results.lrc_filepath:
+            transcriber_outputs["lrc_filepath"] = results.lrc_filepath
+        if results.ass_filepath:
+            transcriber_outputs["ass_filepath"] = results.ass_filepath
+        if results.transcription_corrected:
+            transcriber_outputs["corrected_lyrics_text"] = results.transcription_corrected.corrected_text
+            transcriber_outputs["corrected_lyrics_text_filepath"] = results.transcription_corrected.filepath
 
         if transcriber_outputs:
             self.logger.info(f"*** Transcriber Filepath Outputs: ***")
