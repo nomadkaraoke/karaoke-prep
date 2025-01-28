@@ -12,7 +12,7 @@ documentation = "https://github.com/karaokenerds/karaoke-prep/blob/main/README.m
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
-torch = ">=2.3,<2.5 || >=2.7"
+torch = "<2.5"
 requests = ">=2"
 beautifulsoup4 = ">=4"
 yt-dlp = "*"
