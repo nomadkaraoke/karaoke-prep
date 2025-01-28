@@ -543,8 +543,8 @@ class KaraokePrep:
             transcriber_outputs["ass_filepath"] = results.ass_filepath
             # Move video file to parent directory
             parent_video_path = os.path.join(track_output_dir, f"{artist} - {title} (With Vocals).mkv")
-            self.logger.info(f"Moving video file from {results.ass_filepath[:-4]}.mkv to {parent_video_path}")
-            shutil.copy2(f"{results.ass_filepath[:-4]}.mkv", parent_video_path)
+            self.logger.info(f"Moving video file from {results.video_filepath} to {parent_video_path}")
+            shutil.copy2(results.video_filepath, parent_video_path)
 
         if results.transcription_corrected:
             transcriber_outputs["corrected_lyrics_text"] = results.transcription_corrected.corrected_text
