@@ -5,12 +5,19 @@ import pkg_resources
 import os
 import csv
 import asyncio
+import json
+import sys
 from karaoke_prep import KaraokePrep
 from karaoke_prep.karaoke_finalise import KaraokeFinalise
 
+# Global logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)  # Set initial log level
 
-async def process_track(row, config, logger, log_formatter):
+
+async def process_track(row, args, logger, log_formatter):
     """Process a single track through prep and finalise stages"""
+    original_dir = os.getcwd()  # Store the original directory
     try:
         # Extract track info from CSV row
         artist = row["Artist"]
@@ -26,40 +33,75 @@ async def process_track(row, config, logger, log_formatter):
             title=title,
             input_media=guide_file,
             existing_instrumental=instrumental_file,
-            style_params_json=config.style_params_json,
+            style_params_json=args.style_params_json,
             log_formatter=log_formatter,
-            log_level=config.log_level,
-            dry_run=config.dry_run,
+            log_level=args.log_level,
+            dry_run=args.dry_run,
+            skip_transcription_review=True,
+            create_track_subfolders=True,
         )
 
-        # Run prep stage
-        prep_result = await kprep.process()
-        if not prep_result:
-            raise Exception("Prep stage failed")
+        tracks = await kprep.process()
 
-        # Initialize KaraokeFinalise
-        kfinalise = KaraokeFinalise(
-            log_formatter=log_formatter,
-            log_level=config.log_level,
-            dry_run=config.dry_run,
-            enable_cdg=True,
-            enable_txt=True,
-            brand_prefix=config.brand_prefix,
-            organised_dir=config.organised_dir,
-            style_params_json=config.style_params_json,
-            non_interactive=True,
-        )
+        # Step 2: For each track, run KaraokeFinalise
+        for track in tracks:
+            logger.info(f"Starting finalisation phase for {track['artist']} - {track['title']}...")
 
-        # Run finalise stage
-        finalise_result = kfinalise.process()
-        if not finalise_result:
-            raise Exception("Finalise stage failed")
+            # Change to the track directory - use the output directory structure
+            track_dir = os.path.join(args.output_dir, f"{track['artist']} - {track['title']}")
+            if not os.path.exists(track_dir):
+                logger.error(f"Track directory not found: {track_dir}")
+                continue
+
+            logger.info(f"Changing to directory: {track_dir}")
+            os.chdir(track_dir)
+
+            # Load CDG styles if CDG generation is enabled
+            cdg_styles = None
+            if args.enable_cdg:
+                if not args.style_params_json:
+                    logger.error("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
+                    sys.exit(1)
+                try:
+                    with open(args.style_params_json, "r") as f:
+                        style_params = json.loads(f.read())
+                        cdg_styles = style_params["cdg"]
+                except FileNotFoundError:
+                    logger.error(f"CDG styles configuration file not found: {args.style_params_json}")
+                    sys.exit(1)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
+                    sys.exit(1)
+
+            # Initialize KaraokeFinalise
+            kfinalise = KaraokeFinalise(
+                log_formatter=log_formatter,
+                log_level=args.log_level,
+                dry_run=args.dry_run,
+                enable_cdg=args.enable_cdg,
+                enable_txt=args.enable_txt,
+                cdg_styles=cdg_styles,
+                non_interactive=True,
+            )
+
+            try:
+                final_track = kfinalise.process()
+                logger.info(f"Successfully completed auto processing for: {track['artist']} - {track['title']}")
+            except Exception as e:
+                logger.error(f"Error during finalisation: {str(e)}")
+                raise e
+
+            # Always return to the original directory after processing
+            os.chdir(original_dir)
 
         return True
 
     except Exception as e:
         logger.error(f"Failed to process {artist} - {title}: {str(e)}")
         return False
+    finally:
+        # Ensure we return to the original directory even if an error occurred
+        os.chdir(original_dir)
 
 
 def update_csv_status(csv_path, row_index, new_status):
@@ -80,12 +122,6 @@ def update_csv_status(csv_path, row_index, new_status):
 
 
 async def async_main():
-    logger = logging.getLogger(__name__)
-    log_handler = logging.StreamHandler()
-    log_formatter = logging.Formatter(fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    log_handler.setFormatter(log_formatter)
-    logger.addHandler(log_handler)
-
     parser = argparse.ArgumentParser(
         description="Process multiple karaoke tracks in bulk from a CSV file.",
         formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, max_help_position=54),
@@ -107,14 +143,21 @@ async def async_main():
         help="Path to style parameters JSON file",
     )
     parser.add_argument(
-        "--brand_prefix",
-        required=True,
-        help="Brand prefix for output files",
+        "--output_dir",
+        default=".",
+        help="Optional: directory to write output files (default: <current dir>). Example: --output_dir=/app/karaoke",
+    )
+
+    # Finalise-specific arguments
+    parser.add_argument(
+        "--enable_cdg",
+        action="store_true",
+        help="Optional: Enable CDG ZIP generation during finalisation. Example: --enable_cdg",
     )
     parser.add_argument(
-        "--organised_dir",
-        required=True,
-        help="Directory for organized output files",
+        "--enable_txt",
+        action="store_true",
+        help="Optional: Enable TXT ZIP generation during finalisation. Example: --enable_txt",
     )
 
     # Logging & Debugging
@@ -131,12 +174,16 @@ async def async_main():
 
     args = parser.parse_args()
 
+    # Convert input_csv to absolute path
+    args.input_csv = os.path.abspath(args.input_csv)
+
     if not os.path.isfile(args.input_csv):
         logger.error(f"Input CSV file not found: {args.input_csv}")
         exit(1)
 
+    # Fix: Convert log level to uppercase before getting attribute
     log_level = getattr(logging, args.log_level.upper())
-    logger.setLevel(log_level)
+    args.log_level = log_level  # Store the numeric log level in args
 
     logger.info(f"Starting bulk processing with input CSV: {args.input_csv}")
 
@@ -164,8 +211,8 @@ async def async_main():
 
 
 def main():
-    # Set up logging
-    logger = logging.getLogger(__name__)
+    # Set up logging only once
+    global log_formatter  # Make log_formatter accessible to other functions
     log_handler = logging.StreamHandler()
     log_formatter = logging.Formatter(fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     log_handler.setFormatter(log_formatter)

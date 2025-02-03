@@ -52,6 +52,7 @@ class KaraokePrep:
         lyrics_file=None,
         skip_lyrics=False,
         skip_transcription=False,
+        skip_transcription_review=False,
         # Style Configuration
         style_params_json=None,
     ):
@@ -106,6 +107,7 @@ class KaraokePrep:
         self.lyrics_file = lyrics_file
         self.skip_lyrics = skip_lyrics
         self.skip_transcription = skip_transcription
+        self.skip_transcription_review = skip_transcription_review
 
         # Style
         self.render_bounding_boxes = render_bounding_boxes
@@ -519,6 +521,7 @@ class KaraokePrep:
             generate_lrc=True,
             generate_cdg=True,
             video_resolution="4k",
+            enable_review=not self.skip_transcription_review,
         )
 
         # Initialize transcriber with new config objects

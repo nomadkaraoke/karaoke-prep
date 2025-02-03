@@ -2,6 +2,7 @@
 .DS_Store
 .vscode
 *.csv
+*.mp3
 
 # Andrew functional adds
 audio/
