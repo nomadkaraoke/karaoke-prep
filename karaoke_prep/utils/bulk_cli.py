@@ -20,10 +20,10 @@ async def process_track(row, args, logger, log_formatter):
     original_dir = os.getcwd()  # Store the original directory
     try:
         # Extract track info from CSV row
-        artist = row["Artist"]
-        title = row["Title"]
-        guide_file = row["Mixed Audio Filename"]
-        instrumental_file = row["Instrumental Audio Filename"]
+        artist = row["Artist"].strip()  # Remove leading/trailing whitespace
+        title = row["Title"].strip()
+        guide_file = row["Mixed Audio Filename"].strip()
+        instrumental_file = row["Instrumental Audio Filename"].strip()
 
         logger.info(f"Processing track: {artist} - {title}")
 
@@ -47,10 +47,21 @@ async def process_track(row, args, logger, log_formatter):
         for track in tracks:
             logger.info(f"Starting finalisation phase for {track['artist']} - {track['title']}...")
 
-            # Change to the track directory - use the output directory structure
-            track_dir = os.path.join(args.output_dir, f"{track['artist']} - {track['title']}")
-            if not os.path.exists(track_dir):
-                logger.error(f"Track directory not found: {track_dir}")
+            # Look for the track directory, trying different possible formats
+            possible_dirs = [
+                os.path.join(args.output_dir, f"{track['artist']} - {track['title']}"),
+                os.path.join(args.output_dir, f"{artist} - {title}"),
+                os.path.join(args.output_dir, f"{artist.replace('  ', ' ')} - {title}"),
+            ]
+
+            track_dir = None
+            for possible_dir in possible_dirs:
+                if os.path.exists(possible_dir):
+                    track_dir = possible_dir
+                    break
+
+            if track_dir is None:
+                logger.error(f"Track directory not found. Tried: {possible_dirs}")
                 continue
 
             logger.info(f"Changing to directory: {track_dir}")
