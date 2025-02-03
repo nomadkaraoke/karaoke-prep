@@ -12,6 +12,8 @@ from lyrics_transcriber import LyricsTranscriber, OutputConfig, TranscriberConfi
 from pydub import AudioSegment
 import json
 from dotenv import load_dotenv
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 
 class KaraokePrep:
@@ -47,6 +49,7 @@ class KaraokePrep:
         # Lyrics Configuration
         lyrics_artist=None,
         lyrics_title=None,
+        lyrics_file=None,
         skip_lyrics=False,
         skip_transcription=False,
         # Style Configuration
@@ -100,6 +103,7 @@ class KaraokePrep:
         self.lyrics = None
         self.lyrics_artist = lyrics_artist
         self.lyrics_title = lyrics_title
+        self.lyrics_file = lyrics_file
         self.skip_lyrics = skip_lyrics
         self.skip_transcription = skip_transcription
 
@@ -501,6 +505,7 @@ class KaraokePrep:
         lyrics_config = LyricsConfig(
             genius_api_token=env_config.get("genius_api_token"),
             spotify_cookie=env_config.get("spotify_cookie"),
+            lyrics_file=self.lyrics_file,
         )
 
         output_config = OutputConfig(
@@ -1226,13 +1231,12 @@ class KaraokePrep:
             self.logger.info(f"File already exists, skipping creation: {file_path}")
         return exists
 
-    def prep_single_track(self):
+    async def prep_single_track(self):
         self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
 
         if self.input_media is not None and os.path.isfile(self.input_media):
             self.extractor = "Original"
         else:
-            # Parses metadata in self.extracted_info to set vars: self.url, self.extractor, self.media_id, self.artist, self.title
             self.parse_single_track_metadata(input_artist=self.artist, input_title=self.title)
 
         self.logger.info(f"Preparing output path for track: {self.title} by {self.artist}")
@@ -1314,11 +1318,19 @@ class KaraokePrep:
             lyrics_artist = self.lyrics_artist or self.artist
             lyrics_title = self.lyrics_title or self.title
 
-            transcriber_outputs = self.transcribe_lyrics(processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir)
+            # Start transcription in a separate thread if lyrics are enabled
+            transcription_future = None
+            transcription_future = self.transcribe_lyrics(processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir)
 
-            if transcriber_outputs:
-                self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
-                processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
+        # Wait for transcription to complete if it was started
+        if transcription_future:
+            try:
+                transcriber_outputs = await transcription_future
+                if transcriber_outputs:
+                    self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
+                    processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
+            except Exception as e:
+                self.logger.error(f"Error during lyrics transcription: {e}")
 
         output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
         processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"
@@ -1362,7 +1374,7 @@ class KaraokePrep:
 
         return processed_track
 
-    def process_playlist(self):
+    async def process_playlist(self):
         if self.artist is None or self.title is None:
             raise Exception("Error: Artist and Title are required for processing a local file.")
 
@@ -1373,14 +1385,14 @@ class KaraokePrep:
                 self.extracted_info = entry
                 self.logger.info(f"Processing playlist entry with title: {self.extracted_info['title']}")
                 if not self.dry_run:
-                    track_results.append(self.prep_single_track())
+                    track_results.append(await self.prep_single_track())
                 self.artist = self.persistent_artist
                 self.title = None
             return track_results
         else:
             raise Exception(f"Failed to find 'entries' in playlist, cannot process")
 
-    def process_folder(self):
+    async def process_folder(self):
         if self.filename_pattern is None or self.artist is None:
             raise Exception("Error: Filename pattern and artist are required for processing a folder.")
 
@@ -1412,7 +1424,7 @@ class KaraokePrep:
                 track_output_dir = os.path.join(output_folder_path, f"{track_index} - {self.artist} - {title}")
 
                 if not self.dry_run:
-                    track = self.prep_single_track()
+                    track = await self.prep_single_track()
                     tracks.append(track)
 
                     # Move the track folder to the output folder
@@ -1423,25 +1435,21 @@ class KaraokePrep:
 
         return tracks
 
-    def process(self):
+    async def process(self):
         if self.input_media is not None and os.path.isdir(self.input_media):
             self.logger.info(f"Input media {self.input_media} is a local folder, processing each file individually...")
-
-            return self.process_folder()
+            return await self.process_folder()
         elif self.input_media is not None and os.path.isfile(self.input_media):
             self.logger.info(f"Input media {self.input_media} is a local file, youtube logic will be skipped")
-
-            return [self.prep_single_track()]
+            return [await self.prep_single_track()]
         else:
             self.url = self.input_media
-            # Runs yt-dlp extract_info for input URL or artist/title search query to set var: self.extracted_info
-            # We do this first as the input URL may be a playlist
             self.extract_info_for_online_media(input_url=self.url, input_artist=self.artist, input_title=self.title)
 
             if self.extracted_info and "playlist_count" in self.extracted_info:
                 self.persistent_artist = self.artist
                 self.logger.info(f"Input URL is a playlist, beginning batch operation with persistent artist: {self.persistent_artist}")
-                return self.process_playlist()
+                return await self.process_playlist()
             else:
                 self.logger.info(f"Input URL is not a playlist, processing single track")
-                return [self.prep_single_track()]
+                return [await self.prep_single_track()]

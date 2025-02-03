@@ -7,6 +7,7 @@ import os
 import json
 import sys
 from karaoke_prep import KaraokePrep
+import asyncio
 
 
 def is_url(string):
@@ -19,7 +20,7 @@ def is_file(string):
     return os.path.isfile(string)
 
 
-def main():
+async def async_main():
     logger = logging.getLogger(__name__)
     log_handler = logging.StreamHandler()
     log_formatter = logging.Formatter(fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
@@ -161,6 +162,10 @@ def main():
         help="Optional: Override the song title used for lyrics search. Example: --lyrics_title='Hey Jude'",
     )
     parser.add_argument(
+        "--lyrics_file",
+        help="Optional: Path to a file containing lyrics to use instead of fetching from online. Example: --lyrics_file='/path/to/lyrics.txt'",
+    )
+    parser.add_argument(
         "--skip_lyrics",
         action="store_true",
         help="Optional: Skip fetching and processing lyrics. Example: --skip_lyrics",
@@ -256,13 +261,14 @@ def main():
         # Lyrics Configuration
         lyrics_artist=args.lyrics_artist,
         lyrics_title=args.lyrics_title,
+        lyrics_file=args.lyrics_file,
         skip_lyrics=args.skip_lyrics,
         skip_transcription=args.skip_transcription,
         # Style Configuration
         style_params_json=args.style_params_json,
     )
 
-    tracks = kprep.process()
+    tracks = await kprep.process()
 
     logger.info(f"Karaoke Prep complete! Output files:")
 
@@ -301,6 +307,18 @@ def main():
         for model, file_path in track["separated_audio"]["combined_instrumentals"].items():
             logger.info(f"   Model: {model}")
             logger.info(f"    Combined Instrumental: {file_path}")
+
+
+def main():
+    # Set up logging
+    logger = logging.getLogger(__name__)
+    log_handler = logging.StreamHandler()
+    log_formatter = logging.Formatter(fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    log_handler.setFormatter(log_formatter)
+    logger.addHandler(log_handler)
+
+    # Run the async main function using asyncio
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":

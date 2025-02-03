@@ -1,6 +1,7 @@
 # Andrew env
 .DS_Store
 .vscode
+*.csv
 
 # Andrew functional adds
 audio/
