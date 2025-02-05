@@ -484,8 +484,37 @@ class KaraokePrep:
             f"Transcribing lyrics for track {artist} - {title} from audio file: {input_audio_wav} with output directory: {track_output_dir}"
         )
 
-        # Create lyrics subdirectory
+        # Check for existing files first using sanitized names
+        sanitized_artist = self.sanitize_filename(artist)
+        sanitized_title = self.sanitize_filename(title)
+        parent_video_path = os.path.join(track_output_dir, f"{sanitized_artist} - {sanitized_title} (With Vocals).mkv")
+        parent_lrc_path = os.path.join(track_output_dir, f"{sanitized_artist} - {sanitized_title} (Karaoke).lrc")
+
+        # Check lyrics directory for existing files
         lyrics_dir = os.path.join(track_output_dir, "lyrics")
+        lyrics_video_path = os.path.join(lyrics_dir, f"{sanitized_artist} - {sanitized_title} (With Vocals).mkv")
+        lyrics_lrc_path = os.path.join(lyrics_dir, f"{sanitized_artist} - {sanitized_title} (Karaoke).lrc")
+
+        # If files exist in parent directory, return early
+        if os.path.exists(parent_video_path) and os.path.exists(parent_lrc_path):
+            self.logger.info(f"Found existing video and LRC files in parent directory, skipping transcription")
+            return {
+                "lrc_filepath": parent_lrc_path,
+                "ass_filepath": parent_video_path,
+            }
+
+        # If files exist in lyrics directory, copy to parent and return
+        if os.path.exists(lyrics_video_path) and os.path.exists(lyrics_lrc_path):
+            self.logger.info(f"Found existing video and LRC files in lyrics directory, copying to parent")
+            os.makedirs(track_output_dir, exist_ok=True)
+            shutil.copy2(lyrics_video_path, parent_video_path)
+            shutil.copy2(lyrics_lrc_path, parent_lrc_path)
+            return {
+                "lrc_filepath": parent_lrc_path,
+                "ass_filepath": parent_video_path,
+            }
+
+        # Create lyrics subdirectory for new transcription
         os.makedirs(lyrics_dir, exist_ok=True)
         self.logger.info(f"Created lyrics directory: {lyrics_dir}")
 
@@ -542,15 +571,11 @@ class KaraokePrep:
         transcriber_outputs = {}
         if results.lrc_filepath:
             transcriber_outputs["lrc_filepath"] = results.lrc_filepath
-            # Move LRC file to parent directory
-            parent_lrc_path = os.path.join(track_output_dir, f"{artist} - {title} (Karaoke).lrc")
             self.logger.info(f"Moving LRC file from {results.lrc_filepath} to {parent_lrc_path}")
             shutil.copy2(results.lrc_filepath, parent_lrc_path)
 
         if results.ass_filepath:
             transcriber_outputs["ass_filepath"] = results.ass_filepath
-            # Move video file to parent directory
-            parent_video_path = os.path.join(track_output_dir, f"{artist} - {title} (With Vocals).mkv")
             self.logger.info(f"Moving video file from {results.video_filepath} to {parent_video_path}")
             shutil.copy2(results.video_filepath, parent_video_path)
 
@@ -1321,19 +1346,75 @@ class KaraokePrep:
             lyrics_artist = self.lyrics_artist or self.artist
             lyrics_title = self.lyrics_title or self.title
 
-            # Start transcription in a separate thread if lyrics are enabled
+            # Create futures for both operations
             transcription_future = None
-            transcription_future = self.transcribe_lyrics(processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir)
+            separation_future = None
 
-        # Wait for transcription to complete if it was started
-        if transcription_future:
-            try:
-                transcriber_outputs = await transcription_future
-                if transcriber_outputs:
-                    self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
-                    processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
-            except Exception as e:
-                self.logger.error(f"Error during lyrics transcription: {e}")
+            self.logger.info("=== Starting Parallel Processing ===")
+
+            if not self.skip_lyrics:
+                self.logger.info("Creating transcription future...")
+                # Run transcription in a separate thread
+                transcription_future = asyncio.create_task(
+                    asyncio.to_thread(
+                        self.transcribe_lyrics, processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir
+                    )
+                )
+                self.logger.info(f"Transcription future created, type: {type(transcription_future)}")
+
+            if not self.existing_instrumental:
+                self.logger.info("Creating separation future...")
+                # Run separation in a separate thread
+                separation_future = asyncio.create_task(
+                    asyncio.to_thread(
+                        self.process_audio_separation,
+                        audio_file=processed_track["input_audio_wav"],
+                        artist_title=artist_title,
+                        track_output_dir=track_output_dir,
+                    )
+                )
+                self.logger.info(f"Separation future created, type: {type(separation_future)}")
+
+            self.logger.info("About to await both operations with asyncio.gather...")
+            # Wait for both operations to complete
+            results = await asyncio.gather(
+                transcription_future if transcription_future else asyncio.sleep(0),
+                separation_future if separation_future else asyncio.sleep(0),
+                return_exceptions=True,
+            )
+            self.logger.info("asyncio.gather completed")
+            self.logger.info(f"Results types: {[type(r) for r in results]}")
+
+            # Handle transcription results
+            if transcription_future:
+                self.logger.info("Processing transcription results...")
+                try:
+                    transcriber_outputs = results[0]
+                    if isinstance(transcriber_outputs, Exception):
+                        self.logger.error(f"Error during lyrics transcription: {transcriber_outputs}")
+                    elif transcriber_outputs:
+                        self.logger.info("Successfully received transcription outputs")
+                        self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
+                        processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
+                except Exception as e:
+                    self.logger.error(f"Error processing transcription results: {e}")
+                    self.logger.exception("Full traceback:")
+
+            # Handle separation results
+            if separation_future:
+                self.logger.info("Processing separation results...")
+                try:
+                    separation_results = results[1]
+                    if isinstance(separation_results, Exception):
+                        self.logger.error(f"Error during audio separation: {separation_results}")
+                    else:
+                        self.logger.info("Successfully received separation results")
+                        processed_track["separated_audio"] = separation_results
+                except Exception as e:
+                    self.logger.error(f"Error processing separation results: {e}")
+                    self.logger.exception("Full traceback:")
+
+            self.logger.info("=== Parallel Processing Complete ===")
 
         output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
         processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"

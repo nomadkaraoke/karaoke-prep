@@ -163,8 +163,8 @@ async def async_main():
     for track in tracks:
         logger.info(f"Starting finalisation phase for {track['artist']} - {track['title']}...")
 
-        # Change to the track directory - use the output directory structure
-        track_dir = os.path.join(args.output_dir, f"{track['artist']} - {track['title']}")
+        # Use the track directory that was actually created by KaraokePrep
+        track_dir = track["track_output_dir"]
         if not os.path.exists(track_dir):
             logger.error(f"Track directory not found: {track_dir}")
             continue
