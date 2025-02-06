@@ -445,15 +445,16 @@ def cli_main():
     parser.add_argument("audio_file", help="Path to the audio file")
     parser.add_argument("--title", required=True, help="Title of the song")
     parser.add_argument("--artist", required=True, help="Artist of the song")
-    parser.add_argument("--cdg-styles-json", required=True, help="Path to JSON file containing CDG style configuration")
+    parser.add_argument("--style_params_json", required=True, help="Path to JSON file containing CDG style configuration")
 
     args = parser.parse_args()
 
     try:
-        with open(args.cdg_styles_json, "r") as f:
-            cdg_styles = json.loads(f.read())
+        with open(args.style_params_json, "r") as f:
+            style_params = json.loads(f.read())
+            cdg_styles = style_params["cdg"]
     except FileNotFoundError:
-        logger.error(f"Style configuration file not found: {args.cdg_styles_json}")
+        logger.error(f"Style configuration file not found: {args.style_params_json}")
         sys.exit(1)
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in style configuration file: {e}")
