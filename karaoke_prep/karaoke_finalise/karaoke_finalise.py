@@ -16,7 +16,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
 import subprocess
 import time
-from cdgmaker.lrc_to_cdg import generate_cdg
+from karaoke_prep.karaoke_finalise.lrc_to_cdg import generate_cdg
 from google.oauth2.credentials import Credentials
 import base64
 from email.mime.text import MIMEText

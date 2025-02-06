@@ -5,12 +5,12 @@ import re
 import toml
 import argparse
 from pathlib import Path
-from cdgmaker.composer import KaraokeComposer
 import sys
 from PIL import ImageFont
-from cdgmaker.render import get_wrapped_text
 import os
 import json
+from lyrics_transcriber.output.cdgmaker.composer import KaraokeComposer
+from lyrics_transcriber.output.cdgmaker.render import get_wrapped_text
 
 # Keep only the truly constant values that aren't style-related
 CDG_VISIBLE_WIDTH = 280
