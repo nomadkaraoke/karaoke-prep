@@ -16,10 +16,10 @@ from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
 import subprocess
 import time
-from karaoke_prep.karaoke_finalise.lrc_to_cdg import generate_cdg
 from google.oauth2.credentials import Credentials
 import base64
 from email.mime.text import MIMEText
+from lyrics_transcriber.output.cdg import CDGGenerator
 
 
 class KaraokeFinalise:
@@ -721,23 +721,19 @@ class KaraokeFinalise:
             if self.cdg_styles is None:
                 raise ValueError("CDG styles configuration is required when enable_cdg is True")
 
-            generate_cdg(
-                input_files["karaoke_lrc"],
-                input_files["instrumental_audio"],
-                title,
-                artist,
-                self.cdg_styles,
+            generator = CDGGenerator(output_dir=os.getcwd(), logger=self.logger)
+            cdg_file, mp3_file, zip_file = generator.generate_cdg_from_lrc(
+                lrc_file=input_files["karaoke_lrc"],
+                audio_file=input_files["instrumental_audio"],
+                title=title,
+                artist=artist,
+                cdg_styles=self.cdg_styles,
             )
 
-        # Look for the generated ZIP file
-        expected_zip = f"{artist} - {title} (Karaoke).zip"
-
-        self.logger.info(f"Searching for CDG ZIP file. Expected: {expected_zip}")
-
-        if os.path.isfile(expected_zip):
-            self.logger.info(f"Found expected CDG ZIP file: {expected_zip}")
-            os.rename(expected_zip, output_files["final_karaoke_cdg_zip"])
-            self.logger.info(f"Renamed CDG ZIP file from {expected_zip} to {output_files['final_karaoke_cdg_zip']}")
+            # Rename the generated ZIP file to match our expected naming convention
+            if os.path.isfile(zip_file):
+                os.rename(zip_file, output_files["final_karaoke_cdg_zip"])
+                self.logger.info(f"Renamed CDG ZIP file from {zip_file} to {output_files['final_karaoke_cdg_zip']}")
 
         if not os.path.isfile(output_files["final_karaoke_cdg_zip"]):
             self.logger.error(f"Failed to find any CDG ZIP file. Listing directory contents:")
