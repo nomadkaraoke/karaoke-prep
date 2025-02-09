@@ -106,10 +106,10 @@ class KaraokeFinalise:
             "with_vocals_mp4": " (With Vocals).mp4",
             "with_vocals_mkv": " (With Vocals).mkv",
             "karaoke_lrc": " (Karaoke).lrc",
-            "karaoke_cdg": " (Karaoke).cdg",
             "karaoke_txt": " (Karaoke).txt",
-            "karaoke_mp3": " (Karaoke).mp3",
             "karaoke_mp4": " (Karaoke).mp4",
+            "karaoke_cdg": " (Karaoke).cdg",
+            "karaoke_mp3": " (Karaoke).mp3",
             "final_karaoke_lossless_mp4": " (Final Karaoke Lossless 4k).mp4",
             "final_karaoke_lossless_mkv": " (Final Karaoke Lossless 4k).mkv",
             "final_karaoke_lossy_mp4": " (Final Karaoke Lossy 4k).mp4",
@@ -177,6 +177,7 @@ class KaraokeFinalise:
         output_files = {
             "karaoke_mp4": f"{base_name}{self.suffixes['karaoke_mp4']}",
             "karaoke_mp3": f"{base_name}{self.suffixes['karaoke_mp3']}",
+            "karaoke_cdg": f"{base_name}{self.suffixes['karaoke_cdg']}",
             "with_vocals_mp4": f"{base_name}{self.suffixes['with_vocals_mp4']}",
             "final_karaoke_lossless_mp4": f"{base_name}{self.suffixes['final_karaoke_lossless_mp4']}",
             "final_karaoke_lossless_mkv": f"{base_name}{self.suffixes['final_karaoke_lossless_mkv']}",
@@ -712,7 +713,17 @@ class KaraokeFinalise:
                 self.logger.info(f"Skipping CDG ZIP file creation, existing file will be used.")
                 return
 
-        # Generate CDG and MP3 files
+        # Check if individual MP3 and CDG files already exist
+        if os.path.isfile(output_files["karaoke_mp3"]) and os.path.isfile(output_files["karaoke_cdg"]):
+            self.logger.info(f"Found existing MP3 and CDG files, creating ZIP file directly")
+            if not self.dry_run:
+                with zipfile.ZipFile(output_files["final_karaoke_cdg_zip"], "w") as zipf:
+                    zipf.write(output_files["karaoke_mp3"], os.path.basename(output_files["karaoke_mp3"]))
+                    zipf.write(output_files["karaoke_cdg"], os.path.basename(output_files["karaoke_cdg"]))
+                self.logger.info(f"Created CDG ZIP file: {output_files['final_karaoke_cdg_zip']}")
+            return
+
+        # Generate CDG and MP3 files if they don't exist
         if self.dry_run:
             self.logger.info(f"DRY RUN: Would generate CDG and MP3 files")
         else:

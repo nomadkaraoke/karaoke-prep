@@ -9,6 +9,7 @@ import importlib.resources as pkg_resources
 import yt_dlp.YoutubeDL as ydl
 from PIL import Image, ImageDraw, ImageFont
 from lyrics_transcriber import LyricsTranscriber, OutputConfig, TranscriberConfig, LyricsConfig
+from lyrics_transcriber.core.controller import LyricsControllerResult
 from pydub import AudioSegment
 import json
 from dotenv import load_dotenv
@@ -53,6 +54,7 @@ class KaraokePrep:
         skip_lyrics=False,
         skip_transcription=False,
         skip_transcription_review=False,
+        subtitle_offset_ms=0,
         # Style Configuration
         style_params_json=None,
     ):
@@ -110,8 +112,8 @@ class KaraokePrep:
         self.skip_transcription_review = skip_transcription_review
 
         # Style
+        self.subtitle_offset_ms = subtitle_offset_ms
         self.render_bounding_boxes = render_bounding_boxes
-
         self.style_params_json = style_params_json
 
         # Load style parameters from JSON or use defaults
@@ -551,6 +553,7 @@ class KaraokePrep:
             generate_cdg=True,
             video_resolution="4k",
             enable_review=not self.skip_transcription_review,
+            subtitle_offset_ms=self.subtitle_offset_ms,
         )
 
         # Initialize transcriber with new config objects
@@ -565,7 +568,11 @@ class KaraokePrep:
         )
 
         # Process and get results
-        results = transcriber.process()
+        results: LyricsControllerResult = transcriber.process()
+        self.logger.info(f"Transcriber Results Filepaths:")
+        for key, value in results.__dict__.items():
+            if key.endswith("_filepath"):
+                self.logger.info(f"  {key}: {value}")
 
         # Build output dictionary
         transcriber_outputs = {}
@@ -907,16 +914,30 @@ class KaraokePrep:
 
         if format["font"] is not None:
             self.logger.info(f"Using font: {format['font']}")
-            with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
-                # Render all text elements
-                self._render_all_text(
-                    draw,
-                    str(font_path),
-                    title_text,
-                    artist_text,
-                    format,
-                    render_bounding_boxes,
-                )
+            # Check if the font path is absolute
+            if os.path.isabs(format["font"]):
+                font_path = format["font"]
+                if not os.path.exists(font_path):
+                    self.logger.warning(f"Font file not found at {font_path}, falling back to default font")
+                    font_path = None
+            else:
+                # Try to load from package resources
+                try:
+                    with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
+                        font_path = str(font_path)
+                except Exception as e:
+                    self.logger.warning(f"Could not load font from resources: {e}, falling back to default font")
+                    font_path = None
+
+            # Render all text elements
+            self._render_all_text(
+                draw,
+                font_path,
+                title_text,
+                artist_text,
+                format,
+                render_bounding_boxes,
+            )
         else:
             self.logger.info("No font specified, skipping text rendering")
 
@@ -1090,6 +1111,27 @@ class KaraokePrep:
             result["clean_instrumental"]["instrumental"], result["backing_vocals"], artist_title, track_output_dir
         )
         self._normalize_audio_files(result, artist_title, track_output_dir)
+
+        # Create Audacity LOF file
+        lof_path = os.path.join(stems_dir, f"{artist_title} (Audacity).lof")
+        first_model = list(result["backing_vocals"].keys())[0]
+
+        files_to_include = [
+            audio_file,  # Original audio
+            result["clean_instrumental"]["instrumental"],  # Clean instrumental
+            result["backing_vocals"][first_model]["backing_vocals"],  # Backing vocals
+            result["combined_instrumentals"][first_model],  # Combined instrumental+BV
+        ]
+
+        # Convert to absolute paths
+        files_to_include = [os.path.abspath(f) for f in files_to_include]
+
+        with open(lof_path, "w") as lof:
+            for file_path in files_to_include:
+                lof.write(f'file "{file_path}"\n')
+
+        self.logger.info(f"Created Audacity LOF file: {lof_path}")
+        result["audacity_lof"] = lof_path
 
         self.logger.info("Audio separation, combination, and normalization process completed")
         return result
@@ -1392,6 +1434,7 @@ class KaraokePrep:
                     transcriber_outputs = results[0]
                     if isinstance(transcriber_outputs, Exception):
                         self.logger.error(f"Error during lyrics transcription: {transcriber_outputs}")
+                        raise transcriber_outputs  # Re-raise the exception
                     elif transcriber_outputs:
                         self.logger.info("Successfully received transcription outputs")
                         self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
@@ -1399,6 +1442,7 @@ class KaraokePrep:
                 except Exception as e:
                     self.logger.error(f"Error processing transcription results: {e}")
                     self.logger.exception("Full traceback:")
+                    raise  # Re-raise the exception
 
             # Handle separation results
             if separation_future:

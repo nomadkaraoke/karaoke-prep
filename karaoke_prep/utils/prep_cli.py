@@ -175,6 +175,12 @@ async def async_main():
         action="store_true",
         help="Optional: Skip audio transcription but still attempt to fetch lyrics from Spotify/Genius. Example: --skip_transcription",
     )
+    parser.add_argument(
+        "--subtitle_offset_ms",
+        type=int,
+        default=0,
+        help="Optional: Adjust subtitle timing by N milliseconds (+ve delays, -ve advances). Example: --subtitle_offset_ms=500",
+    )
 
     # Style Configuration
     parser.add_argument(
@@ -264,6 +270,7 @@ async def async_main():
         lyrics_file=args.lyrics_file,
         skip_lyrics=args.skip_lyrics,
         skip_transcription=args.skip_transcription,
+        subtitle_offset_ms=args.subtitle_offset_ms,
         # Style Configuration
         style_params_json=args.style_params_json,
     )
@@ -271,6 +278,18 @@ async def async_main():
     tracks = await kprep.process()
 
     logger.info(f"Karaoke Prep complete! Output files:")
+
+    # Launch Audacity with multiple tracks
+    if tracks and sys.platform == "darwin":  # Check if we're on macOS
+        first_track = tracks[0]
+        # Check if separated_audio exists and contains audacity_lof
+        lof_path = first_track.get("separated_audio", {}).get("audacity_lof")
+
+        if lof_path and os.path.exists(lof_path):
+            logger.info(f"Launching Audacity with LOF file: {lof_path}")
+            os.system(f'open -a Audacity "{lof_path}"')
+        else:
+            logger.debug("Audacity LOF file not available or not found")
 
     for track in tracks:
         logger.info(f"")

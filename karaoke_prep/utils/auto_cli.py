@@ -68,6 +68,12 @@ async def async_main():
         "--lyrics_file",
         help="Optional: Path to a file containing lyrics to use instead of fetching from online. Example: --lyrics_file='/path/to/lyrics.txt'",
     )
+    parser.add_argument(
+        "--subtitle_offset_ms",
+        type=int,
+        default=0,
+        help="Optional: Adjust subtitle timing by N milliseconds (+ve delays, -ve advances). Example: --subtitle_offset_ms=500",
+    )
 
     # Finalise-specific arguments
     parser.add_argument(
@@ -155,9 +161,22 @@ async def async_main():
         style_params_json=args.style_params_json,
         existing_instrumental=args.existing_instrumental,
         lyrics_file=args.lyrics_file,
+        subtitle_offset_ms=args.subtitle_offset_ms,
     )
 
     tracks = await kprep.process()
+
+    # Launch Audacity with multiple tracks
+    if tracks and sys.platform == "darwin":  # Check if we're on macOS
+        first_track = tracks[0]
+        # Check if separated_audio exists and contains audacity_lof
+        lof_path = first_track.get("separated_audio", {}).get("audacity_lof")
+
+        if lof_path and os.path.exists(lof_path):
+            logger.info(f"Launching Audacity with LOF file: {lof_path}")
+            os.system(f'open -a Audacity "{lof_path}"')
+        else:
+            logger.debug("Audacity LOF file not available or not found")
 
     # Step 2: For each track, run KaraokeFinalise
     for track in tracks:
