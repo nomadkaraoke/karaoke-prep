@@ -279,18 +279,6 @@ async def async_main():
 
     logger.info(f"Karaoke Prep complete! Output files:")
 
-    # Launch Audacity with multiple tracks
-    if tracks and sys.platform == "darwin":  # Check if we're on macOS
-        first_track = tracks[0]
-        # Check if separated_audio exists and contains audacity_lof
-        lof_path = first_track.get("separated_audio", {}).get("audacity_lof")
-
-        if lof_path and os.path.exists(lof_path):
-            logger.info(f"Launching Audacity with LOF file: {lof_path}")
-            os.system(f'open -a Audacity "{lof_path}"')
-        else:
-            logger.debug("Audacity LOF file not available or not found")
-
     for track in tracks:
         logger.info(f"")
         logger.info(f"Track: {track['artist']} - {track['title']}")

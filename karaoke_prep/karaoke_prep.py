@@ -5,6 +5,13 @@ import glob
 import logging
 import tempfile
 import shutil
+import asyncio
+import signal
+import time
+import fcntl
+import errno
+import psutil
+from datetime import datetime
 import importlib.resources as pkg_resources
 import yt_dlp.YoutubeDL as ydl
 from PIL import Image, ImageDraw, ImageFont
@@ -13,8 +20,6 @@ from lyrics_transcriber.core.controller import LyricsControllerResult
 from pydub import AudioSegment
 import json
 from dotenv import load_dotenv
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 
 
 class KaraokePrep:
@@ -587,7 +592,9 @@ class KaraokePrep:
             shutil.copy2(results.video_filepath, parent_video_path)
 
         if results.transcription_corrected:
-            transcriber_outputs["corrected_lyrics_text"] = results.transcription_corrected.corrected_text
+            transcriber_outputs["corrected_lyrics_text"] = "\n".join(
+                segment.text for segment in results.transcription_corrected.corrected_segments
+            )
             transcriber_outputs["corrected_lyrics_text_filepath"] = results.corrected_txt
 
         if transcriber_outputs:
@@ -1091,50 +1098,134 @@ class KaraokePrep:
 
         self.logger.info(f"Starting audio separation process for {artist_title}")
 
-        separator = Separator(
-            log_level=self.log_level,
-            log_formatter=self.log_formatter,
-            model_file_dir=self.model_file_dir,
-            output_format=self.lossless_output_format,
-        )
+        # Define lock file path in system temp directory
+        lock_file_path = os.path.join(tempfile.gettempdir(), "audio_separator.lock")
 
-        stems_dir = self._create_stems_directory(track_output_dir)
-        result = {"clean_instrumental": {}, "other_stems": {}, "backing_vocals": {}, "combined_instrumentals": {}}
+        # Try to acquire lock
+        while True:
+            try:
+                # First check if there's a stale lock
+                if os.path.exists(lock_file_path):
+                    try:
+                        with open(lock_file_path, "r") as f:
+                            lock_data = json.load(f)
+                            pid = lock_data.get("pid")
+                            start_time = datetime.fromisoformat(lock_data.get("start_time"))
+                            running_track = lock_data.get("track")
 
-        if os.environ.get("KARAOKE_PREP_SKIP_AUDIO_SEPARATION"):
+                            # Check if process is still running
+                            if not psutil.pid_exists(pid):
+                                self.logger.warning(f"Found stale lock from dead process {pid}, removing...")
+                                os.remove(lock_file_path)
+                            else:
+                                # Calculate runtime
+                                runtime = datetime.now() - start_time
+                                runtime_mins = runtime.total_seconds() / 60
+
+                                # Get process command line
+                                proc = psutil.Process(pid)
+                                cmd = " ".join(proc.cmdline())
+
+                                self.logger.info(
+                                    f"Waiting for other audio separation process to complete before starting separation for {artist_title}...\n"
+                                    f"Currently running process details:\n"
+                                    f"  Track: {running_track}\n"
+                                    f"  PID: {pid}\n"
+                                    f"  Running time: {runtime_mins:.1f} minutes\n"
+                                    f"  Command: {cmd}\n"
+                                    f"To force clear the lock and kill the process, run:\n"
+                                    f"  kill {pid} && rm {lock_file_path}"
+                                )
+                    except (json.JSONDecodeError, KeyError, ValueError) as e:
+                        self.logger.warning(f"Found invalid lock file, removing: {e}")
+                        os.remove(lock_file_path)
+
+                # Try to acquire lock
+                lock_file = open(lock_file_path, "w")
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+                # Write metadata to lock file
+                lock_data = {
+                    "pid": os.getpid(),
+                    "start_time": datetime.now().isoformat(),
+                    "track": f"{artist_title}",
+                }
+                json.dump(lock_data, lock_file)
+                lock_file.flush()
+                break
+
+            except IOError as e:
+                if e.errno != errno.EAGAIN:
+                    raise
+                # Lock is held by another process
+                time.sleep(30)  # Wait 30 seconds before trying again
+                continue
+
+        try:
+            separator = Separator(
+                log_level=self.log_level,
+                log_formatter=self.log_formatter,
+                model_file_dir=self.model_file_dir,
+                output_format=self.lossless_output_format,
+            )
+
+            stems_dir = self._create_stems_directory(track_output_dir)
+            result = {"clean_instrumental": {}, "other_stems": {}, "backing_vocals": {}, "combined_instrumentals": {}}
+
+            if os.environ.get("KARAOKE_PREP_SKIP_AUDIO_SEPARATION"):
+                return result
+
+            result["clean_instrumental"] = self._separate_clean_instrumental(
+                separator, audio_file, artist_title, track_output_dir, stems_dir
+            )
+            result["other_stems"] = self._separate_other_stems(separator, audio_file, artist_title, stems_dir)
+            result["backing_vocals"] = self._separate_backing_vocals(
+                separator, result["clean_instrumental"]["vocals"], artist_title, stems_dir
+            )
+            result["combined_instrumentals"] = self._generate_combined_instrumentals(
+                result["clean_instrumental"]["instrumental"], result["backing_vocals"], artist_title, track_output_dir
+            )
+            self._normalize_audio_files(result, artist_title, track_output_dir)
+
+            # Create Audacity LOF file
+            lof_path = os.path.join(stems_dir, f"{artist_title} (Audacity).lof")
+            first_model = list(result["backing_vocals"].keys())[0]
+
+            files_to_include = [
+                audio_file,  # Original audio
+                result["clean_instrumental"]["instrumental"],  # Clean instrumental
+                result["backing_vocals"][first_model]["backing_vocals"],  # Backing vocals
+                result["combined_instrumentals"][first_model],  # Combined instrumental+BV
+            ]
+
+            # Convert to absolute paths
+            files_to_include = [os.path.abspath(f) for f in files_to_include]
+
+            with open(lof_path, "w") as lof:
+                for file_path in files_to_include:
+                    lof.write(f'file "{file_path}"\n')
+
+            self.logger.info(f"Created Audacity LOF file: {lof_path}")
+            result["audacity_lof"] = lof_path
+
+            # Launch Audacity with multiple tracks
+            if sys.platform == "darwin":  # Check if we're on macOS
+                if lof_path and os.path.exists(lof_path):
+                    self.logger.info(f"Launching Audacity with LOF file: {lof_path}")
+                    os.system(f'open -a Audacity "{lof_path}"')
+                else:
+                    self.logger.debug("Audacity LOF file not available or not found")
+
+            self.logger.info("Audio separation, combination, and normalization process completed")
             return result
-
-        result["clean_instrumental"] = self._separate_clean_instrumental(separator, audio_file, artist_title, track_output_dir, stems_dir)
-        result["other_stems"] = self._separate_other_stems(separator, audio_file, artist_title, stems_dir)
-        result["backing_vocals"] = self._separate_backing_vocals(separator, result["clean_instrumental"]["vocals"], artist_title, stems_dir)
-        result["combined_instrumentals"] = self._generate_combined_instrumentals(
-            result["clean_instrumental"]["instrumental"], result["backing_vocals"], artist_title, track_output_dir
-        )
-        self._normalize_audio_files(result, artist_title, track_output_dir)
-
-        # Create Audacity LOF file
-        lof_path = os.path.join(stems_dir, f"{artist_title} (Audacity).lof")
-        first_model = list(result["backing_vocals"].keys())[0]
-
-        files_to_include = [
-            audio_file,  # Original audio
-            result["clean_instrumental"]["instrumental"],  # Clean instrumental
-            result["backing_vocals"][first_model]["backing_vocals"],  # Backing vocals
-            result["combined_instrumentals"][first_model],  # Combined instrumental+BV
-        ]
-
-        # Convert to absolute paths
-        files_to_include = [os.path.abspath(f) for f in files_to_include]
-
-        with open(lof_path, "w") as lof:
-            for file_path in files_to_include:
-                lof.write(f'file "{file_path}"\n')
-
-        self.logger.info(f"Created Audacity LOF file: {lof_path}")
-        result["audacity_lof"] = lof_path
-
-        self.logger.info("Audio separation, combination, and normalization process completed")
-        return result
+        finally:
+            # Release lock
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
+            try:
+                os.remove(lock_file_path)
+            except OSError:
+                pass
 
     def _create_stems_directory(self, track_output_dir):
         stems_dir = os.path.join(track_output_dir, "stems")
@@ -1302,205 +1393,250 @@ class KaraokePrep:
         return exists
 
     async def prep_single_track(self):
-        self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
+        # Add signal handler at the start
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(self.shutdown(s)))
 
-        if self.input_media is not None and os.path.isfile(self.input_media):
-            self.extractor = "Original"
-        else:
-            self.parse_single_track_metadata(input_artist=self.artist, input_title=self.title)
+        try:
+            self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
 
-        self.logger.info(f"Preparing output path for track: {self.title} by {self.artist}")
-        if self.dry_run:
-            return None
-
-        track_output_dir, artist_title = self.setup_output_paths(self.artist, self.title)
-
-        processed_track = {
-            "track_output_dir": track_output_dir,
-            "artist": self.artist,
-            "title": self.title,
-            "extractor": self.extractor,
-            "extracted_info": self.extracted_info,
-            "lyrics": None,
-            "processed_lyrics": None,
-            "separated_audio": {},
-        }
-
-        processed_track["input_media"] = None
-        processed_track["input_still_image"] = None
-        processed_track["input_audio_wav"] = None
-
-        if self.input_media is not None and os.path.isfile(self.input_media):
-            input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
-            input_wav_glob = glob.glob(input_wav_filename_pattern)
-
-            if input_wav_glob:
-                processed_track["input_audio_wav"] = input_wav_glob[0]
-                self.logger.info(f"Input media WAV file already exists, skipping conversion: {processed_track['input_audio_wav']}")
+            if self.input_media is not None and os.path.isfile(self.input_media):
+                self.extractor = "Original"
             else:
-                output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor})")
+                self.parse_single_track_metadata(input_artist=self.artist, input_title=self.title)
 
-                self.logger.info(f"Copying input media from {self.input_media} to new directory...")
-                processed_track["input_media"] = self.copy_input_media(self.input_media, output_filename_no_extension)
+            self.logger.info(f"Preparing output path for track: {self.title} by {self.artist}")
+            if self.dry_run:
+                return None
 
-                self.logger.info("Converting input media to WAV for audio processing...")
-                processed_track["input_audio_wav"] = self.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
+            track_output_dir, artist_title = self.setup_output_paths(self.artist, self.title)
 
-        else:
-            # WebM may not always be the output format from ytdlp, but it's common and this is just a convenience cache
-            input_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.webm")
-            input_webm_glob = glob.glob(input_webm_filename_pattern)
-
-            input_png_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.png")
-            input_png_glob = glob.glob(input_png_filename_pattern)
-
-            input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
-            input_wav_glob = glob.glob(input_wav_filename_pattern)
-
-            if input_webm_glob and input_png_glob and input_wav_glob:
-                processed_track["input_media"] = input_webm_glob[0]
-                processed_track["input_still_image"] = input_png_glob[0]
-                processed_track["input_audio_wav"] = input_wav_glob[0]
-
-                self.logger.info(f"Input media files already exist, skipping download: {processed_track['input_media']} + .wav + .png")
-            else:
-                if self.url:
-                    output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} {self.media_id})")
-
-                    self.logger.info(f"Downloading input media from {self.url}...")
-                    processed_track["input_media"] = self.download_video(self.url, output_filename_no_extension)
-
-                    self.logger.info("Extracting still image from downloaded media (if input is video)...")
-                    processed_track["input_still_image"] = self.extract_still_image_from_video(
-                        processed_track["input_media"], output_filename_no_extension
-                    )
-
-                    self.logger.info("Converting downloaded video to WAV for audio processing...")
-                    processed_track["input_audio_wav"] = self.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
-                else:
-                    self.logger.warning(f"Skipping download due to missing URL.")
-
-        if self.skip_lyrics:
-            self.logger.info("Skipping lyrics fetch as requested.")
-            processed_track["lyrics"] = None
-            processed_track["processed_lyrics"] = None
-        else:
-            lyrics_artist = self.lyrics_artist or self.artist
-            lyrics_title = self.lyrics_title or self.title
-
-            # Create futures for both operations
-            transcription_future = None
-            separation_future = None
-
-            self.logger.info("=== Starting Parallel Processing ===")
-
-            if not self.skip_lyrics:
-                self.logger.info("Creating transcription future...")
-                # Run transcription in a separate thread
-                transcription_future = asyncio.create_task(
-                    asyncio.to_thread(
-                        self.transcribe_lyrics, processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir
-                    )
-                )
-                self.logger.info(f"Transcription future created, type: {type(transcription_future)}")
-
-            if not self.existing_instrumental:
-                self.logger.info("Creating separation future...")
-                # Run separation in a separate thread
-                separation_future = asyncio.create_task(
-                    asyncio.to_thread(
-                        self.process_audio_separation,
-                        audio_file=processed_track["input_audio_wav"],
-                        artist_title=artist_title,
-                        track_output_dir=track_output_dir,
-                    )
-                )
-                self.logger.info(f"Separation future created, type: {type(separation_future)}")
-
-            self.logger.info("About to await both operations with asyncio.gather...")
-            # Wait for both operations to complete
-            results = await asyncio.gather(
-                transcription_future if transcription_future else asyncio.sleep(0),
-                separation_future if separation_future else asyncio.sleep(0),
-                return_exceptions=True,
-            )
-            self.logger.info("asyncio.gather completed")
-            self.logger.info(f"Results types: {[type(r) for r in results]}")
-
-            # Handle transcription results
-            if transcription_future:
-                self.logger.info("Processing transcription results...")
-                try:
-                    transcriber_outputs = results[0]
-                    if isinstance(transcriber_outputs, Exception):
-                        self.logger.error(f"Error during lyrics transcription: {transcriber_outputs}")
-                        raise transcriber_outputs  # Re-raise the exception
-                    elif transcriber_outputs:
-                        self.logger.info("Successfully received transcription outputs")
-                        self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
-                        processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
-                except Exception as e:
-                    self.logger.error(f"Error processing transcription results: {e}")
-                    self.logger.exception("Full traceback:")
-                    raise  # Re-raise the exception
-
-            # Handle separation results
-            if separation_future:
-                self.logger.info("Processing separation results...")
-                try:
-                    separation_results = results[1]
-                    if isinstance(separation_results, Exception):
-                        self.logger.error(f"Error during audio separation: {separation_results}")
-                    else:
-                        self.logger.info("Successfully received separation results")
-                        processed_track["separated_audio"] = separation_results
-                except Exception as e:
-                    self.logger.error(f"Error processing separation results: {e}")
-                    self.logger.exception("Full traceback:")
-
-            self.logger.info("=== Parallel Processing Complete ===")
-
-        output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
-        processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"
-        processed_track["title_image_jpg"] = f"{output_image_filepath_noext}.jpg"
-        processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
-
-        if not self._file_exists(processed_track["title_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
-            self.logger.info(f"Creating title video...")
-            self.create_title_video(self.artist, self.title, self.title_format, output_image_filepath_noext, processed_track["title_video"])
-
-        output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (End)")
-        processed_track["end_image_png"] = f"{output_image_filepath_noext}.png"
-        processed_track["end_image_jpg"] = f"{output_image_filepath_noext}.jpg"
-        processed_track["end_video"] = os.path.join(track_output_dir, f"{artist_title} (End).mov")
-
-        if not self._file_exists(processed_track["end_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
-            self.logger.info(f"Creating end screen video...")
-            self.create_end_video(self.artist, self.title, self.end_format, output_image_filepath_noext, processed_track["end_video"])
-
-        if self.existing_instrumental:
-            self.logger.info(f"Using existing instrumental file: {self.existing_instrumental}")
-            existing_instrumental_extension = os.path.splitext(self.existing_instrumental)[1]
-
-            instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental Custom){existing_instrumental_extension}")
-
-            if not self._file_exists(instrumental_path):
-                shutil.copy2(self.existing_instrumental, instrumental_path)
-
-            processed_track["separated_audio"]["Custom"] = {
-                "instrumental": instrumental_path,
-                "vocals": None,
+            processed_track = {
+                "track_output_dir": track_output_dir,
+                "artist": self.artist,
+                "title": self.title,
+                "extractor": self.extractor,
+                "extracted_info": self.extracted_info,
+                "lyrics": None,
+                "processed_lyrics": None,
+                "separated_audio": {},
             }
-        else:
-            self.logger.info(f"Separating audio for track: {self.title} by {self.artist}")
-            separation_results = self.process_audio_separation(
-                audio_file=processed_track["input_audio_wav"], artist_title=artist_title, track_output_dir=track_output_dir
-            )
-            processed_track["separated_audio"] = separation_results
 
-        self.logger.info("Script finished, audio downloaded, lyrics fetched and audio separated!")
+            processed_track["input_media"] = None
+            processed_track["input_still_image"] = None
+            processed_track["input_audio_wav"] = None
 
-        return processed_track
+            if self.input_media is not None and os.path.isfile(self.input_media):
+                input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
+                input_wav_glob = glob.glob(input_wav_filename_pattern)
+
+                if input_wav_glob:
+                    processed_track["input_audio_wav"] = input_wav_glob[0]
+                    self.logger.info(f"Input media WAV file already exists, skipping conversion: {processed_track['input_audio_wav']}")
+                else:
+                    output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor})")
+
+                    self.logger.info(f"Copying input media from {self.input_media} to new directory...")
+                    processed_track["input_media"] = self.copy_input_media(self.input_media, output_filename_no_extension)
+
+                    self.logger.info("Converting input media to WAV for audio processing...")
+                    processed_track["input_audio_wav"] = self.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
+
+            else:
+                # WebM may not always be the output format from ytdlp, but it's common and this is just a convenience cache
+                input_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.webm")
+                input_webm_glob = glob.glob(input_webm_filename_pattern)
+
+                input_png_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.png")
+                input_png_glob = glob.glob(input_png_filename_pattern)
+
+                input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
+                input_wav_glob = glob.glob(input_wav_filename_pattern)
+
+                if input_webm_glob and input_png_glob and input_wav_glob:
+                    processed_track["input_media"] = input_webm_glob[0]
+                    processed_track["input_still_image"] = input_png_glob[0]
+                    processed_track["input_audio_wav"] = input_wav_glob[0]
+
+                    self.logger.info(f"Input media files already exist, skipping download: {processed_track['input_media']} + .wav + .png")
+                else:
+                    if self.url:
+                        output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} {self.media_id})")
+
+                        self.logger.info(f"Downloading input media from {self.url}...")
+                        processed_track["input_media"] = self.download_video(self.url, output_filename_no_extension)
+
+                        self.logger.info("Extracting still image from downloaded media (if input is video)...")
+                        processed_track["input_still_image"] = self.extract_still_image_from_video(
+                            processed_track["input_media"], output_filename_no_extension
+                        )
+
+                        self.logger.info("Converting downloaded video to WAV for audio processing...")
+                        processed_track["input_audio_wav"] = self.convert_to_wav(
+                            processed_track["input_media"], output_filename_no_extension
+                        )
+                    else:
+                        self.logger.warning(f"Skipping download due to missing URL.")
+
+            if self.skip_lyrics:
+                self.logger.info("Skipping lyrics fetch as requested.")
+                processed_track["lyrics"] = None
+                processed_track["processed_lyrics"] = None
+            else:
+                lyrics_artist = self.lyrics_artist or self.artist
+                lyrics_title = self.lyrics_title or self.title
+
+                # Create futures for both operations
+                transcription_future = None
+                separation_future = None
+
+                self.logger.info("=== Starting Parallel Processing ===")
+
+                if not self.skip_lyrics:
+                    self.logger.info("Creating transcription future...")
+                    # Run transcription in a separate thread
+                    transcription_future = asyncio.create_task(
+                        asyncio.to_thread(
+                            self.transcribe_lyrics, processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir
+                        )
+                    )
+                    self.logger.info(f"Transcription future created, type: {type(transcription_future)}")
+
+                if not self.existing_instrumental:
+                    self.logger.info("Creating separation future...")
+                    # Run separation in a separate thread
+                    separation_future = asyncio.create_task(
+                        asyncio.to_thread(
+                            self.process_audio_separation,
+                            audio_file=processed_track["input_audio_wav"],
+                            artist_title=artist_title,
+                            track_output_dir=track_output_dir,
+                        )
+                    )
+                    self.logger.info(f"Separation future created, type: {type(separation_future)}")
+
+                self.logger.info("About to await both operations with asyncio.gather...")
+                # Wait for both operations to complete
+                try:
+                    results = await asyncio.gather(
+                        transcription_future if transcription_future else asyncio.sleep(0),
+                        separation_future if separation_future else asyncio.sleep(0),
+                        return_exceptions=True,
+                    )
+                except asyncio.CancelledError:
+                    self.logger.info("Received cancellation request, cleaning up...")
+                    # Cancel any running futures
+                    if transcription_future and not transcription_future.done():
+                        transcription_future.cancel()
+                    if separation_future and not separation_future.done():
+                        separation_future.cancel()
+                    # Wait for futures to complete cancellation
+                    await asyncio.gather(
+                        transcription_future if transcription_future else asyncio.sleep(0),
+                        separation_future if separation_future else asyncio.sleep(0),
+                        return_exceptions=True,
+                    )
+                    raise
+
+                # Handle transcription results
+                if transcription_future:
+                    self.logger.info("Processing transcription results...")
+                    try:
+                        transcriber_outputs = results[0]
+                        if isinstance(transcriber_outputs, Exception):
+                            self.logger.error(f"Error during lyrics transcription: {transcriber_outputs}")
+                            raise transcriber_outputs  # Re-raise the exception
+                        elif transcriber_outputs:
+                            self.logger.info("Successfully received transcription outputs")
+                            self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
+                            processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
+                    except Exception as e:
+                        self.logger.error(f"Error processing transcription results: {e}")
+                        self.logger.exception("Full traceback:")
+                        raise  # Re-raise the exception
+
+                # Handle separation results
+                if separation_future:
+                    self.logger.info("Processing separation results...")
+                    try:
+                        separation_results = results[1]
+                        if isinstance(separation_results, Exception):
+                            self.logger.error(f"Error during audio separation: {separation_results}")
+                        else:
+                            self.logger.info("Successfully received separation results")
+                            processed_track["separated_audio"] = separation_results
+                    except Exception as e:
+                        self.logger.error(f"Error processing separation results: {e}")
+                        self.logger.exception("Full traceback:")
+
+                self.logger.info("=== Parallel Processing Complete ===")
+
+            output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (Title)")
+            processed_track["title_image_png"] = f"{output_image_filepath_noext}.png"
+            processed_track["title_image_jpg"] = f"{output_image_filepath_noext}.jpg"
+            processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
+
+            if not self._file_exists(processed_track["title_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
+                self.logger.info(f"Creating title video...")
+                self.create_title_video(
+                    self.artist, self.title, self.title_format, output_image_filepath_noext, processed_track["title_video"]
+                )
+
+            output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (End)")
+            processed_track["end_image_png"] = f"{output_image_filepath_noext}.png"
+            processed_track["end_image_jpg"] = f"{output_image_filepath_noext}.jpg"
+            processed_track["end_video"] = os.path.join(track_output_dir, f"{artist_title} (End).mov")
+
+            if not self._file_exists(processed_track["end_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
+                self.logger.info(f"Creating end screen video...")
+                self.create_end_video(self.artist, self.title, self.end_format, output_image_filepath_noext, processed_track["end_video"])
+
+            if self.existing_instrumental:
+                self.logger.info(f"Using existing instrumental file: {self.existing_instrumental}")
+                existing_instrumental_extension = os.path.splitext(self.existing_instrumental)[1]
+
+                instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental Custom){existing_instrumental_extension}")
+
+                if not self._file_exists(instrumental_path):
+                    shutil.copy2(self.existing_instrumental, instrumental_path)
+
+                processed_track["separated_audio"]["Custom"] = {
+                    "instrumental": instrumental_path,
+                    "vocals": None,
+                }
+            else:
+                self.logger.info(f"Separating audio for track: {self.title} by {self.artist}")
+                separation_results = self.process_audio_separation(
+                    audio_file=processed_track["input_audio_wav"], artist_title=artist_title, track_output_dir=track_output_dir
+                )
+                processed_track["separated_audio"] = separation_results
+
+            self.logger.info("Script finished, audio downloaded, lyrics fetched and audio separated!")
+
+            return processed_track
+
+        except Exception as e:
+            self.logger.error(f"Error in prep_single_track: {e}")
+            raise
+        finally:
+            # Remove signal handlers
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.remove_signal_handler(sig)
+
+    async def shutdown(self, signal):
+        """Cleanup tasks tied to the service's shutdown."""
+        self.logger.info(f"Received exit signal {signal.name}...")
+
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+        [task.cancel() for task in tasks]
+
+        self.logger.info(f"Cancelling {len(tasks)} outstanding tasks")
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        loop = asyncio.get_running_loop()
+        loop.stop()
 
     async def process_playlist(self):
         if self.artist is None or self.title is None:

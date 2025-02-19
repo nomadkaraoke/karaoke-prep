@@ -136,6 +136,9 @@ class KaraokeFinalise:
 
         self.keep_brand_code = keep_brand_code
 
+        # MP4 output flags for better compatibility and streaming
+        self.mp4_flags = "-pix_fmt yuv420p -movflags +faststart+frag_keyframe+empty_moov"
+
         # Update ffmpeg base command to include -y if non-interactive
         if self.non_interactive:
             self.ffmpeg_base_command += " -y"
@@ -478,19 +481,26 @@ class KaraokeFinalise:
         if karaoke_files:
             for file in karaoke_files:
                 # Get the current extension
-                current_ext = os.path.splitext(file)[1]
+                current_ext = os.path.splitext(file)[1].lower()  # Convert to lowercase
                 base_without_suffix = file.replace(f" (Karaoke){current_ext}", "")
-                new_file = f"{base_without_suffix}{self.suffixes[f'with_vocals{current_ext[1:]}']}"
 
-                self.prompt_user_confirmation_or_raise_exception(
-                    f"Found '{file}' but no '(With Vocals)', rename to {new_file} for vocal input?",
-                    "Unable to proceed without With Vocals file or user confirmation of rename.",
-                    allow_empty=True,
-                )
+                # Map file extension to suffix dictionary key
+                ext_to_suffix = {".mov": "with_vocals_mov", ".mp4": "with_vocals_mp4", ".mkv": "with_vocals_mkv"}
 
-                os.rename(file, new_file)
-                self.logger.info(f"Renamed '{file}' to '{new_file}'")
-                return new_file
+                if current_ext in ext_to_suffix:
+                    new_file = f"{base_without_suffix}{self.suffixes[ext_to_suffix[current_ext]]}"
+
+                    self.prompt_user_confirmation_or_raise_exception(
+                        f"Found '{file}' but no '(With Vocals)', rename to {new_file} for vocal input?",
+                        "Unable to proceed without With Vocals file or user confirmation of rename.",
+                        allow_empty=True,
+                    )
+
+                    os.rename(file, new_file)
+                    self.logger.info(f"Renamed '{file}' to '{new_file}'")
+                    return new_file
+                else:
+                    self.logger.warning(f"Unsupported file extension: {current_ext}")
 
         raise Exception("No suitable files found for processing.")
 
@@ -595,7 +605,7 @@ class KaraokeFinalise:
         # fmt: off
         ffmpeg_command = (
             f'{self.ffmpeg_base_command} -i "{input_file}" '
-            f'-c:v libx264 -c:a {self.aac_codec} "{output_file}"'
+            f'-c:v libx264 -c:a {self.aac_codec} {self.mp4_flags} "{output_file}"'
         )
         # fmt: on
         self.execute_command(ffmpeg_command, "Converting MOV video to MP4")
@@ -605,7 +615,8 @@ class KaraokeFinalise:
         # fmt: off
         ffmpeg_command = (
             f"{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mp4_file} {env_mov_input} "
-            f'{ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a pcm_s16le "{output_file}"'
+            f'{ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a pcm_s16le '
+            f'{self.mp4_flags} "{output_file}"'
         )
         # fmt: on
         self.execute_command(ffmpeg_command, "Creating MP4 version with PCM audio")
@@ -615,7 +626,7 @@ class KaraokeFinalise:
         # fmt: off
         ffmpeg_command = (
             f'{self.ffmpeg_base_command} -i "{input_file}" '
-            f'-c:v copy -c:a {self.aac_codec} -b:a 320k "{output_file}"'
+            f'-c:v copy -c:a {self.aac_codec} -b:a 320k {self.mp4_flags} "{output_file}"'
         )
         # fmt: on
         self.execute_command(ffmpeg_command, "Creating MP4 version with AAC audio")
@@ -636,7 +647,7 @@ class KaraokeFinalise:
         ffmpeg_command = (
             f'{self.ffmpeg_base_command} -i "{input_file}" '
             f'-c:v libx264 -vf "scale=1280:720" -b:v 200k -preset medium -tune animation '
-            f'-c:a {self.aac_codec} -b:a 128k "{output_file}"'
+            f'-c:a {self.aac_codec} -b:a 128k {self.mp4_flags} "{output_file}"'
         )
         # fmt: on
         self.execute_command(ffmpeg_command, "Encoding 720p version of the final video")
