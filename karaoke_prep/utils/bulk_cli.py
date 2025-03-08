@@ -15,30 +15,64 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # Set initial log level
 
 
-async def process_track(row, args, logger, log_formatter):
-    """Process a single track through prep and finalise stages"""
-    original_dir = os.getcwd()  # Store the original directory
+async def process_track_prep(row, args, logger, log_formatter):
+    """First phase: Process a track through prep stage only, without video rendering"""
+    original_dir = os.getcwd()
     try:
-        # Extract track info from CSV row
-        artist = row["Artist"].strip()  # Remove leading/trailing whitespace
+        artist = row["Artist"].strip()
         title = row["Title"].strip()
         guide_file = row["Mixed Audio Filename"].strip()
         instrumental_file = row["Instrumental Audio Filename"].strip()
 
-        logger.info(f"Processing track: {artist} - {title}")
+        logger.info(f"Initial prep phase for track: {artist} - {title}")
 
-        # Initialize KaraokePrep
         kprep = KaraokePrep(
             artist=artist,
             title=title,
             input_media=guide_file,
             existing_instrumental=instrumental_file,
             style_params_json=args.style_params_json,
-            log_formatter=log_formatter,
+            logger=logger,
             log_level=args.log_level,
             dry_run=args.dry_run,
-            skip_transcription_review=True,
+            render_video=False,  # First phase: no video rendering
             create_track_subfolders=True,
+        )
+
+        tracks = await kprep.process()
+        return True
+    except Exception as e:
+        logger.error(f"Failed initial prep for {artist} - {title}: {str(e)}")
+        return False
+    finally:
+        os.chdir(original_dir)
+
+
+async def process_track_render(row, args, logger, log_formatter):
+    """Second phase: Re-run prep with video rendering and run finalise"""
+    # This is mostly the same as the original process_track function
+    # but with render_video=True and includes finalisation
+    original_dir = os.getcwd()
+    try:
+        artist = row["Artist"].strip()
+        title = row["Title"].strip()
+        guide_file = row["Mixed Audio Filename"].strip()
+        instrumental_file = row["Instrumental Audio Filename"].strip()
+
+        logger.info(f"Render phase for track: {artist} - {title}")
+
+        kprep = KaraokePrep(
+            artist=artist,
+            title=title,
+            input_media=guide_file,
+            existing_instrumental=instrumental_file,
+            style_params_json=args.style_params_json,
+            logger=logger,
+            log_level=args.log_level,
+            dry_run=args.dry_run,
+            render_video=True,
+            create_track_subfolders=True,
+            skip_transcription_review=True,
         )
 
         tracks = await kprep.process()
@@ -108,10 +142,9 @@ async def process_track(row, args, logger, log_formatter):
         return True
 
     except Exception as e:
-        logger.error(f"Failed to process {artist} - {title}: {str(e)}")
+        logger.error(f"Failed render/finalise for {artist} - {title}: {str(e)}")
         return False
     finally:
-        # Ensure we return to the original directory even if an error occurred
         os.chdir(original_dir)
 
 
@@ -198,27 +231,38 @@ async def async_main():
 
     logger.info(f"Starting bulk processing with input CSV: {args.input_csv}")
 
-    # Read and process CSV
+    # Read CSV
     with open(args.input_csv, "r") as f:
         reader = csv.DictReader(f)
-        rows = list(reader)  # Convert to list to allow multiple passes
+        rows = list(reader)
 
-        for i, row in enumerate(rows):
-            if row["Status"].lower() != "uploaded":
-                logger.info(f"Skipping {row['Artist']} - {row['Title']} (Status: {row['Status']})")
-                continue
+    # Phase 1: Initial prep for all tracks
+    logger.info("Starting Phase 1: Initial prep for all tracks")
+    for i, row in enumerate(rows):
+        if row["Status"].lower() != "uploaded":
+            logger.info(f"Skipping {row['Artist']} - {row['Title']} (Status: {row['Status']})")
+            continue
 
-            logger.info(f"Starting processing of {row['Artist']} - {row['Title']}")
+        success = await process_track_prep(row, args, logger, log_formatter)
+        if not args.dry_run:
+            if success:
+                update_csv_status(args.input_csv, i, "Prep_Complete")
+            else:
+                update_csv_status(args.input_csv, i, "Prep_Failed")
 
-            success = await process_track(row, args, logger, log_formatter)
+    # Phase 2: Render and finalise all tracks
+    logger.info("Starting Phase 2: Render and finalise for all tracks")
+    for i, row in enumerate(rows):
+        if row["Status"].lower() not in ["prep_complete", "uploaded"]:
+            logger.info(f"Skipping {row['Artist']} - {row['Title']} (Status: {row['Status']})")
+            continue
 
-            if not args.dry_run:
-                if success:
-                    update_csv_status(args.input_csv, i, "Completed")
-                    logger.info(f"Successfully processed {row['Artist']} - {row['Title']}")
-                else:
-                    update_csv_status(args.input_csv, i, "Failed")
-                    logger.error(f"Failed to process {row['Artist']} - {row['Title']}")
+        success = await process_track_render(row, args, logger, log_formatter)
+        if not args.dry_run:
+            if success:
+                update_csv_status(args.input_csv, i, "Completed")
+            else:
+                update_csv_status(args.input_csv, i, "Render_Failed")
 
 
 def main():

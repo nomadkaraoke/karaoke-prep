@@ -25,6 +25,7 @@ from lyrics_transcriber.output.cdg import CDGGenerator
 class KaraokeFinalise:
     def __init__(
         self,
+        logger=None,
         log_level=logging.DEBUG,
         log_formatter=None,
         dry_run=False,
@@ -45,18 +46,22 @@ class KaraokeFinalise:
         keep_brand_code=False,
         non_interactive=False,
     ):
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(log_level)
         self.log_level = log_level
         self.log_formatter = log_formatter
 
-        self.log_handler = logging.StreamHandler()
+        if logger is None:
+            self.logger = logging.getLogger(__name__)
+            self.logger.setLevel(log_level)
 
-        if self.log_formatter is None:
-            self.log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(module)s - %(message)s")
+            self.log_handler = logging.StreamHandler()
 
-        self.log_handler.setFormatter(self.log_formatter)
-        self.logger.addHandler(self.log_handler)
+            if self.log_formatter is None:
+                self.log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(module)s - %(message)s")
+
+            self.log_handler.setFormatter(self.log_formatter)
+            self.logger.addHandler(self.log_handler)
+        else:
+            self.logger = logger
 
         self.logger.debug(
             f"KaraokeFinalise instantiating, dry_run: {dry_run}, model_name: {model_name}, brand_prefix: {brand_prefix}, organised_dir: {organised_dir}, public_share_dir: {public_share_dir}, rclone_destination: {rclone_destination}"

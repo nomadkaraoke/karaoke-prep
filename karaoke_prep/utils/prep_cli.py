@@ -94,6 +94,11 @@ async def async_main():
 
     # Audio Processing Configuration
     parser.add_argument(
+        "--skip_separation",
+        action="store_true",
+        help="Optional: Skip audio separation process. Example: --skip_separation",
+    )
+    parser.add_argument(
         "--clean_instrumental_model",
         default="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
         help="Optional: Model for clean instrumental separation (default: %(default)s).",
@@ -171,6 +176,11 @@ async def async_main():
         help="Optional: Skip fetching and processing lyrics. Example: --skip_lyrics",
     )
     parser.add_argument(
+        "--lyrics_only",
+        action="store_true",
+        help="Optional: Only process lyrics, skipping audio separation and title/end screen generation. Example: --lyrics_only",
+    )
+    parser.add_argument(
         "--skip_transcription",
         action="store_true",
         help="Optional: Skip audio transcription but still attempt to fetch lyrics from Spotify/Genius. Example: --skip_transcription",
@@ -234,6 +244,13 @@ async def async_main():
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
 
+    # Set up environment variables for lyrics-only mode
+    if args.lyrics_only:
+        args.skip_separation = True
+        os.environ["KARAOKE_PREP_SKIP_AUDIO_SEPARATION"] = "1"
+        os.environ["KARAOKE_PREP_SKIP_TITLE_END_SCREENS"] = "1"
+        logger.info("Lyrics-only mode enabled: skipping audio separation and title/end screen generation")
+
     logger.info(f"KaraokePrep beginning with input_media: {input_media} artist: {artist} and title: {title}")
 
     kprep = KaraokePrep(
@@ -254,6 +271,7 @@ async def async_main():
         output_png=args.output_png,
         output_jpg=args.output_jpg,
         # Audio Processing Configuration
+        skip_separation=args.skip_separation,
         existing_instrumental=args.existing_instrumental,
         clean_instrumental_model=args.clean_instrumental_model,
         backing_vocals_models=args.backing_vocals_models,

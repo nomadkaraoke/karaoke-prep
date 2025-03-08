@@ -32,6 +32,7 @@ class KaraokePrep:
         filename_pattern=None,
         # Logging & Debugging
         dry_run=False,
+        logger=None,
         log_level=logging.DEBUG,
         log_formatter=None,
         render_bounding_boxes=False,
@@ -59,22 +60,29 @@ class KaraokePrep:
         skip_lyrics=False,
         skip_transcription=False,
         skip_transcription_review=False,
+        render_video=True,
         subtitle_offset_ms=0,
         # Style Configuration
         style_params_json=None,
+        # Add the new parameter
+        skip_separation=False,
     ):
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(log_level)
         self.log_level = log_level
         self.log_formatter = log_formatter
 
-        self.log_handler = logging.StreamHandler()
+        if logger is None:
+            self.logger = logging.getLogger(__name__)
+            self.logger.setLevel(log_level)
 
-        if self.log_formatter is None:
-            self.log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(module)s - %(message)s")
+            self.log_handler = logging.StreamHandler()
 
-        self.log_handler.setFormatter(self.log_formatter)
-        self.logger.addHandler(self.log_handler)
+            if self.log_formatter is None:
+                self.log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(module)s - %(message)s")
+
+            self.log_handler.setFormatter(self.log_formatter)
+            self.logger.addHandler(self.log_handler)
+        else:
+            self.logger = logger
 
         self.logger.debug(f"KaraokePrep instantiating with input_media: {input_media} artist: {artist} title: {title}")
 
@@ -93,6 +101,7 @@ class KaraokePrep:
         self.other_stems_models = other_stems_models
         self.model_file_dir = model_file_dir
         self.existing_instrumental = existing_instrumental
+        self.skip_separation = skip_separation
         self.denoise_enabled = denoise_enabled
         self.normalization_enabled = normalization_enabled
 
@@ -115,7 +124,7 @@ class KaraokePrep:
         self.skip_lyrics = skip_lyrics
         self.skip_transcription = skip_transcription
         self.skip_transcription_review = skip_transcription_review
-
+        self.render_video = render_video
         # Style
         self.subtitle_offset_ms = subtitle_offset_ms
         self.render_bounding_boxes = render_bounding_boxes
@@ -549,7 +558,7 @@ class KaraokePrep:
         output_config = OutputConfig(
             output_styles_json=self.style_params_json,
             output_dir=lyrics_dir,
-            render_video=True,
+            render_video=self.render_video,
             fetch_lyrics=True,
             run_transcription=not self.skip_transcription,
             run_correction=True,
@@ -560,6 +569,9 @@ class KaraokePrep:
             enable_review=not self.skip_transcription_review,
             subtitle_offset_ms=self.subtitle_offset_ms,
         )
+
+        # Add this log entry to debug the OutputConfig
+        self.logger.info(f"Instantiating LyricsTranscriber with OutputConfig: {output_config}")
 
         # Initialize transcriber with new config objects
         transcriber = LyricsTranscriber(
@@ -1503,7 +1515,7 @@ class KaraokePrep:
                     )
                     self.logger.info(f"Transcription future created, type: {type(transcription_future)}")
 
-                if not self.existing_instrumental:
+                if not self.skip_separation:
                     self.logger.info("Creating separation future...")
                     # Run separation in a separate thread
                     separation_future = asyncio.create_task(
@@ -1592,7 +1604,15 @@ class KaraokePrep:
                 self.logger.info(f"Creating end screen video...")
                 self.create_end_video(self.artist, self.title, self.end_format, output_image_filepath_noext, processed_track["end_video"])
 
-            if self.existing_instrumental:
+            if self.skip_separation:
+                self.logger.info("Skipping audio separation as requested.")
+                processed_track["separated_audio"] = {
+                    "clean_instrumental": {},
+                    "backing_vocals": {},
+                    "other_stems": {},
+                    "combined_instrumentals": {},
+                }
+            elif self.existing_instrumental:
                 self.logger.info(f"Using existing instrumental file: {self.existing_instrumental}")
                 existing_instrumental_extension = os.path.splitext(self.existing_instrumental)[1]
 
