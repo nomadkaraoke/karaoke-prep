@@ -18,7 +18,7 @@ def download_file(url, filename):
 
 
 # URL of the file to be downloaded
-url = "https://github.com/karaokenerds/karaoke-prep/releases/download/v0.8.3/ffmpeg.exe"
+url = "https://github.com/nomadkaraoke/karaoke-gen/releases/download/v0.8.3/ffmpeg.exe"
 # Filename to save the downloaded file
 filename = "platform/ffmpeg.exe"
 

@@ -48,11 +48,6 @@ class KaraokePrep:
         other_stems_models=["htdemucs_6s.yaml"],
         model_file_dir=os.path.join(tempfile.gettempdir(), "audio-separator-models"),
         existing_instrumental=None,
-        denoise_enabled=True,
-        normalization_enabled=True,
-        # Hardware Acceleration
-        use_cuda=False,
-        use_coreml=False,
         # Lyrics Configuration
         lyrics_artist=None,
         lyrics_title=None,
@@ -102,8 +97,6 @@ class KaraokePrep:
         self.model_file_dir = model_file_dir
         self.existing_instrumental = existing_instrumental
         self.skip_separation = skip_separation
-        self.denoise_enabled = denoise_enabled
-        self.normalization_enabled = normalization_enabled
 
         # Input/Output
         self.output_dir = output_dir
@@ -111,10 +104,6 @@ class KaraokePrep:
         self.create_track_subfolders = create_track_subfolders
         self.output_png = output_png
         self.output_jpg = output_jpg
-
-        # Hardware
-        self.use_cuda = use_cuda
-        self.use_coreml = use_coreml
 
         # Lyrics
         self.lyrics = None
@@ -625,6 +614,74 @@ class KaraokePrep:
         # Remove any trailing periods or spaces
         filename = filename.rstrip(" ")
         return filename
+
+    def backup_existing_outputs(self, track_output_dir, artist, title):
+        """
+        Backup existing outputs to a versioned folder.
+
+        Args:
+            track_output_dir: The directory containing the track outputs
+            artist: The artist name
+            title: The track title
+
+        Returns:
+            The path to the original input audio file
+        """
+        self.logger.info(f"Backing up existing outputs for {artist} - {title}")
+
+        # Sanitize artist and title for filenames
+        sanitized_artist = self.sanitize_filename(artist)
+        sanitized_title = self.sanitize_filename(title)
+        base_name = f"{sanitized_artist} - {sanitized_title}"
+
+        # Find the next available version number
+        version_num = 1
+        while os.path.exists(os.path.join(track_output_dir, f"version-{version_num}")):
+            version_num += 1
+
+        version_dir = os.path.join(track_output_dir, f"version-{version_num}")
+        self.logger.info(f"Creating backup directory: {version_dir}")
+        os.makedirs(version_dir, exist_ok=True)
+
+        # Find the input audio file (we'll need this for re-running the transcription)
+        input_audio_wav = os.path.join(track_output_dir, f"{base_name}.wav")
+        if not os.path.exists(input_audio_wav):
+            self.logger.warning(f"Input audio file not found: {input_audio_wav}")
+            # Try to find any WAV file
+            wav_files = glob.glob(os.path.join(track_output_dir, "*.wav"))
+            if wav_files:
+                input_audio_wav = wav_files[0]
+                self.logger.info(f"Using alternative input audio file: {input_audio_wav}")
+            else:
+                raise Exception(f"No input audio file found in {track_output_dir}")
+
+        # List of file patterns to move
+        file_patterns = [
+            f"{base_name} (With Vocals).*",
+            f"{base_name} (Karaoke).*",
+            f"{base_name} (Final Karaoke*).*",
+        ]
+
+        # Move files matching patterns to version directory
+        for pattern in file_patterns:
+            for file_path in glob.glob(os.path.join(track_output_dir, pattern)):
+                if os.path.isfile(file_path):
+                    dest_path = os.path.join(version_dir, os.path.basename(file_path))
+                    self.logger.info(f"Moving {file_path} to {dest_path}")
+                    if not self.dry_run:
+                        shutil.move(file_path, dest_path)
+
+        # Also backup the lyrics directory
+        lyrics_dir = os.path.join(track_output_dir, "lyrics")
+        if os.path.exists(lyrics_dir):
+            lyrics_backup_dir = os.path.join(version_dir, "lyrics")
+            self.logger.info(f"Backing up lyrics directory to {lyrics_backup_dir}")
+            if not self.dry_run:
+                shutil.copytree(lyrics_dir, lyrics_backup_dir)
+                # Remove the original lyrics directory
+                shutil.rmtree(lyrics_dir)
+
+        return input_audio_wav
 
     def separate_audio(self, audio_file, model_name, artist_title, track_output_dir, instrumental_path, vocals_path):
         if audio_file is None or not os.path.isfile(audio_file):
@@ -1645,18 +1702,29 @@ class KaraokePrep:
                 loop.remove_signal_handler(sig)
 
     async def shutdown(self, signal):
-        """Cleanup tasks tied to the service's shutdown."""
+        """Handle shutdown signals gracefully."""
         self.logger.info(f"Received exit signal {signal.name}...")
 
+        # Get all running tasks
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 
-        [task.cancel() for task in tasks]
+        if tasks:
+            self.logger.info(f"Cancelling {len(tasks)} outstanding tasks")
+            # Cancel all running tasks
+            for task in tasks:
+                task.cancel()
 
-        self.logger.info(f"Cancelling {len(tasks)} outstanding tasks")
-        await asyncio.gather(*tasks, return_exceptions=True)
+            self.logger.info("Received cancellation request, cleaning up...")
 
-        loop = asyncio.get_running_loop()
-        loop.stop()
+            # Wait for all tasks to complete with cancellation
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                pass
+
+        # Force exit after cleanup
+        self.logger.info("Cleanup complete, exiting...")
+        sys.exit(0)  # Add this line to force exit
 
     async def process_playlist(self):
         if self.artist is None or self.title is None:

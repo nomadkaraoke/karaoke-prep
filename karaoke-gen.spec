@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['karaoke_prep/utils/prep_cli.py'],
+    ['karaoke_prep/utils/gen_cli.py'],
     pathex=[],
     binaries=[('platform/ffmpeg.exe', '.')],
     datas=[],
@@ -21,7 +21,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='karaoke-prep',
+    name='karaoke-gen',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

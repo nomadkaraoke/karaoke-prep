@@ -177,7 +177,7 @@ async def async_main():
         help="Path to CSV file containing tracks to process. CSV should have columns: Artist,Title,Mixed Audio Filename,Instrumental Audio Filename,Status",
     )
 
-    package_version = pkg_resources.get_distribution("karaoke-prep").version
+    package_version = pkg_resources.get_distribution("karaoke-gen").version
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {package_version}")
 
     # Required arguments
