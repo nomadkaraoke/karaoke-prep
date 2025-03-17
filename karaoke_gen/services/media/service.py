@@ -63,7 +63,7 @@ class MediaService:
         Returns:
             The track with updated extracted media information
         """
-        if self.config.skip_extraction:
+        if self.config.skip_separation:
             self.logger.info("Skipping media extraction")
             return track
         
@@ -84,10 +84,6 @@ class MediaService:
         Returns:
             The track with updated media information
         """
-        if self.config.skip_detection:
-            self.logger.info("Skipping media detection")
-            return track
-        
         self.logger.info(f"Detecting media info for {track.base_name}")
         
         # Detect media info

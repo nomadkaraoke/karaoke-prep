@@ -100,19 +100,32 @@ class AudioSeparator:
                 try:
                     self.logger.info(f"Separating clean instrumental using model: {self.config.clean_instrumental_model}")
                     
-                    separation_result = await self.separator.separate(
-                        input_path=input_audio,
-                        output_path=stems_dir,
-                        model_name=self.config.clean_instrumental_model,
-                        filename_prefix=f"{artist_title} (Clean",
-                        output_format=self.config.lossless_output_format.lower()
-                    )
+                    # Load model first
+                    self.separator.load_model(model_filename=self.config.clean_instrumental_model)
+                    
+                    # Then call separate with only the audio file
+                    output_files = self.separator.separate(input_audio)
+                    
+                    # Process the output files
+                    result = {}
+                    for file in output_files:
+                        if "(Vocals)" in file:
+                            vocals_path = os.path.join(
+                                stems_dir, 
+                                f"{artist_title} (Clean Vocals).{self.config.lossless_output_format.lower()}"
+                            )
+                            os.rename(file, vocals_path)
+                            result["vocals"] = vocals_path
+                        elif "(Instrumental)" in file:
+                            instrumental_path = os.path.join(
+                                stems_dir, 
+                                f"{artist_title} (Clean Instrumental).{self.config.lossless_output_format.lower()}"
+                            )
+                            os.rename(file, instrumental_path)
+                            result["instrumental"] = instrumental_path
                     
                     # Update track with separation results
-                    track.separated_audio["clean_instrumental"] = {
-                        "instrumental": separation_result["instrumental"],
-                        "vocals": separation_result["vocals"]
-                    }
+                    track.separated_audio["clean_instrumental"] = result
                     
                     self.logger.info(f"Successfully separated clean instrumental")
                     
@@ -186,16 +199,46 @@ class AudioSeparator:
                 # Perform separation
                 if not self.config.dry_run:
                     try:
-                        separation_result = await self.separator.separate(
-                            input_path=input_audio,
-                            output_path=stems_dir,
-                            model_name=model_name,
-                            filename_prefix=f"{artist_title} ({model_name}",
-                            output_format=self.config.lossless_output_format.lower()
-                        )
+                        # Load model first
+                        self.separator.load_model(model_filename=model_name)
+                        
+                        # Then call separate with only the audio file
+                        output_files = self.separator.separate(input_audio)
+                        
+                        # Process the output files
+                        result = {}
+                        for file in output_files:
+                            file_name = os.path.basename(file)
+                            if "demucs" in model_name.lower():
+                                # Extract stem name from demucs output
+                                for stem in ["drums", "bass", "other", "vocals"]:
+                                    if f"_{stem}." in file_name.lower():
+                                        stem_path = os.path.join(
+                                            stems_dir, 
+                                            f"{artist_title} (Demucs {stem.capitalize()}).{self.config.lossless_output_format.lower()}"
+                                        )
+                                        os.rename(file, stem_path)
+                                        result[stem] = stem_path
+                                        break
+                            else:
+                                # Handle 2-stem models
+                                if "(Vocals)" in file_name:
+                                    stem_path = os.path.join(
+                                        stems_dir, 
+                                        f"{artist_title} ({model_name} Vocals).{self.config.lossless_output_format.lower()}"
+                                    )
+                                    os.rename(file, stem_path)
+                                    result["vocals"] = stem_path
+                                elif "(Instrumental)" in file_name:
+                                    stem_path = os.path.join(
+                                        stems_dir, 
+                                        f"{artist_title} ({model_name} Instrumental).{self.config.lossless_output_format.lower()}"
+                                    )
+                                    os.rename(file, stem_path)
+                                    result["instrumental"] = stem_path
                         
                         # Update track with separation results
-                        track.separated_audio["other_stems"][model_name] = separation_result
+                        track.separated_audio["other_stems"][model_name] = result
                         
                         self.logger.info(f"Successfully separated stems using model: {model_name}")
                         
@@ -263,23 +306,33 @@ class AudioSeparator:
                 # Perform separation
                 if not self.config.dry_run:
                     try:
-                        separation_result = await self.separator.separate(
-                            input_path=vocals_path,
-                            output_path=stems_dir,
-                            model_name=model_name,
-                            filename_prefix=f"{artist_title}",
-                            output_format=self.config.lossless_output_format.lower(),
-                            stem_mapping={
-                                "vocals": "lead_vocals",
-                                "instrumental": "backing_vocals"
-                            }
-                        )
+                        # Load model first
+                        self.separator.load_model(model_filename=model_name)
+                        
+                        # Then call separate with only the audio file
+                        output_files = self.separator.separate(vocals_path)
+                        
+                        # Process the output files
+                        result = {}
+                        for file in output_files:
+                            file_name = os.path.basename(file)
+                            if "(Vocals)" in file_name:
+                                lead_vocals_path = os.path.join(
+                                    stems_dir, 
+                                    f"{artist_title} (Lead Vocals).{self.config.lossless_output_format.lower()}"
+                                )
+                                os.rename(file, lead_vocals_path)
+                                result["lead_vocals"] = lead_vocals_path
+                            elif "(Instrumental)" in file_name:
+                                backing_vocals_path = os.path.join(
+                                    stems_dir, 
+                                    f"{artist_title} (Backing Vocals).{self.config.lossless_output_format.lower()}"
+                                )
+                                os.rename(file, backing_vocals_path)
+                                result["backing_vocals"] = backing_vocals_path
                         
                         # Update track with separation results
-                        track.separated_audio["backing_vocals"][model_name] = {
-                            "lead_vocals": separation_result["lead_vocals"],
-                            "backing_vocals": separation_result["backing_vocals"]
-                        }
+                        track.separated_audio["backing_vocals"][model_name] = result
                         
                         self.logger.info(f"Successfully separated backing vocals using model: {model_name}")
                         
@@ -524,9 +577,12 @@ class AudioSeparator:
                 
                 # Add other stems
                 for stem_type, stem_info in track.separated_audio.items():
-                    for stem_name, stem_path in stem_info.items():
-                        if stem_path and os.path.isfile(stem_path) and stem_path not in files:
-                            files.append(stem_path)
+                    if isinstance(stem_info, dict):
+                        for stem_name, stem_path in stem_info.items():
+                            if isinstance(stem_path, str) and os.path.isfile(stem_path) and stem_path not in files:
+                                files.append(stem_path)
+                    elif isinstance(stem_info, str) and os.path.isfile(stem_info) and stem_info not in files:
+                        files.append(stem_info)
                 
                 # Write LOF file
                 with open(lof_path, "w") as f:

@@ -808,7 +808,7 @@ class ScreenGenerator:
                 from PIL import Image, ImageDraw, ImageFont
                 
                 # Get style parameters
-                style = self.style_params.get("title", {})
+                style = self.style_params.get("intro", {})
                 width = style.get("width", 3840)
                 height = style.get("height", 2160)
                 background_color = style.get("background_color", "black")
@@ -962,7 +962,7 @@ class ScreenGenerator:
                 # Build ffmpeg command
                 command = (
                     f'{self.ffmpeg_base_command} -loop 1 -i "{image_path}" '
-                    f'-c:v libx264 -t {duration} -pix_fmt yuv420p '
+                    f'-c:v libx264 -preset medium -crf 23 -t {duration} -pix_fmt yuv420p '
                     f'-vf "fade=t=in:st=0:d={fade_in},fade=t=out:st={duration-fade_out}:d={fade_out}" '
                     f'-y "{output_path}"'
                 )

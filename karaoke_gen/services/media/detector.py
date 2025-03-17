@@ -132,4 +132,36 @@ class MediaDetector:
             
         except Exception as e:
             self.logger.debug(f"Error detecting media type with ffprobe: {str(e)}")
-            return None 
+            return None
+            
+    async def detect_media_info(self, track: Track) -> Track:
+        """
+        Detect media information for the track.
+        
+        Args:
+            track: The track to process
+            
+        Returns:
+            The track with updated media information
+        """
+        self.logger.info(f"Detecting media info for {track.base_name}")
+        
+        # Detect media type for input media
+        if track.input_media and os.path.isfile(track.input_media):
+            media_type = await self.detect_media_type(track.input_media)
+            track.input_media_type = media_type
+            self.logger.info(f"Detected input media type: {media_type}")
+        
+        # Detect media type for input audio
+        if track.input_audio_wav and os.path.isfile(track.input_audio_wav):
+            media_type = await self.detect_media_type(track.input_audio_wav)
+            track.input_audio_type = media_type
+            self.logger.info(f"Detected input audio type: {media_type}")
+        
+        # Detect media type for input still image
+        if track.input_still_image and os.path.isfile(track.input_still_image):
+            media_type = await self.detect_media_type(track.input_still_image)
+            track.input_image_type = media_type
+            self.logger.info(f"Detected input image type: {media_type}")
+        
+        return track 

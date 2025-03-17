@@ -91,7 +91,7 @@ class KaraokeController:
             if track.is_url:
                 track = await self.media_service.download_media(track)
             elif track.is_file:
-                track = await self.media_service.prepare_media(track)
+                track = await self.media_service.process_media(track)
             
             # Skip further processing if we're only doing lyrics
             if self.config.lyrics_only:

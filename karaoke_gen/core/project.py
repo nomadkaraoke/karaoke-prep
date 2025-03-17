@@ -60,6 +60,14 @@ class ProjectConfig:
     # Style Configuration
     style_params_json: Optional[str] = None
     
+    # Video Configuration
+    title_screen_duration: float = 5.0
+    end_screen_duration: float = 5.0
+    title_fade_in: float = 1.0
+    title_fade_out: float = 1.0
+    end_fade_in: float = 1.0
+    end_fade_out: float = 1.0
+    
     # Finalisation Configuration
     enable_cdg: bool = False
     enable_txt: bool = False

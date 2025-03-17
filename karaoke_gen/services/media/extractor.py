@@ -269,7 +269,7 @@ class MediaExtractor:
         Check if a file is a video file.
         
         Args:
-            file_path: The file path to check
+            file_path: The path to the file
             
         Returns:
             True if the file is a video file, False otherwise
@@ -279,4 +279,44 @@ class MediaExtractor:
         
         video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v']
         _, ext = os.path.splitext(file_path)
-        return ext.lower() in video_extensions 
+        return ext.lower() in video_extensions
+        
+    async def extract_media(self, track: Track) -> Track:
+        """
+        Extract media from the input file based on its type.
+        
+        Args:
+            track: The track to process
+            
+        Returns:
+            The track with updated media information
+        """
+        self.logger.info(f"Extracting media for {track.base_name}")
+        
+        # Check if the input is a video file
+        if self._is_video_file(track.input_media):
+            # Extract still image and audio from video
+            track = await self.extract_still_image(track)
+            track = await self.extract_audio_from_video(track)
+        elif self._is_image_file(track.input_media):
+            # Copy image file
+            track = await self.copy_image_file(track)
+        else:
+            # Assume it's an audio file
+            track = await self.copy_audio_file(track)
+        
+        return track
+    
+    def _is_image_file(self, file_path):
+        """
+        Check if a file is an image file.
+        
+        Args:
+            file_path: The path to the file
+            
+        Returns:
+            True if the file is an image file, False otherwise
+        """
+        image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']
+        ext = os.path.splitext(file_path)[1].lower()
+        return ext in image_extensions 
