@@ -91,7 +91,7 @@ Karaoke Gen can also be used as a Python library:
 
 ```python
 import asyncio
-from karaoke_prep import KaraokeController, ProjectConfig
+from karaoke_gen import KaraokeController, ProjectConfig
 
 async def generate_karaoke():
     # Create a configuration

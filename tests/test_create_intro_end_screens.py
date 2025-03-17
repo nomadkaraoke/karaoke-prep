@@ -3,7 +3,7 @@
 import os
 import json
 import logging
-from karaoke_prep.karaoke_prep import KaraokePrep
+from karaoke_gen.karaoke_gen import KaraokePrep
 
 # Set up logging
 logger = logging.getLogger(__name__)

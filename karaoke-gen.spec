@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['karaoke_prep/utils/gen_cli.py'],
+    ['karaoke_gen/utils/gen_cli.py'],
     pathex=[],
     binaries=[('platform/ffmpeg.exe', '.')],
     datas=[],

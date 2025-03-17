@@ -5,7 +5,7 @@ Tests for the core components.
 import unittest
 from unittest.mock import MagicMock, patch
 
-from karaoke_prep.core import ProjectConfig, Track, KaraokeGenError
+from karaoke_gen.core import ProjectConfig, Track, KaraokeGenError
 
 
 class TestProjectConfig(unittest.TestCase):

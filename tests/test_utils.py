@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from karaoke_prep.utils import (
+from karaoke_gen.utils import (
     # File utilities
     sanitize_filename,
     ensure_directory_exists,

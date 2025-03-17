@@ -5,7 +5,7 @@ description = "Generate karaoke videos with synchronized lyrics. Handles the ent
 authors = ["Andrew Beveridge <andrew@beveridge.uk>"]
 license = "MIT"
 readme = "README.md"
-packages = [{ include = "karaoke_prep" }]
+packages = [{ include = "karaoke_gen" }]
 homepage = "https://github.com/karaokenerds/karaoke-gen"
 repository = "https://github.com/karaokenerds/karaoke-gen"
 documentation = "https://github.com/karaokenerds/karaoke-gen/blob/main/README.md"
@@ -42,11 +42,11 @@ black = ">=23"
 poetry = "*"
 
 [tool.poetry.scripts]
-karaoke-gen = 'karaoke_prep.cli:main'
-karaoke-bulk = 'karaoke_prep.cli.bulk_cli:main'
+karaoke-gen = 'karaoke_gen.cli:main'
+karaoke-bulk = 'karaoke_gen.cli.bulk_cli:main'
 # Legacy entry points for backward compatibility
-karaoke-gen-legacy = 'karaoke_prep.utils.gen_cli:main'
-karaoke-bulk-legacy = 'karaoke_prep.utils.bulk_cli:main'
+karaoke-gen-legacy = 'karaoke_gen.utils.gen_cli:main'
+karaoke-bulk-legacy = 'karaoke_gen.utils.bulk_cli:main'
 
 [tool.black]
 line-length = 140
