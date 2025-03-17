@@ -3,6 +3,8 @@ import logging
 import asyncio
 import time
 import pyperclip
+import json
+import warnings
 from typing import Dict, Any, List, Optional
 from abc import ABC, abstractmethod
 
@@ -168,6 +170,20 @@ class ProcessCommand(Command):
         Returns:
             The project configuration
         """
+        # Load CDG styles if CDG generation is enabled
+        cdg_styles = None
+        if args.get("enable_cdg") and args.get("style_params_json"):
+            try:
+                with open(args.get("style_params_json"), "r") as f:
+                    style_params = json.loads(f.read())
+                    cdg_styles = style_params.get("cdg")
+            except FileNotFoundError:
+                logger.error(f"CDG styles configuration file not found: {args.get('style_params_json')}")
+                exit(1)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
+                exit(1)
+        
         return ProjectConfig(
             # Basic inputs
             input_media=input_media,
@@ -228,6 +244,7 @@ class ProcessCommand(Command):
             rclone_destination=args.get("rclone_destination"),
             discord_webhook_url=args.get("discord_webhook_url"),
             email_template_file=args.get("email_template_file"),
+            cdg_styles=cdg_styles,
             keep_brand_code=args.get("keep_brand_code", False),
             non_interactive=args.get("yes", False),
         )
@@ -257,34 +274,38 @@ class ProcessCommand(Command):
                 logger.info(f" Separated Audio:")
                 
                 # Clean Instrumental
-                logger.info(f"  Clean Instrumental Model:")
-                for stem_type, file_path in track.separated_audio["clean_instrumental"].items():
-                    logger.info(f"   {stem_type.capitalize()}: {file_path}")
+                if track.separated_audio and "clean_instrumental" in track.separated_audio:
+                    logger.info(f"  Clean Instrumental Model:")
+                    for stem_type, file_path in track.separated_audio["clean_instrumental"].items():
+                        logger.info(f"   {stem_type.capitalize()}: {file_path}")
                 
                 # Other Stems
-                logger.info(f"  Other Stems Models:")
-                for model, stems in track.separated_audio["other_stems"].items():
-                    logger.info(f"   Model: {model}")
-                    for stem_type, file_path in stems.items():
-                        logger.info(f"    {stem_type.capitalize()}: {file_path}")
+                if track.separated_audio and "other_stems" in track.separated_audio:
+                    logger.info(f"  Other Stems Models:")
+                    for model, stems in track.separated_audio["other_stems"].items():
+                        logger.info(f"   Model: {model}")
+                        for stem_type, file_path in stems.items():
+                            logger.info(f"    {stem_type.capitalize()}: {file_path}")
                 
                 # Backing Vocals
-                logger.info(f"  Backing Vocals Models:")
-                for model, stems in track.separated_audio["backing_vocals"].items():
-                    logger.info(f"   Model: {model}")
-                    for stem_type, file_path in stems.items():
-                        logger.info(f"    {stem_type.capitalize()}: {file_path}")
+                if track.separated_audio and "backing_vocals" in track.separated_audio:
+                    logger.info(f"  Backing Vocals Models:")
+                    for model, stems in track.separated_audio["backing_vocals"].items():
+                        logger.info(f"   Model: {model}")
+                        for stem_type, file_path in stems.items():
+                            logger.info(f"    {stem_type.capitalize()}: {file_path}")
                 
                 # Combined Instrumentals
-                logger.info(f"  Combined Instrumentals:")
-                for model, file_path in track.separated_audio["combined_instrumentals"].items():
-                    logger.info(f"   Model: {model}")
-                    logger.info(f"    Combined Instrumental: {file_path}")
+                if track.separated_audio and "combined_instrumentals" in track.separated_audio:
+                    logger.info(f"  Combined Instrumentals:")
+                    for model, file_path in track.separated_audio["combined_instrumentals"].items():
+                        logger.info(f"   Model: {model}")
+                        logger.info(f"    Combined Instrumental: {file_path}")
             
-            logger.info("Preparation phase complete. Exiting due to --prep-only flag.")
+            logger.info("Preparation phase complete.")
             return
         
-        # Display summary of outputs for each track
+        # For finalise-only or full workflow, display summary of outputs
         for track in tracks:
             logger.info(f"Karaoke processing complete! Output files:")
             logger.info(f"")
@@ -300,27 +321,27 @@ class ProcessCommand(Command):
             logger.info(f" Lossy 4K MP4 (AAC): {track.final_video_lossy}")
             logger.info(f" Lossy 720p MP4 (AAC): {track.final_video_720p}")
             
-            if track.final_karaoke_cdg_zip or track.final_karaoke_txt_zip:
+            if hasattr(track, "final_karaoke_cdg_zip") or hasattr(track, "final_karaoke_txt_zip"):
                 logger.info(f"")
                 logger.info(f"Karaoke Files:")
             
-            if track.final_karaoke_cdg_zip:
+            if hasattr(track, "final_karaoke_cdg_zip") and track.final_karaoke_cdg_zip:
                 logger.info(f" CDG+MP3 ZIP: {track.final_karaoke_cdg_zip}")
             
-            if track.final_karaoke_txt_zip:
+            if hasattr(track, "final_karaoke_txt_zip") and track.final_karaoke_txt_zip:
                 logger.info(f" TXT+MP3 ZIP: {track.final_karaoke_txt_zip}")
             
-            if track.brand_code:
+            if hasattr(track, "brand_code") and track.brand_code:
                 logger.info(f"")
                 logger.info(f"Organization:")
                 logger.info(f" Brand Code: {track.brand_code}")
-                logger.info(f" Directory: {track.new_brand_code_dir_path}")
+                logger.info(f" New Directory: {track.new_brand_code_dir_path}")
             
-            if track.youtube_url or track.brand_code_dir_sharing_link:
+            if (hasattr(track, "youtube_url") and track.youtube_url) or (hasattr(track, "brand_code_dir_sharing_link") and track.brand_code_dir_sharing_link):
                 logger.info(f"")
                 logger.info(f"Sharing:")
             
-            if track.brand_code_dir_sharing_link:
+            if hasattr(track, "brand_code_dir_sharing_link") and track.brand_code_dir_sharing_link:
                 logger.info(f" Folder Link: {track.brand_code_dir_sharing_link}")
                 try:
                     time.sleep(1)  # Brief pause between clipboard operations
@@ -329,7 +350,7 @@ class ProcessCommand(Command):
                 except Exception as e:
                     logger.warning(f" Failed to copy folder link to clipboard: {str(e)}")
             
-            if track.youtube_url:
+            if hasattr(track, "youtube_url") and track.youtube_url:
                 logger.info(f" YouTube URL: {track.youtube_url}")
                 try:
                     pyperclip.copy(track.youtube_url)
@@ -378,7 +399,7 @@ class TestEmailTemplateCommand(Command):
 
 
 class BulkProcessCommand(Command):
-    """Command for bulk processing tracks from a CSV file."""
+    """Command for bulk processing tracks."""
     
     async def execute(self, args: Dict[str, Any]) -> None:
         """
@@ -387,7 +408,7 @@ class BulkProcessCommand(Command):
         Args:
             args: The parsed command-line arguments
         """
-        # Call the bulk processing async main function
+        # Execute the bulk CLI
         await bulk_async_main()
 
 

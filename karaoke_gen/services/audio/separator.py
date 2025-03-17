@@ -11,6 +11,8 @@ from karaoke_gen.core.track import Track
 from karaoke_gen.core.exceptions import AudioError
 import platform
 import subprocess
+import logging
+from typing import Dict, List, Optional, Any
 
 
 class AudioSeparator:
@@ -49,7 +51,7 @@ class AudioSeparator:
     
     async def separate_clean_instrumental(self, track, input_audio, stems_dir):
         """
-        Separate clean instrumental from the input audio.
+        Separate clean instrumental from a track.
         
         Args:
             track: The track to process
@@ -71,7 +73,7 @@ class AudioSeparator:
             return track
         
         # Acquire lock for audio separation
-        async with self._acquire_lock(track.base_name):
+        with self._acquire_lock(track.base_name):
             artist_title = track.base_name
             
             # Define output paths
@@ -146,7 +148,7 @@ class AudioSeparator:
             return track
         
         # Acquire lock for audio separation
-        async with self._acquire_lock(track.base_name):
+        with self._acquire_lock(track.base_name):
             artist_title = track.base_name
             
             # Initialize results
@@ -229,7 +231,7 @@ class AudioSeparator:
         vocals_path = track.separated_audio["clean_instrumental"]["vocals"]
         
         # Acquire lock for audio separation
-        async with self._acquire_lock(track.base_name):
+        with self._acquire_lock(track.base_name):
             artist_title = track.base_name
             
             # Initialize results
@@ -599,7 +601,7 @@ class AudioSeparator:
         
         self.logger.info("Audio separator cleanup complete")
 
-    async def _acquire_lock(self, track_name):
+    def _acquire_lock(self, track_name):
         """
         Acquire a lock for audio separation.
         
@@ -616,7 +618,7 @@ class AudioSeparator:
                 self.lock_file = None
                 self.lock_file_path = os.path.join(tempfile.gettempdir(), "audio_separator.lock")
             
-            async def __aenter__(self):
+            def __enter__(self):
                 # Try to acquire lock
                 while True:
                     try:
@@ -628,50 +630,82 @@ class AudioSeparator:
                                     pid = lock_data.get("pid")
                                     start_time = datetime.fromisoformat(lock_data.get("start_time"))
                                     running_track = lock_data.get("track")
-                                    
-                                    # Check if process is still running
-                                    if pid and os.path.exists(f"/proc/{pid}"):
-                                        self.separator.logger.info(f"Audio separation is already running for {running_track}")
-                                        await asyncio.sleep(30)  # Wait 30 seconds before trying again
-                                        continue
-                                    else:
-                                        self.separator.logger.info("Found stale lock file, removing")
-                                        os.remove(self.lock_file_path)
-                            except (json.JSONDecodeError, ValueError, OSError):
-                                self.separator.logger.info("Found invalid lock file, removing")
+                                
+                                # Check if the process is still running
+                                if pid and self.separator._is_process_running(pid):
+                                    # Process is still running
+                                    self.separator.logger.info(f"Waiting for another separation process to complete: {running_track}")
+                                    time.sleep(5)
+                                    continue
+                                else:
+                                    # Stale lock, remove it
+                                    self.separator.logger.info(f"Removing stale lock file")
+                                    os.remove(self.lock_file_path)
+                            except (json.JSONDecodeError, KeyError, ValueError):
+                                # Invalid lock file, remove it
+                                self.separator.logger.info(f"Removing invalid lock file")
                                 os.remove(self.lock_file_path)
                         
-                        # Create new lock file
-                        self.lock_file = open(self.lock_file_path, "w")
-                        fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        
-                        # Write metadata to lock file
+                        # Create lock file
                         lock_data = {
                             "pid": os.getpid(),
                             "start_time": datetime.now().isoformat(),
-                            "track": self.track_name,
+                            "track": self.track_name
                         }
-                        json.dump(lock_data, self.lock_file)
-                        self.lock_file.flush()
-                        break
                         
-                    except IOError as e:
-                        if e.errno != errno.EAGAIN:
-                            raise
-                        # Lock is held by another process
-                        await asyncio.sleep(30)  # Wait 30 seconds before trying again
-                        continue
-                
-                return self
+                        with open(self.lock_file_path, "w") as f:
+                            json.dump(lock_data, f)
+                        
+                        self.lock_file = self.lock_file_path
+                        self.separator.logger.info(f"Acquired lock for {self.track_name}")
+                        return self
+                    except Exception as e:
+                        self.separator.logger.error(f"Error acquiring lock: {str(e)}")
+                        time.sleep(5)
             
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
+            def __exit__(self, exc_type, exc_val, exc_tb):
                 # Release lock
-                if self.lock_file:
-                    fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
-                    self.lock_file.close()
+                if self.lock_file and os.path.exists(self.lock_file):
                     try:
-                        os.remove(self.lock_file_path)
-                    except OSError:
-                        pass
+                        os.remove(self.lock_file)
+                        self.separator.logger.info(f"Released lock for {self.track_name}")
+                    except Exception as e:
+                        self.separator.logger.error(f"Error releasing lock: {str(e)}")
         
-        return LockContextManager(self, track_name) 
+        return LockContextManager(self, track_name)
+
+    def _is_process_running(self, pid):
+        """
+        Check if a process with the given PID is running.
+        
+        Args:
+            pid: The process ID to check
+            
+        Returns:
+            True if the process is running, False otherwise
+        """
+        try:
+            # For Unix/Linux/Mac
+            if os.name == 'posix':
+                # Send signal 0 to the process - this doesn't actually send a signal,
+                # but it does error checking to see if the process exists
+                os.kill(pid, 0)
+                return True
+            # For Windows
+            elif os.name == 'nt':
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                SYNCHRONIZE = 0x00100000
+                process = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+                if process != 0:
+                    kernel32.CloseHandle(process)
+                    return True
+                return False
+            else:
+                # Fallback for other OS
+                return False
+        except OSError:
+            return False
+        except Exception as e:
+            self.logger.error(f"Error checking if process {pid} is running: {str(e)}")
+            return False 

@@ -94,4 +94,9 @@ class Track:
         """Returns the duration of the track in seconds"""
         if self.metadata and "duration" in self.metadata:
             return self.metadata["duration"]
-        return 0.0 
+        return 0.0
+    
+    @property
+    def video_with_vocals(self) -> Optional[str]:
+        """Alias for video_with_lyrics for backward compatibility"""
+        return self.video_with_lyrics 

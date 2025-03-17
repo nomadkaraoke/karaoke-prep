@@ -17,35 +17,3 @@ jobs:
           pypi-token: ${{ secrets.PYPI_API_TOKEN }}
           gh-token: ${{ secrets.GITHUB_TOKEN }}
           parse-changelog: false
-
-  # build-windows:
-  #   runs-on: windows-latest
-
-  #   steps:
-  #   - uses: actions/checkout@v2
-
-  #   - name: Set up Python
-  #     uses: actions/setup-python@v2
-  #     with:
-  #       python-version: '3.9'
-
-  #   - name: Install dependencies with Poetry
-  #     run: |
-  #       pip install poetry
-  #       poetry install
-
-  #   - name: Download ffmpeg binary
-  #     run: python platform/download_ffmpeg.py
-
-  #   - name: Build EXE with PyInstaller
-  #     run: poetry run pyinstaller karaoke-gen.spec
-
-  #   - name: Upload EXE as Artifact
-  #     uses: actions/upload-artifact@v2
-  #     with:
-  #       name: karaoke-gen-windows
-  #       path: |
-  #         build/
-  #         *.exe
-  #         */*.exe
-

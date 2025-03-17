@@ -31,6 +31,19 @@ class AudioService:
         self.normalizer = AudioNormalizer(config)
         self.mixer = AudioMixer(config)
     
+    async def separate_audio(self, track: Track) -> Track:
+        """
+        Separate audio for a track.
+        
+        Args:
+            track: The track to process
+            
+        Returns:
+            The track with separated audio
+        """
+        self.logger.info(f"Separating audio for {track.base_name}")
+        return await self.separator.separate_audio(track)
+    
     async def process_audio(self, track: Track) -> Track:
         """
         Process audio for a track, including separation, mixing, and normalization.

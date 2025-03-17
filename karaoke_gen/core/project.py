@@ -23,6 +23,7 @@ class ProjectConfig:
     skip_transcription: bool = False
     skip_separation: bool = False
     skip_lyrics: bool = False
+    skip_download: bool = False
     lyrics_only: bool = False
     edit_lyrics: bool = False
     

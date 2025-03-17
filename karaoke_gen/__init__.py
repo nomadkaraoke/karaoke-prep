@@ -8,9 +8,6 @@ video with title screens, synchronized lyrics, and distribution options.
 
 __version__ = "0.50.0"
 
-# Import legacy classes for backward compatibility
-from karaoke_gen.legacy import KaraokePrep, KaraokeFinalise
-
 # Import core components
 from karaoke_gen.controller import KaraokeController
 from karaoke_gen.core import ProjectConfig, Track, KaraokeGenError
@@ -113,10 +110,6 @@ from karaoke_gen.utils import (
 __all__ = [
     # Version
     "__version__",
-    
-    # Legacy classes
-    "KaraokePrep",
-    "KaraokeFinalise",
     
     # Core components
     "KaraokeController",

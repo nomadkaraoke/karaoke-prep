@@ -33,6 +33,16 @@ class TranscriptionError(LyricsError):
     pass
 
 
+class SynchronizationError(LyricsError):
+    """Exception raised when lyrics synchronization fails"""
+    pass
+
+
+class FormattingError(LyricsError):
+    """Exception raised when lyrics formatting fails"""
+    pass
+
+
 class AudioError(KaraokeGenError):
     """Exception raised for errors related to audio processing"""
     pass

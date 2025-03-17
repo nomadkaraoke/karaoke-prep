@@ -8,7 +8,7 @@ from karaoke_gen.services.lyrics.service import LyricsService
 from karaoke_gen.services.video.service import VideoService
 
 
-class KaraokeService:
+class MainService:
     """
     Main service for orchestrating the entire karaoke preparation process.
     """

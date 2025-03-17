@@ -407,7 +407,7 @@ class VideoRenderer:
         self.logger.info(f"Rendering lyrics video for {track.base_name}")
         
         # Define output path
-        output_path = os.path.join(track.track_output_dir, f"{track.base_name} (With Lyrics).mp4")
+        output_path = os.path.join(track.track_output_dir, f"{track.base_name} (With Vocals).mp4")
         
         # Skip if output already exists
         if os.path.isfile(output_path):
@@ -415,8 +415,24 @@ class VideoRenderer:
             track.video_with_lyrics = output_path
             return track
         
+        # Debug logging
+        self.logger.debug(f"processed_lyrics: {track.processed_lyrics}, type: {type(track.processed_lyrics)}")
+        self.logger.debug(f"title_video: {track.title_video}, type: {type(track.title_video)}")
+        self.logger.debug(f"instrumental: {track.instrumental}, type: {type(track.instrumental)}")
+        
+        # Handle case where processed_lyrics is a dictionary
+        lyrics_file = None
+        if isinstance(track.processed_lyrics, dict):
+            # Try to get the formatted lyrics file
+            if 'formatted_lyrics_file' in track.processed_lyrics:
+                lyrics_file = track.processed_lyrics['formatted_lyrics_file']
+            elif 'formatted_lyrics' in track.processed_lyrics:
+                lyrics_file = track.processed_lyrics['formatted_lyrics']
+        else:
+            lyrics_file = track.processed_lyrics
+        
         # Check for processed lyrics
-        if not track.processed_lyrics or not os.path.isfile(track.processed_lyrics):
+        if not lyrics_file or not os.path.isfile(lyrics_file):
             self.logger.warning(f"No processed lyrics found for {track.base_name}")
             return track
         
@@ -429,10 +445,10 @@ class VideoRenderer:
         if not self.config.dry_run:
             try:
                 # Create temporary subtitle file in ASS format if needed
-                if track.processed_lyrics.endswith('.lrc'):
-                    subtitle_file = await self._convert_lrc_to_ass(track.processed_lyrics, track.track_output_dir)
+                if lyrics_file.endswith('.lrc'):
+                    subtitle_file = await self._convert_lrc_to_ass(lyrics_file, track.track_output_dir)
                 else:
-                    subtitle_file = track.processed_lyrics
+                    subtitle_file = lyrics_file
                 
                 # Build ffmpeg command
                 command = (
@@ -459,7 +475,7 @@ class VideoRenderer:
                 self.logger.info(f"Successfully rendered lyrics video: {output_path}")
                 
                 # Clean up temporary files
-                if track.processed_lyrics.endswith('.lrc') and os.path.isfile(subtitle_file):
+                if lyrics_file.endswith('.lrc') and os.path.isfile(subtitle_file):
                     os.remove(subtitle_file)
                 
             except Exception as e:

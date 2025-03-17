@@ -107,7 +107,7 @@ class KaraokeController:
                 track = await self.lyrics_service.process_lyrics(track)
             
             # Video generation
-            track = await self.video_service.create_videos(track)
+            track = await self.video_service.process_video(track)
             
             # Distribution (if not prep_only)
             if not self.config.prep_only:
