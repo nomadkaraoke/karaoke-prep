@@ -5,10 +5,10 @@
 *.mp3
 
 # Andrew functional adds
-audio/
-lyrics/
-karaoke/
-tests/outputs
+/audio/
+/lyrics/
+/karaoke/
+/tests/outputs
 
 
 # Byte-compiled / optimized / DLL files

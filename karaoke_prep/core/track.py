@@ -34,7 +34,7 @@ class Track:
     # Video files
     title_video: Optional[str] = None
     end_video: Optional[str] = None
-    video_with_vocals: Optional[str] = None
+    video_with_lyrics: Optional[str] = None
     video_with_instrumental: Optional[str] = None
     
     # Final output files
@@ -80,4 +80,18 @@ class Track:
         """Returns True if the input_media is a directory"""
         if not self.input_media:
             return False
-        return os.path.isdir(self.input_media) 
+        return os.path.isdir(self.input_media)
+    
+    @property
+    def instrumental(self) -> Optional[str]:
+        """Returns the path to the instrumental audio file"""
+        if self.separated_audio and "clean_instrumental" in self.separated_audio:
+            return self.separated_audio["clean_instrumental"].get("instrumental")
+        return None
+    
+    @property
+    def duration(self) -> float:
+        """Returns the duration of the track in seconds"""
+        if self.metadata and "duration" in self.metadata:
+            return self.metadata["duration"]
+        return 0.0 

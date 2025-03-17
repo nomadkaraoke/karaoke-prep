@@ -1,4 +1,11 @@
 #!/usr/bin/env python
+"""
+Legacy CLI for the karaoke generator.
+
+This file is maintained for backward compatibility.
+New code should use the CLI in karaoke_prep.cli.
+"""
+
 import argparse
 import logging
 import pkg_resources
@@ -9,6 +16,16 @@ import json
 import asyncio
 import time
 import pyperclip
+import warnings
+
+# Show deprecation warning
+warnings.warn(
+    "Using karaoke_prep.utils.gen_cli is deprecated. "
+    "Please use karaoke_prep.cli directly or run 'python -m karaoke_prep' instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 from karaoke_prep import KaraokePrep
 from karaoke_prep.karaoke_finalise import KaraokeFinalise
 

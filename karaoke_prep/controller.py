@@ -67,7 +67,7 @@ class KaraokeController:
     def distribution_service(self):
         """Lazy-loaded distribution service"""
         if self._distribution_service is None:
-            from karaoke_prep.services.distribution import DistributionService
+            from karaoke_prep.services.distribution.service import DistributionService
             self._distribution_service = DistributionService(self.config)
         return self._distribution_service
     

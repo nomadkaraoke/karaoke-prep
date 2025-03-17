@@ -43,9 +43,10 @@ poetry = "*"
 
 [tool.poetry.scripts]
 karaoke-gen = 'karaoke_prep.cli:main'
-karaoke-bulk = 'karaoke_prep.utils.bulk_cli:main'
+karaoke-bulk = 'karaoke_prep.cli.bulk_cli:main'
 # Legacy entry points for backward compatibility
 karaoke-gen-legacy = 'karaoke_prep.utils.gen_cli:main'
+karaoke-bulk-legacy = 'karaoke_prep.utils.bulk_cli:main'
 
 [tool.black]
 line-length = 140

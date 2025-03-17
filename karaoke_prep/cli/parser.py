@@ -41,6 +41,15 @@ def create_parser() -> argparse.ArgumentParser:
         help="Only run the finalisation phase (remux, encode, organize). Must be run in a directory prepared by the prep phase. Example: --finalise-only",
     )
     workflow_group.add_argument(
+        "--bulk",
+        action="store_true",
+        help="Process multiple tracks in bulk from a CSV file. Example: --bulk",
+    )
+    workflow_group.add_argument(
+        "--input_csv",
+        help="Path to CSV file containing tracks to process when using --bulk. CSV should have columns: Artist,Title,Mixed Audio Filename,Instrumental Audio Filename,Status. Example: --input_csv=/path/to/tracks.csv",
+    )
+    workflow_group.add_argument(
         "--skip-transcription",
         action="store_true",
         help="Skip automatic lyrics transcription/synchronization. Use this to fall back to manual syncing. Example: --skip-transcription",

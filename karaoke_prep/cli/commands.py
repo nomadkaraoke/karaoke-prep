@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from karaoke_prep.core.project import ProjectConfig
 from karaoke_prep.core.track import Track
 from karaoke_prep.controller import KaraokeController
+from karaoke_prep.cli.bulk_cli import async_main as bulk_async_main
 
 
 class Command(ABC):
@@ -376,6 +377,20 @@ class TestEmailTemplateCommand(Command):
         await controller.distribution_service._test_email_template()
 
 
+class BulkProcessCommand(Command):
+    """Command for bulk processing tracks from a CSV file."""
+    
+    async def execute(self, args: Dict[str, Any]) -> None:
+        """
+        Execute the bulk process command.
+        
+        Args:
+            args: The parsed command-line arguments
+        """
+        # Call the bulk processing async main function
+        await bulk_async_main()
+
+
 def get_command(args: Dict[str, Any]) -> Command:
     """
     Get the appropriate command based on the arguments.
@@ -388,6 +403,8 @@ def get_command(args: Dict[str, Any]) -> Command:
     """
     if args.get("test_email_template"):
         return TestEmailTemplateCommand()
+    elif args.get("bulk"):
+        return BulkProcessCommand()
     else:
         return ProcessCommand()
 
