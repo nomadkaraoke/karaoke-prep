@@ -559,9 +559,9 @@ class KaraokeFinalise:
         self.logger.info(f"Searching for files in current directory containing {search_string}")
 
         all_instrumental_files = [f for f in os.listdir(".") if search_string in f]
-        flac_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.endswith(".flac"))
-        mp3_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.endswith(".mp3"))
-        wav_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.endswith(".wav"))
+        flac_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.lower().endswith(".flac"))
+        mp3_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.lower().endswith(".mp3"))
+        wav_files = set(f.rsplit(".", 1)[0] for f in all_instrumental_files if f.lower().endswith(".wav"))
 
         self.logger.debug(f"FLAC files found: {flac_files}")
         self.logger.debug(f"MP3 files found: {mp3_files}")
@@ -572,9 +572,9 @@ class KaraokeFinalise:
         filtered_files = [
             f
             for f in all_instrumental_files
-            if f.endswith(".flac")
-            or (f.endswith(".wav") and f.rsplit(".", 1)[0] not in flac_files)
-            or (f.endswith(".mp3") and f.rsplit(".", 1)[0] not in flac_files and f.rsplit(".", 1)[0] not in wav_files)
+            if f.lower().endswith(".flac")
+            or (f.lower().endswith(".wav") and f.rsplit(".", 1)[0] not in flac_files)
+            or (f.lower().endswith(".mp3") and f.rsplit(".", 1)[0] not in flac_files and f.rsplit(".", 1)[0] not in wav_files)
         ]
 
         self.logger.debug(f"Filtered instrumental files: {filtered_files}")
