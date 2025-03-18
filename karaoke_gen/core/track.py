@@ -97,6 +97,16 @@ class Track:
         return 0.0
     
     @property
+    def audio_file(self) -> Optional[str]:
+        """Returns the path to the input audio file (WAV)"""
+        return self.input_audio_wav
+    
+    @property
+    def wav_file(self) -> Optional[str]:
+        """Alias for input_audio_wav"""
+        return self.input_audio_wav
+    
+    @property
     def video_with_vocals(self) -> Optional[str]:
         """Alias for video_with_lyrics for backward compatibility"""
         return self.video_with_lyrics 

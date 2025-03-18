@@ -89,10 +89,14 @@ class LyricsTranscriber:
                 audioshake_api_token=env_config.get("audioshake_api_token"),
             )
             
+            # Get lyrics artist and title from config if specified
+            lyrics_artist = self.config.lyrics_artist or track.artist
+            lyrics_title = self.config.lyrics_title or track.title
+            
             lyrics_config = LyricsConfig(
                 genius_api_token=env_config.get("genius_api_token"),
                 spotify_cookie=env_config.get("spotify_cookie"),
-                lyrics_file=track.lyrics,
+                lyrics_file=self.config.lyrics_file,
             )
             
             output_config = OutputConfig(
@@ -116,8 +120,8 @@ class LyricsTranscriber:
             # Initialize transcriber with new config objects
             transcriber = LyricsTranscriberLib(
                 audio_filepath=track.input_audio_wav,
-                artist=track.artist,
-                title=track.title,
+                artist=lyrics_artist,
+                title=lyrics_title,
                 transcriber_config=transcriber_config,
                 lyrics_config=lyrics_config,
                 output_config=output_config,
@@ -162,4 +166,12 @@ class LyricsTranscriber:
             return track
             
         except Exception as e:
-            raise TranscriptionError(f"Failed to transcribe lyrics: {str(e)}") from e 
+            raise TranscriptionError(f"Failed to transcribe lyrics: {str(e)}") from e
+    
+    async def cleanup(self):
+        """
+        Perform cleanup operations for the transcriber.
+        """
+        self.logger.info("Cleaning up transcriber resources")
+        # No resources to clean up currently
+        pass 

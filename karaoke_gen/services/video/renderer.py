@@ -428,6 +428,8 @@ class VideoRenderer:
                 lyrics_file = track.processed_lyrics['formatted_lyrics_file']
             elif 'formatted_lyrics' in track.processed_lyrics:
                 lyrics_file = track.processed_lyrics['formatted_lyrics']
+            elif 'ass_filepath' in track.processed_lyrics:
+                lyrics_file = track.processed_lyrics['ass_filepath']
         else:
             lyrics_file = track.processed_lyrics
         
@@ -436,14 +438,18 @@ class VideoRenderer:
             self.logger.warning(f"No processed lyrics found for {track.base_name}")
             return track
         
-        # Check for instrumental audio
-        if not track.instrumental or not os.path.isfile(track.instrumental):
-            self.logger.warning(f"No instrumental audio found for {track.base_name}")
+        # Check for audio file
+        audio_file = track.audio_file
+        if not audio_file or not os.path.isfile(audio_file):
+            self.logger.warning(f"No audio file found for {track.base_name}")
             return track
         
         # Render video
         if not self.config.dry_run:
             try:
+                # Determine if we have a valid title video
+                has_title_video = track.title_video and os.path.isfile(track.title_video)
+                
                 # Create temporary subtitle file in ASS format if needed
                 if lyrics_file.endswith('.lrc'):
                     subtitle_file = await self._convert_lrc_to_ass(lyrics_file, track.track_output_dir)
@@ -451,12 +457,22 @@ class VideoRenderer:
                     subtitle_file = lyrics_file
                 
                 # Build ffmpeg command
-                command = (
-                    f'{self.ffmpeg_base_command} -i "{track.title_video}" -i "{track.instrumental}" '
-                    f'-vf "ass={subtitle_file}" '
-                    f'-c:v libx264 -preset medium -crf 22 -c:a aac -b:a 192k '
-                    f'-pix_fmt yuv420p -shortest "{output_path}"'
-                )
+                if has_title_video:
+                    # Use title video if available
+                    command = (
+                        f'{self.ffmpeg_base_command} -i "{track.title_video}" -i "{audio_file}" '
+                        f'-vf "ass={subtitle_file}" '
+                        f'-c:v libx264 -preset medium -crf 22 -c:a aac -b:a 192k '
+                        f'-pix_fmt yuv420p -shortest "{output_path}"'
+                    )
+                else:
+                    # Create video from audio with black background
+                    command = (
+                        f'{self.ffmpeg_base_command} -f lavfi -i color=c=black:s=1920x1080:r=30 '
+                        f'-i "{audio_file}" -vf "ass={subtitle_file}" '
+                        f'-c:v libx264 -preset medium -crf 22 -c:a aac -b:a 192k '
+                        f'-pix_fmt yuv420p -shortest -t {track.duration} "{output_path}"'
+                    )
                 
                 # Execute command
                 self.logger.debug(f"Rendering lyrics video: {command}")
@@ -475,7 +491,7 @@ class VideoRenderer:
                 self.logger.info(f"Successfully rendered lyrics video: {output_path}")
                 
                 # Clean up temporary files
-                if lyrics_file.endswith('.lrc') and os.path.isfile(subtitle_file):
+                if lyrics_file.endswith('.lrc') and os.path.isfile(subtitle_file) and subtitle_file != lyrics_file:
                     os.remove(subtitle_file)
                 
             except Exception as e:

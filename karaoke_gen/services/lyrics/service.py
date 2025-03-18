@@ -6,16 +6,14 @@ from typing import Dict, Any, Optional
 from karaoke_gen.core.project import ProjectConfig
 from karaoke_gen.core.track import Track
 from karaoke_gen.core.exceptions import LyricsError
-from karaoke_gen.services.lyrics.fetcher import LyricsFetcher
 from karaoke_gen.services.lyrics.transcriber import LyricsTranscriber
-from karaoke_gen.services.lyrics.synchronizer import LyricsSynchronizer
 from karaoke_gen.services.lyrics.formatter import LyricsFormatter
 import datetime
 
 
 class LyricsService:
     """
-    Service for lyrics processing operations including fetching, transcription, synchronization, and formatting.
+    Service for lyrics processing operations including transcription.
     """
     
     def __init__(self, config: ProjectConfig):
@@ -29,9 +27,7 @@ class LyricsService:
         self.logger = config.logger or logging.getLogger(__name__)
         
         # Initialize components
-        self.fetcher = LyricsFetcher(config)
         self.transcriber = LyricsTranscriber(config)
-        self.synchronizer = LyricsSynchronizer(config)
         self.formatter = LyricsFormatter(config)
     
     async def process_lyrics(self, track: Track) -> Track:
@@ -50,31 +46,16 @@ class LyricsService:
         
         self.logger.info(f"Processing lyrics for {track.base_name}")
         
-        # Use provided lyrics file if specified
-        if self.config.lyrics_file and os.path.isfile(self.config.lyrics_file):
-            self.logger.info(f"Using provided lyrics file: {self.config.lyrics_file}")
-            track = await self.formatter.load_lyrics_from_file(track, self.config.lyrics_file)
-            return track
-        
         # Check for existing lyrics files
         track = await self._check_existing_lyrics(track)
         if track.processed_lyrics:
             self.logger.info("Found existing lyrics files, skipping transcription")
             return track
         
-        # Fetch lyrics if needed
-        if not track.lyrics:
-            track = await self.fetcher.fetch_lyrics(track)
-        
-        # Transcribe lyrics
+        # The LyricsTranscriber library handles both fetching lyrics and transcribing,
+        # so we don't need to do the fetching separately
         if not self.config.skip_transcription:
             track = await self.transcriber.transcribe_lyrics(track)
-        
-        # Synchronize lyrics
-        track = await self.synchronizer.synchronize_lyrics(track)
-        
-        # Format lyrics
-        track = await self.formatter.format_lyrics(track)
         
         return track
     
@@ -151,8 +132,10 @@ class LyricsService:
         files_to_backup = []
         
         # Backup processed lyrics
-        if track.processed_lyrics and os.path.isfile(track.processed_lyrics):
-            files_to_backup.append(track.processed_lyrics)
+        if track.processed_lyrics:
+            for key, value in track.processed_lyrics.items():
+                if isinstance(value, str) and os.path.isfile(value):
+                    files_to_backup.append(value)
         
         # Backup videos
         for video_attr in ["video_with_lyrics", "final_video"]:
@@ -186,14 +169,8 @@ class LyricsService:
         self.logger.info("Cleaning up lyrics service resources")
         
         # Close any open resources
-        if hasattr(self, 'fetcher') and self.fetcher:
-            await self.fetcher.cleanup()
-        
         if hasattr(self, 'transcriber') and self.transcriber:
             await self.transcriber.cleanup()
-        
-        if hasattr(self, 'synchronizer') and self.synchronizer:
-            await self.synchronizer.cleanup()
         
         if hasattr(self, 'formatter') and self.formatter:
             await self.formatter.cleanup()
@@ -254,8 +231,9 @@ class LyricsService:
         Returns:
             The sanitized filename
         """
-        # Replace characters that are invalid in filenames
-        invalid_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
-        for char in invalid_chars:
-            filename = filename.replace(char, '_')
+        # Replace problematic characters with underscores
+        for char in ["\\", "/", ":", "*", "?", '"', "<", ">", "|"]:
+            filename = filename.replace(char, "_")
+        # Remove any trailing periods or spaces
+        filename = filename.rstrip(". ")
         return filename 

@@ -103,25 +103,27 @@ class AudioSeparator:
                     # Load model first
                     self.separator.load_model(model_filename=self.config.clean_instrumental_model)
                     
-                    # Then call separate with only the audio file
-                    output_files = self.separator.separate(input_audio)
+                    # Get the current working directory as the separator outputs files there
+                    current_dir = os.getcwd()
+                    
+                    # Convert input_audio to absolute path
+                    input_audio_abs = os.path.abspath(input_audio)
+                    
+                    # Call separate with the absolute path to the audio file
+                    output_files = self.separator.separate(input_audio_abs)
                     
                     # Process the output files
                     result = {}
                     for file in output_files:
+                        # The output files are in the current directory
+                        file_path = os.path.join(current_dir, os.path.basename(file))
                         if "(Vocals)" in file:
-                            vocals_path = os.path.join(
-                                stems_dir, 
-                                f"{artist_title} (Clean Vocals).{self.config.lossless_output_format.lower()}"
-                            )
-                            os.rename(file, vocals_path)
+                            if os.path.exists(file_path) and not os.path.exists(vocals_path):
+                                shutil.move(file_path, vocals_path)
                             result["vocals"] = vocals_path
                         elif "(Instrumental)" in file:
-                            instrumental_path = os.path.join(
-                                stems_dir, 
-                                f"{artist_title} (Clean Instrumental).{self.config.lossless_output_format.lower()}"
-                            )
-                            os.rename(file, instrumental_path)
+                            if os.path.exists(file_path) and not os.path.exists(instrumental_path):
+                                shutil.move(file_path, instrumental_path)
                             result["instrumental"] = instrumental_path
                     
                     # Update track with separation results
@@ -202,39 +204,42 @@ class AudioSeparator:
                         # Load model first
                         self.separator.load_model(model_filename=model_name)
                         
-                        # Then call separate with only the audio file
-                        output_files = self.separator.separate(input_audio)
+                        # Get the current working directory as the separator outputs files there
+                        current_dir = os.getcwd()
+                        
+                        # Convert input_audio to absolute path
+                        input_audio_abs = os.path.abspath(input_audio)
+                        
+                        # Call separate with the absolute path to the audio file
+                        output_files = self.separator.separate(input_audio_abs)
                         
                         # Process the output files
                         result = {}
                         for file in output_files:
+                            # The output files are in the current directory
+                            file_path = os.path.join(current_dir, os.path.basename(file))
                             file_name = os.path.basename(file)
+                            
                             if "demucs" in model_name.lower():
                                 # Extract stem name from demucs output
                                 for stem in ["drums", "bass", "other", "vocals"]:
                                     if f"_{stem}." in file_name.lower():
-                                        stem_path = os.path.join(
-                                            stems_dir, 
-                                            f"{artist_title} (Demucs {stem.capitalize()}).{self.config.lossless_output_format.lower()}"
-                                        )
-                                        os.rename(file, stem_path)
+                                        stem_path = output_paths[stem]
+                                        if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                            shutil.move(file_path, stem_path)
                                         result[stem] = stem_path
                                         break
                             else:
                                 # Handle 2-stem models
                                 if "(Vocals)" in file_name:
-                                    stem_path = os.path.join(
-                                        stems_dir, 
-                                        f"{artist_title} ({model_name} Vocals).{self.config.lossless_output_format.lower()}"
-                                    )
-                                    os.rename(file, stem_path)
+                                    stem_path = output_paths["vocals"]
+                                    if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                        shutil.move(file_path, stem_path)
                                     result["vocals"] = stem_path
                                 elif "(Instrumental)" in file_name:
-                                    stem_path = os.path.join(
-                                        stems_dir, 
-                                        f"{artist_title} ({model_name} Instrumental).{self.config.lossless_output_format.lower()}"
-                                    )
-                                    os.rename(file, stem_path)
+                                    stem_path = output_paths["instrumental"]
+                                    if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                        shutil.move(file_path, stem_path)
                                     result["instrumental"] = stem_path
                         
                         # Update track with separation results
@@ -287,16 +292,16 @@ class AudioSeparator:
                 # Define output paths
                 lead_vocals_path = os.path.join(
                     stems_dir, 
-                    f"{artist_title} (Lead Vocals).{self.config.lossless_output_format.lower()}"
+                    f"{artist_title} (Lead Vocals {model_name}).{self.config.lossless_output_format.lower()}"
                 )
                 backing_vocals_path = os.path.join(
                     stems_dir, 
-                    f"{artist_title} (Backing Vocals).{self.config.lossless_output_format.lower()}"
+                    f"{artist_title} (Backing Vocals {model_name}).{self.config.lossless_output_format.lower()}"
                 )
                 
                 # Check if output files already exist
                 if os.path.isfile(lead_vocals_path) and os.path.isfile(backing_vocals_path):
-                    self.logger.info(f"Backing vocals already exist")
+                    self.logger.info(f"Backing vocals for model {model_name} already exist")
                     track.separated_audio["backing_vocals"][model_name] = {
                         "lead_vocals": lead_vocals_path,
                         "backing_vocals": backing_vocals_path
@@ -309,26 +314,29 @@ class AudioSeparator:
                         # Load model first
                         self.separator.load_model(model_filename=model_name)
                         
-                        # Then call separate with only the audio file
-                        output_files = self.separator.separate(vocals_path)
+                        # Get the current working directory as the separator outputs files there
+                        current_dir = os.getcwd()
+                        
+                        # Convert vocals_path to absolute path
+                        vocals_path_abs = os.path.abspath(vocals_path)
+                        
+                        # Call separate with the absolute path to the audio file
+                        output_files = self.separator.separate(vocals_path_abs)
                         
                         # Process the output files
                         result = {}
                         for file in output_files:
-                            file_name = os.path.basename(file)
-                            if "(Vocals)" in file_name:
-                                lead_vocals_path = os.path.join(
-                                    stems_dir, 
-                                    f"{artist_title} (Lead Vocals).{self.config.lossless_output_format.lower()}"
-                                )
-                                os.rename(file, lead_vocals_path)
+                            # The output files are in the current directory
+                            file_path = os.path.join(current_dir, os.path.basename(file))
+                            if "(Vocals)" in file:
+                                # This is the lead vocals
+                                if os.path.exists(file_path) and not os.path.exists(lead_vocals_path):
+                                    shutil.move(file_path, lead_vocals_path)
                                 result["lead_vocals"] = lead_vocals_path
-                            elif "(Instrumental)" in file_name:
-                                backing_vocals_path = os.path.join(
-                                    stems_dir, 
-                                    f"{artist_title} (Backing Vocals).{self.config.lossless_output_format.lower()}"
-                                )
-                                os.rename(file, backing_vocals_path)
+                            elif "(Instrumental)" in file:
+                                # This is the backing vocals
+                                if os.path.exists(file_path) and not os.path.exists(backing_vocals_path):
+                                    shutil.move(file_path, backing_vocals_path)
                                 result["backing_vocals"] = backing_vocals_path
                         
                         # Update track with separation results

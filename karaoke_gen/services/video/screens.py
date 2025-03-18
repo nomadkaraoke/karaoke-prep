@@ -83,8 +83,8 @@ class ScreenGenerator:
         # Store video durations and existing images
         self.intro_video_duration = self.style_params["intro"]["video_duration"]
         self.end_video_duration = self.style_params["end"]["video_duration"]
-        self.existing_title_image = self.style_params["intro"]["existing_image"]
-        self.existing_end_image = self.style_params["end"]["existing_image"]
+        self.existing_title_image = self.style_params["intro"].get("existing_image")
+        self.existing_end_image = self.style_params["end"].get("existing_image")
     
     def _load_style_params(self):
         """
@@ -466,10 +466,11 @@ class ScreenGenerator:
             duration: The video duration in seconds
             resolution: The resolution
         """
+        # Use the same ffmpeg command as the old implementation
         command = (
-            f'{self.ffmpeg_base_command} -loop 1 -i "{image_path}" -c:v prores_ks -profile:v 3 '
-            f'-vendor ap10 -bits_per_mb 8000 -t {duration} -pix_fmt yuv422p10le '
-            f'-vf "scale={resolution[0]}:{resolution[1]}" "{video_path}"'
+            f'{self.ffmpeg_base_command} -y -loop 1 -framerate 30 -i "{image_path}" '
+            f'-f lavfi -i anullsrc -c:v libx264 -r 30 -t {duration} -pix_fmt yuv420p '
+            f'-vf "scale={resolution[0]}:{resolution[1]}" -c:a aac -shortest "{video_path}"'
         )
         
         self.logger.debug(f"Creating video from image: {command}")
@@ -485,6 +486,12 @@ class ScreenGenerator:
             raise VideoError(f"Failed to create video from image: {error_message}")
         
         self.logger.debug(f"Created video from image: {video_path}")
+        
+        # Verify the file was created successfully
+        if not os.path.isfile(video_path):
+            raise VideoError(f"Failed to create video file: {video_path}")
+            
+        return video_path
     
     async def _handle_existing_image(self, existing_image, output_image_filepath_noext, output_video_filepath, duration):
         """
@@ -680,46 +687,83 @@ class ScreenGenerator:
         """
         self.logger.info(f"Generating title screen for {track.base_name}")
         
-        # Define output path
-        output_path = os.path.join(track.track_output_dir, f"{track.base_name} (Title).mp4")
+        # Define output paths
+        output_image_filepath_noext = os.path.join(track.track_output_dir, f"{track.base_name} (Title)")
+        output_image_path = f"{output_image_filepath_noext}.png"
+        output_jpg_path = f"{output_image_filepath_noext}.jpg"
+        output_video_path = os.path.join(track.track_output_dir, f"{track.base_name} (Title).mov")
         
         # Skip if output already exists
-        if os.path.isfile(output_path):
-            self.logger.info(f"Title screen already exists: {output_path}")
-            track.title_video = output_path
+        if os.path.isfile(output_video_path):
+            self.logger.info(f"Title screen already exists: {output_video_path}")
+            track.title_video = output_video_path
             return track
         
         # Generate title screen
         if not self.config.dry_run:
             try:
-                # Create temporary image file
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-                    temp_image_path = temp_file.name
+                # Check for existing image first
+                if self.existing_title_image and os.path.isfile(self.existing_title_image):
+                    # Handle existing image case
+                    await self._handle_existing_image(
+                        self.existing_title_image, 
+                        output_image_filepath_noext, 
+                        output_video_path, 
+                        self.intro_video_duration
+                    )
+                else:
+                    # Create background
+                    resolution = (3840, 2160)  # 4K resolution
+                    background = self._create_background(self.title_format, resolution)
+                    
+                    # Create draw object
+                    draw = ImageDraw.Draw(background)
+                    
+                    # Get font path
+                    font_path = self._get_font_path(self.title_format.get("font", "Montserrat-Bold.ttf"))
+                    
+                    # Apply text transformations
+                    artist_text = self._transform_text(track.artist, self.title_format["artist_text_transform"])
+                    title_text = self._transform_text(track.title, self.title_format["title_text_transform"])
+                    
+                    # Render all text
+                    self._render_all_text(
+                        draw, 
+                        font_path, 
+                        title_text, 
+                        artist_text, 
+                        self.title_format, 
+                        self.config.render_bounding_boxes
+                    )
+                    
+                    # Save images
+                    if self.config.output_png:
+                        background.save(output_image_path, "PNG")
+                        self.logger.debug(f"Saved PNG image: {output_image_path}")
+                    
+                    if self.config.output_jpg:
+                        background_rgb = background.convert("RGB")
+                        background_rgb.save(output_jpg_path, "JPEG", quality=95)
+                        self.logger.debug(f"Saved JPG image: {output_jpg_path}")
+                    
+                    # Create video from image
+                    image_path = output_jpg_path if self.config.output_jpg else output_image_path
+                    await self._create_video_from_image(
+                        image_path, 
+                        output_video_path, 
+                        self.intro_video_duration,
+                        resolution
+                    )
                 
-                # Generate title image
-                await self._create_title_image(track, temp_image_path)
-                
-                # Convert image to video
-                await self._convert_image_to_video(
-                    temp_image_path,
-                    output_path,
-                    duration=self.config.title_screen_duration,
-                    fade_in=self.config.title_fade_in,
-                    fade_out=self.config.title_fade_out
-                )
-                
-                # Clean up temporary file
-                os.unlink(temp_image_path)
-                
-                track.title_video = output_path
-                self.logger.info(f"Successfully generated title screen: {output_path}")
+                track.title_video = output_video_path
+                self.logger.info(f"Successfully generated title screen: {output_video_path}")
                 
             except Exception as e:
                 self.logger.error(f"Failed to generate title screen: {str(e)}")
                 # Continue with other processing
         else:
-            self.logger.info(f"[DRY RUN] Would generate title screen: {output_path}")
-            track.title_video = output_path
+            self.logger.info(f"[DRY RUN] Would generate title screen: {output_video_path}")
+            track.title_video = output_video_path
         
         return track
     
@@ -735,46 +779,83 @@ class ScreenGenerator:
         """
         self.logger.info(f"Generating end screen for {track.base_name}")
         
-        # Define output path
-        output_path = os.path.join(track.track_output_dir, f"{track.base_name} (End).mp4")
+        # Define output paths
+        output_image_filepath_noext = os.path.join(track.track_output_dir, f"{track.base_name} (End)")
+        output_image_path = f"{output_image_filepath_noext}.png"
+        output_jpg_path = f"{output_image_filepath_noext}.jpg"
+        output_video_path = os.path.join(track.track_output_dir, f"{track.base_name} (End).mov")
         
         # Skip if output already exists
-        if os.path.isfile(output_path):
-            self.logger.info(f"End screen already exists: {output_path}")
-            track.end_video = output_path
+        if os.path.isfile(output_video_path):
+            self.logger.info(f"End screen already exists: {output_video_path}")
+            track.end_video = output_video_path
             return track
         
         # Generate end screen
         if not self.config.dry_run:
             try:
-                # Create temporary image file
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-                    temp_image_path = temp_file.name
+                # Check for existing image first
+                if self.existing_end_image and os.path.isfile(self.existing_end_image):
+                    # Handle existing image case
+                    await self._handle_existing_image(
+                        self.existing_end_image, 
+                        output_image_filepath_noext, 
+                        output_video_path, 
+                        self.end_video_duration
+                    )
+                else:
+                    # Create background
+                    resolution = (3840, 2160)  # 4K resolution
+                    background = self._create_background(self.end_format, resolution)
+                    
+                    # Create draw object
+                    draw = ImageDraw.Draw(background)
+                    
+                    # Get font path
+                    font_path = self._get_font_path(self.end_format.get("font", "Montserrat-Bold.ttf"))
+                    
+                    # Apply text transformations
+                    artist_text = self._transform_text(track.artist, self.end_format["artist_text_transform"])
+                    title_text = self._transform_text(track.title, self.end_format["title_text_transform"])
+                    
+                    # Render all text
+                    self._render_all_text(
+                        draw, 
+                        font_path, 
+                        title_text, 
+                        artist_text, 
+                        self.end_format, 
+                        self.config.render_bounding_boxes
+                    )
+                    
+                    # Save images
+                    if self.config.output_png:
+                        background.save(output_image_path, "PNG")
+                        self.logger.debug(f"Saved PNG image: {output_image_path}")
+                    
+                    if self.config.output_jpg:
+                        background_rgb = background.convert("RGB")
+                        background_rgb.save(output_jpg_path, "JPEG", quality=95)
+                        self.logger.debug(f"Saved JPG image: {output_jpg_path}")
+                    
+                    # Create video from image
+                    image_path = output_jpg_path if self.config.output_jpg else output_image_path
+                    await self._create_video_from_image(
+                        image_path, 
+                        output_video_path, 
+                        self.end_video_duration,
+                        resolution
+                    )
                 
-                # Generate end image
-                await self._create_end_image(track, temp_image_path)
-                
-                # Convert image to video
-                await self._convert_image_to_video(
-                    temp_image_path,
-                    output_path,
-                    duration=self.config.end_screen_duration,
-                    fade_in=self.config.end_fade_in,
-                    fade_out=self.config.end_fade_out
-                )
-                
-                # Clean up temporary file
-                os.unlink(temp_image_path)
-                
-                track.end_video = output_path
-                self.logger.info(f"Successfully generated end screen: {output_path}")
+                track.end_video = output_video_path
+                self.logger.info(f"Successfully generated end screen: {output_video_path}")
                 
             except Exception as e:
                 self.logger.error(f"Failed to generate end screen: {str(e)}")
                 # Continue with other processing
         else:
-            self.logger.info(f"[DRY RUN] Would generate end screen: {output_path}")
-            track.end_video = output_path
+            self.logger.info(f"[DRY RUN] Would generate end screen: {output_video_path}")
+            track.end_video = output_video_path
         
         return track
     
@@ -799,54 +880,35 @@ class ScreenGenerator:
         # Create image
         if not self.config.dry_run:
             try:
-                # Create a temporary file for the image
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-                    temp_path = temp_file.name
-                    self._temp_files.append(temp_path)  # Track temporary file
-                
-                # Create image using PIL
-                from PIL import Image, ImageDraw, ImageFont
-                
                 # Get style parameters
                 style = self.style_params.get("intro", {})
-                width = style.get("width", 3840)
-                height = style.get("height", 2160)
-                background_color = style.get("background_color", "black")
-                text_color = style.get("text_color", "white")
-                font_size = style.get("font_size", 120)
-                font_path = style.get("font_path", None)
                 
-                # Create image
-                image = Image.new("RGB", (width, height), background_color)
-                draw = ImageDraw.Draw(image)
+                # Create background
+                resolution = (3840, 2160)  # 4K resolution
+                background = self._create_background(self.title_format, resolution)
                 
-                # Load font
-                if font_path and os.path.isfile(font_path):
-                    font = ImageFont.truetype(font_path, font_size)
-                else:
-                    # Use default font
-                    font = ImageFont.load_default()
-                    font_size = 60  # Adjust for default font
+                # Create draw object
+                draw = ImageDraw.Draw(background)
                 
-                # Draw artist name
-                if track.artist:
-                    artist_y = height // 3
-                    draw.text((width // 2, artist_y), track.artist, fill=text_color, font=font, anchor="mm")
+                # Get font path
+                font_path = self._get_font_path(self.title_format.get("font", "Montserrat-Bold.ttf"))
                 
-                # Draw title
-                if track.title:
-                    title_y = height // 2
-                    draw.text((width // 2, title_y), track.title, fill=text_color, font=font, anchor="mm")
+                # Apply text transformations
+                artist_text = self._transform_text(track.artist, self.title_format["artist_text_transform"])
+                title_text = self._transform_text(track.title, self.title_format["title_text_transform"])
                 
-                # Draw "Karaoke Version" text
-                karaoke_y = height * 2 // 3
-                draw.text((width // 2, karaoke_y), "Karaoke Version", fill=text_color, font=font, anchor="mm")
+                # Render all text
+                self._render_all_text(
+                    draw, 
+                    font_path, 
+                    title_text, 
+                    artist_text, 
+                    self.title_format, 
+                    self.config.render_bounding_boxes
+                )
                 
-                # Save image
-                image.save(temp_path)
-                
-                # Copy to output path
-                shutil.copy2(temp_path, output_path)
+                # Save image directly to output path
+                background.save(output_path)
                 
                 self.logger.info(f"Successfully created title image: {output_path}")
                 
@@ -878,56 +940,35 @@ class ScreenGenerator:
         # Create image
         if not self.config.dry_run:
             try:
-                # Create a temporary file for the image
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-                    temp_path = temp_file.name
-                    self._temp_files.append(temp_path)  # Track temporary file
-                
-                # Create image using PIL
-                from PIL import Image, ImageDraw, ImageFont
-                
                 # Get style parameters
                 style = self.style_params.get("end", {})
-                width = style.get("width", 3840)
-                height = style.get("height", 2160)
-                background_color = style.get("background_color", "black")
-                text_color = style.get("text_color", "white")
-                font_size = style.get("font_size", 120)
-                font_path = style.get("font_path", None)
                 
-                # Create image
-                image = Image.new("RGB", (width, height), background_color)
-                draw = ImageDraw.Draw(image)
+                # Create background
+                resolution = (3840, 2160)  # 4K resolution
+                background = self._create_background(self.end_format, resolution)
                 
-                # Load font
-                if font_path and os.path.isfile(font_path):
-                    font = ImageFont.truetype(font_path, font_size)
-                else:
-                    # Use default font
-                    font = ImageFont.load_default()
-                    font_size = 60  # Adjust for default font
+                # Create draw object
+                draw = ImageDraw.Draw(background)
                 
-                # Draw "Thanks for watching" text
-                thanks_y = height // 3
-                draw.text((width // 2, thanks_y), "Thanks for watching", fill=text_color, font=font, anchor="mm")
+                # Get font path
+                font_path = self._get_font_path(self.end_format.get("font", "Montserrat-Bold.ttf"))
                 
-                # Draw artist and title
-                if track.artist and track.title:
-                    track_text = f"{track.artist} - {track.title}"
-                    track_y = height // 2
-                    draw.text((width // 2, track_y), track_text, fill=text_color, font=font, anchor="mm")
+                # Apply text transformations
+                artist_text = self._transform_text(track.artist, self.end_format["artist_text_transform"])
+                title_text = self._transform_text(track.title, self.end_format["title_text_transform"])
                 
-                # Draw copyright text
-                copyright_y = height * 2 // 3
-                current_year = datetime.now().year
-                copyright_text = f"© {current_year} All Rights Reserved"
-                draw.text((width // 2, copyright_y), copyright_text, fill=text_color, font=font, anchor="mm")
+                # Render all text
+                self._render_all_text(
+                    draw, 
+                    font_path, 
+                    title_text, 
+                    artist_text, 
+                    self.end_format, 
+                    self.config.render_bounding_boxes
+                )
                 
-                # Save image
-                image.save(temp_path)
-                
-                # Copy to output path
-                shutil.copy2(temp_path, output_path)
+                # Save image directly to output path
+                background.save(output_path)
                 
                 self.logger.info(f"Successfully created end image: {output_path}")
                 
@@ -955,15 +996,18 @@ class ScreenGenerator:
         if os.path.isfile(output_path):
             self.logger.info(f"Video already exists: {output_path}")
             return output_path
+            
+        # Verify image exists
+        if not os.path.isfile(image_path):
+            raise VideoError(f"Input image file does not exist: {image_path}")
         
         # Create video
         if not self.config.dry_run:
             try:
-                # Build ffmpeg command
+                # Build ffmpeg command, using more basic options for better compatibility
                 command = (
                     f'{self.ffmpeg_base_command} -loop 1 -i "{image_path}" '
-                    f'-c:v libx264 -preset medium -crf 23 -t {duration} -pix_fmt yuv420p '
-                    f'-vf "fade=t=in:st=0:d={fade_in},fade=t=out:st={duration-fade_out}:d={fade_out}" '
+                    f'-c:v libx264 -preset fast -crf 23 -t {duration} -pix_fmt yuv420p '
                     f'-y "{output_path}"'
                 )
                 
@@ -980,6 +1024,10 @@ class ScreenGenerator:
                     error_message = stderr.decode() if stderr else "Unknown error"
                     raise VideoError(f"Failed to convert image to video: {error_message}")
                 
+                # Verify output file was created
+                if not os.path.isfile(output_path):
+                    raise VideoError(f"Output video file was not created: {output_path}")
+                    
                 self.logger.info(f"Successfully converted image to video: {output_path}")
                 
             except Exception as e:
