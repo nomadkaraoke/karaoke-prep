@@ -542,8 +542,10 @@ class ScreenGenerator:
             font_size = self.calculate_text_size_to_fit(draw, text, font_path, region)
             font = ImageFont.truetype(font_path, font_size)
         
-        # Get text size
-        text_width, text_height = draw.textsize(text, font=font)
+        # Get text size using newer Pillow method
+        left, top, right, bottom = font.getbbox(text)
+        text_width = right - left
+        text_height = bottom - top
         
         # Calculate position to center text in region
         x = region[0] + (region[2] - text_width) // 2
@@ -595,9 +597,10 @@ class ScreenGenerator:
         Returns:
             The font size
         """
-        # Define a function to get text size
+        # Define a function to get text size using newer Pillow method
         def get_text_size(text, font):
-            return draw.textsize(text, font=font)
+            left, top, right, bottom = font.getbbox(text)
+            return right - left, bottom - top
         
         # Binary search for the largest font size that fits
         min_size = 10

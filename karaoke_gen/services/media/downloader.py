@@ -41,10 +41,18 @@ class MediaDownloader:
             # Extract info for online media
             track = await self._extract_info_for_online_media(track)
             
-            # Download the video
+            # Download the video with extractor and media_id in the filename
+            output_filename = f"{self._sanitize_filename(track.base_name)} ({track.extractor}"
+            
+            # Add media_id if available
+            if track.media_id:
+                output_filename += f" {track.media_id}"
+            
+            output_filename += ")"
+            
             output_filename_no_extension = os.path.join(
                 track.track_output_dir, 
-                self._sanitize_filename(track.base_name)
+                output_filename
             )
             
             downloaded_file = await self._download_video(track.input_media, output_filename_no_extension)
@@ -69,10 +77,8 @@ class MediaDownloader:
         """
         self.logger.info(f"Extracting info for online media: {track.input_media}")
         
-        # Skip if artist and title are already provided
-        if track.artist and track.title:
-            self.logger.info(f"Using provided artist: {track.artist} and title: {track.title}")
-            return track
+        # Skip artist and title extraction if already provided
+        extract_metadata = not (track.artist and track.title)
         
         # Extract info from URL
         try:
@@ -94,8 +100,19 @@ class MediaDownloader:
                     
                     info = info["entries"][0]
                 
-                # Extract artist and title
-                if not track.artist or not track.title:
+                # Extract extractor and media_id (always do this)
+                if "extractor_key" in info:
+                    track.extractor = info["extractor_key"]
+                elif "ie_key" in info:
+                    track.extractor = info["ie_key"]
+                else:
+                    self.logger.warning("Could not extract extractor from media info")
+                
+                if "id" in info:
+                    track.media_id = info["id"]
+                
+                # Extract artist and title if needed
+                if extract_metadata:
                     artist, title = self._parse_video_title(info.get("title", ""))
                     
                     if not track.artist:
@@ -104,7 +121,7 @@ class MediaDownloader:
                     if not track.title:
                         track.title = title
                 
-                self.logger.info(f"Extracted artist: {track.artist} and title: {track.title}")
+                self.logger.info(f"Extracted info - artist: {track.artist}, title: {track.title}, extractor: {track.extractor}, id: {track.media_id}")
                 
                 return track
                 

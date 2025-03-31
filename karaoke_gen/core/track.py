@@ -14,6 +14,10 @@ class Track:
     title: Optional[str] = None
     input_media: Optional[str] = None
     
+    # Media source information
+    extractor: Optional[str] = "Original"  # Default to "Original" for local files
+    media_id: Optional[str] = None
+    
     # Paths to generated files
     track_output_dir: Optional[str] = None
     input_audio_wav: Optional[str] = None

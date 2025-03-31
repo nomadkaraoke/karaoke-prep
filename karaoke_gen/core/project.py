@@ -48,9 +48,7 @@ class ProjectConfig:
     model_file_dir: str = field(default_factory=lambda: os.path.join(tempfile.gettempdir(), "audio-separator-models"))
     existing_instrumental: Optional[str] = None
     instrumental_format: str = "flac"
-    launch_audacity: bool = False
-    audacity_path: Optional[str] = None
-    
+
     # Lyrics Configuration
     lyrics_artist: Optional[str] = None
     lyrics_title: Optional[str] = None

@@ -49,10 +49,10 @@ class MediaExtractor:
             self.logger.info(f"Input is not a video file, skipping still image extraction")
             return track
         
-        # Define output path
+        # Define output path with (Original) label
         output_filename_no_extension = os.path.join(
             track.track_output_dir, 
-            track.base_name
+            f"{track.base_name} (Original)"
         )
         output_image = f"{output_filename_no_extension}.jpg"
         
@@ -109,10 +109,10 @@ class MediaExtractor:
             self.logger.info(f"Input is not a video file, skipping audio extraction")
             return track
         
-        # Define output path
+        # Define output path with (Original) label
         output_filename_no_extension = os.path.join(
             track.track_output_dir, 
-            track.base_name
+            f"{track.base_name} (Original)"
         )
         output_wav = f"{output_filename_no_extension}.wav"
         
@@ -163,10 +163,10 @@ class MediaExtractor:
         """
         self.logger.info(f"Copying audio file for {track.base_name}")
         
-        # Define output path
+        # Define output path with (Original) label
         output_filename_no_extension = os.path.join(
             track.track_output_dir, 
-            track.base_name
+            f"{track.base_name} (Original)"
         )
         
         # Determine output extension
@@ -236,10 +236,10 @@ class MediaExtractor:
         """
         self.logger.info(f"Copying image file for {track.base_name}")
         
-        # Define output path
+        # Define output path with (Original) label
         output_filename_no_extension = os.path.join(
             track.track_output_dir, 
-            track.base_name
+            f"{track.base_name} (Original)"
         )
         
         # Determine output extension

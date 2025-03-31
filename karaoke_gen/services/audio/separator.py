@@ -13,6 +13,7 @@ import platform
 import subprocess
 import logging
 from typing import Dict, List, Optional, Any
+import re
 
 
 class AudioSeparator:
@@ -103,9 +104,6 @@ class AudioSeparator:
                     # Load model first
                     self.separator.load_model(model_filename=self.config.clean_instrumental_model)
                     
-                    # Get the current working directory as the separator outputs files there
-                    current_dir = os.getcwd()
-                    
                     # Convert input_audio to absolute path
                     input_audio_abs = os.path.abspath(input_audio)
                     
@@ -115,13 +113,16 @@ class AudioSeparator:
                     # Process the output files
                     result = {}
                     for file in output_files:
-                        # The output files are in the current directory
-                        file_path = os.path.join(current_dir, os.path.basename(file))
-                        if "(Vocals)" in file:
+                        # The file path returned by separator.separate() 
+                        # may already be the full path or just the filename
+                        file_name = os.path.basename(file)
+                        file_path = file  # Use the path as returned by separator
+                        
+                        if "(Vocals)" in file_name:
                             if os.path.exists(file_path) and not os.path.exists(vocals_path):
                                 shutil.move(file_path, vocals_path)
                             result["vocals"] = vocals_path
-                        elif "(Instrumental)" in file:
+                        elif "(Instrumental)" in file_name:
                             if os.path.exists(file_path) and not os.path.exists(instrumental_path):
                                 shutil.move(file_path, instrumental_path)
                             result["instrumental"] = instrumental_path
@@ -179,7 +180,7 @@ class AudioSeparator:
                     output_paths = {
                         stem: os.path.join(
                             stems_dir, 
-                            f"{artist_title} (Demucs {stem.capitalize()}).{self.config.lossless_output_format.lower()}"
+                            f"{artist_title} ({stem.capitalize()} {model_name}).{self.config.lossless_output_format.lower()}"
                         ) for stem in stems
                     }
                 else:
@@ -204,9 +205,6 @@ class AudioSeparator:
                         # Load model first
                         self.separator.load_model(model_filename=model_name)
                         
-                        # Get the current working directory as the separator outputs files there
-                        current_dir = os.getcwd()
-                        
                         # Convert input_audio to absolute path
                         input_audio_abs = os.path.abspath(input_audio)
                         
@@ -216,19 +214,68 @@ class AudioSeparator:
                         # Process the output files
                         result = {}
                         for file in output_files:
-                            # The output files are in the current directory
-                            file_path = os.path.join(current_dir, os.path.basename(file))
+                            # The file path returned by separator.separate() 
+                            # may already be the full path or just the filename
                             file_name = os.path.basename(file)
+                            file_path = file
                             
                             if "demucs" in model_name.lower():
                                 # Extract stem name from demucs output
-                                for stem in ["drums", "bass", "other", "vocals"]:
-                                    if f"_{stem}." in file_name.lower():
-                                        stem_path = output_paths[stem]
-                                        if os.path.exists(file_path) and not os.path.exists(stem_path):
-                                            shutil.move(file_path, stem_path)
-                                        result[stem] = stem_path
-                                        break
+                                if "_(Drums)_" in file_name or "_drums." in file_name.lower():
+                                    stem_path = output_paths["drums"]
+                                    if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                        shutil.move(file_path, stem_path)
+                                    result["drums"] = stem_path
+                                elif "_(Bass)_" in file_name or "_bass." in file_name.lower():
+                                    stem_path = output_paths["bass"]
+                                    if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                        shutil.move(file_path, stem_path)
+                                    result["bass"] = stem_path
+                                elif "_(Other)_" in file_name or "_other." in file_name.lower():
+                                    stem_path = output_paths["other"]
+                                    if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                        shutil.move(file_path, stem_path)
+                                    result["other"] = stem_path
+                                elif "_(Vocals)_" in file_name or "_vocals." in file_name.lower():
+                                    stem_path = output_paths["vocals"]
+                                    if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                        shutil.move(file_path, stem_path)
+                                    result["vocals"] = stem_path
+                                elif "_(Guitar)_" in file_name:
+                                    # For additional stems like guitar and piano, add them to the other stems too
+                                    stem_name = "guitar"
+                                    stem_path = os.path.join(
+                                        stems_dir, 
+                                        f"{artist_title} ({stem_name.capitalize()} {model_name}).{self.config.lossless_output_format.lower()}"
+                                    )
+                                    if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                        shutil.move(file_path, stem_path)
+                                    result[stem_name] = stem_path
+                                elif "_(Piano)_" in file_name:
+                                    stem_name = "piano"
+                                    stem_path = os.path.join(
+                                        stems_dir, 
+                                        f"{artist_title} ({stem_name.capitalize()} {model_name}).{self.config.lossless_output_format.lower()}"
+                                    )
+                                    if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                        shutil.move(file_path, stem_path)
+                                    result[stem_name] = stem_path
+                                else:
+                                    # Try to extract stem name for any other stems that might be present
+                                    try:
+                                        # Extract stem name from patterns like "_(StemName)_"
+                                        stem_match = re.search(r"_\(([^)]+)\)_", file_name)
+                                        if stem_match:
+                                            stem_name = stem_match.group(1)
+                                            stem_path = os.path.join(
+                                                stems_dir, 
+                                                f"{artist_title} ({stem_name} {model_name}).{self.config.lossless_output_format.lower()}"
+                                            )
+                                            if os.path.exists(file_path) and not os.path.exists(stem_path):
+                                                shutil.move(file_path, stem_path)
+                                            result[stem_name.lower()] = stem_path
+                                    except Exception as e:
+                                        self.logger.warning(f"Could not process stem file {file_name}: {e}")
                             else:
                                 # Handle 2-stem models
                                 if "(Vocals)" in file_name:
@@ -314,9 +361,6 @@ class AudioSeparator:
                         # Load model first
                         self.separator.load_model(model_filename=model_name)
                         
-                        # Get the current working directory as the separator outputs files there
-                        current_dir = os.getcwd()
-                        
                         # Convert vocals_path to absolute path
                         vocals_path_abs = os.path.abspath(vocals_path)
                         
@@ -326,14 +370,17 @@ class AudioSeparator:
                         # Process the output files
                         result = {}
                         for file in output_files:
-                            # The output files are in the current directory
-                            file_path = os.path.join(current_dir, os.path.basename(file))
-                            if "(Vocals)" in file:
+                            # The file path returned by separator.separate() 
+                            # may already be the full path or just the filename
+                            file_name = os.path.basename(file)
+                            file_path = file  # Use the path as returned by separator
+                            
+                            if "(Vocals)" in file_name:
                                 # This is the lead vocals
                                 if os.path.exists(file_path) and not os.path.exists(lead_vocals_path):
                                     shutil.move(file_path, lead_vocals_path)
                                 result["lead_vocals"] = lead_vocals_path
-                            elif "(Instrumental)" in file:
+                            elif "(Instrumental)" in file_name:
                                 # This is the backing vocals
                                 if os.path.exists(file_path) and not os.path.exists(backing_vocals_path):
                                     shutil.move(file_path, backing_vocals_path)
@@ -419,9 +466,6 @@ class AudioSeparator:
             
             # Step 5: Normalize audio files
             track = await self.normalize_audio_files(track)
-            
-            # Create Audacity LOF file
-            await self.create_audacity_lof_file(track, stems_dir)
             
             self.logger.info("Audio separation process completed successfully")
             return track
@@ -548,101 +592,6 @@ class AudioSeparator:
         self.logger.info("Audio normalization process completed")
         return track
 
-    async def create_audacity_lof_file(self, track, stems_dir):
-        """
-        Create an Audacity LOF file for the track.
-        
-        Args:
-            track: The track to process
-            stems_dir: The directory containing the stems
-            
-        Returns:
-            The path to the LOF file
-        """
-        self.logger.info(f"Creating Audacity LOF file for {track.base_name}")
-        
-        # Define output path
-        lof_path = os.path.join(track.track_output_dir, f"{track.base_name}.lof")
-        
-        # Skip if output already exists
-        if os.path.isfile(lof_path) and not self.config.force_regenerate:
-            self.logger.info(f"Audacity LOF file already exists: {lof_path}")
-            return lof_path
-        
-        # Create LOF file
-        if not self.config.dry_run:
-            try:
-                # Collect files to include in LOF
-                files = []
-                
-                # Add original audio
-                if track.input_audio_wav and os.path.isfile(track.input_audio_wav):
-                    files.append(track.input_audio_wav)
-                
-                # Add instrumental
-                if track.separated_audio["clean_instrumental"].get("instrumental"):
-                    files.append(track.separated_audio["clean_instrumental"]["instrumental"])
-                
-                # Add other stems
-                for stem_type, stem_info in track.separated_audio.items():
-                    if isinstance(stem_info, dict):
-                        for stem_name, stem_path in stem_info.items():
-                            if isinstance(stem_path, str) and os.path.isfile(stem_path) and stem_path not in files:
-                                files.append(stem_path)
-                    elif isinstance(stem_info, str) and os.path.isfile(stem_info) and stem_info not in files:
-                        files.append(stem_info)
-                
-                # Write LOF file
-                with open(lof_path, "w") as f:
-                    f.write("window\n")
-                    for file_path in files:
-                        f.write(f'file "{os.path.abspath(file_path)}"\n')
-                
-                self.logger.info(f"Successfully created Audacity LOF file: {lof_path}")
-                
-                # Launch Audacity if configured
-                if self.config.launch_audacity:
-                    await self._launch_audacity(lof_path)
-                
-            except Exception as e:
-                self.logger.error(f"Failed to create Audacity LOF file: {str(e)}")
-                # Continue with other processing
-        else:
-            self.logger.info(f"[DRY RUN] Would create Audacity LOF file: {lof_path}")
-        
-        return lof_path
-    
-    async def _launch_audacity(self, lof_path):
-        """
-        Launch Audacity with the LOF file.
-        
-        Args:
-            lof_path: The path to the LOF file
-        """
-        self.logger.info(f"Launching Audacity with LOF file: {lof_path}")
-        
-        try:
-            # Determine Audacity executable path
-            audacity_path = self.config.audacity_path
-            
-            if not audacity_path:
-                # Try to find Audacity in common locations
-                if platform.system() == "Windows":
-                    audacity_path = "C:\\Program Files\\Audacity\\audacity.exe"
-                elif platform.system() == "Darwin":  # macOS
-                    audacity_path = "/Applications/Audacity.app/Contents/MacOS/Audacity"
-                else:  # Linux
-                    audacity_path = "audacity"
-            
-            # Launch Audacity
-            subprocess.Popen([audacity_path, lof_path])
-            
-            self.logger.info(f"Successfully launched Audacity with LOF file: {lof_path}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to launch Audacity: {str(e)}")
-            # Continue with other processing
-    
     async def cleanup(self):
         """
         Perform cleanup operations for the audio separator.
