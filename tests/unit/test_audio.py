@@ -152,9 +152,13 @@ class TestAudio:
             # 6. backing vocals path check (_separate_backing_vocals)
             # 7. combined instrumental path check (_generate_combined_instrumentals)
             # Then True for normalization checks:
-            # 8. clean instrumental path check (in _normalize_audio_files)
-            # 9. combined instrumental path check (in _normalize_audio_files)
-            mock_file_exists.side_effect = [False] * 7 + [True] * 2
+            # 8. backing lead vocals path check (inner loop in _separate_backing_vocals)
+            # 9. backing backing vocals path check (inner loop in _separate_backing_vocals)
+            # 10. combined instrumental path check (_generate_combined_instrumentals)
+            # Then True for normalization checks:
+            # 11. clean instrumental path check (in _normalize_audio_files)
+            # 12. combined instrumental path check (in _normalize_audio_files)
+            mock_file_exists.side_effect = [False] * 9 + [True] * 2 # Adjusted from 7 to 9 False values
 
             # Configure the mock datetime object
             mock_datetime.now.return_value = dt.datetime.fromisoformat("2023-01-01T12:00:00")

@@ -94,25 +94,19 @@ class TestMetadata:
         with patch('karaoke_prep.karaoke_prep.ydl') as mock_ydl_context:
             # Configure the context manager mock
             mock_ydl_context.return_value.__enter__.return_value = mock_ydl_instance
-            
-            # Call the method that performs the search
-            basic_karaoke_prep.extract_info_for_online_media(input_artist=artist, input_title=title)
-            
-            # Verify ydl was instantiated
-            mock_ydl_context.assert_called_once()
-            
-            # Verify extract_info was called
-            mock_ydl_instance.extract_info.assert_called_once()
-            
-            # The method itself raises IndexError when accessing ["entries"][0]
-            # The previous call already triggered this. We just need to assert it happened.
-            # No need to re-patch or re-call. The initial call within the first 'with' block
-            # should have raised the error if the mock was set up correctly.
-            # Let's verify the exception is raised by calling the method within the raises block.
+
+            # Assert that calling the method with no results raises an IndexError
             with pytest.raises(IndexError):
-                # Call the method again, this time expecting the error
                 basic_karaoke_prep.extract_info_for_online_media(input_artist=artist, input_title=title)
-    
+
+            # Verify ydl was instantiated with correct options
+            expected_ydl_opts = {"quiet": "True", "format": "bestaudio", "noplaylist": "True", "extract_flat": True}
+            mock_ydl_context.assert_called_once_with(expected_ydl_opts)
+
+            # Verify extract_info was called with the correct arguments
+            expected_query = f"ytsearch1:{artist} {title}"
+            mock_ydl_instance.extract_info.assert_called_once_with(expected_query, download=False)
+
     def test_parse_single_track_metadata_complete(self, basic_karaoke_prep):
         """Test parsing metadata from extracted info with complete information."""
         basic_karaoke_prep.extracted_info = {

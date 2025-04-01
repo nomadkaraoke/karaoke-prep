@@ -97,6 +97,7 @@ async def test_karaoke_prep_integration():
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow
 async def test_full_cli_integration(tmp_path, mocker):
     """Tests the full CLI workflow by calling async_main directly with mocked sys.argv."""
 
