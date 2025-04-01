@@ -878,6 +878,15 @@ class KaraokeFinalise:
         else:
             os.rename(orig_dir, self.new_brand_code_dir_path)
 
+        # Update output_files dictionary with the new paths after moving
+        self.logger.info(f"Updating output file paths to reflect move to {self.new_brand_code_dir_path}")
+        for key in output_files:
+            if output_files[key]: # Check if the path exists (e.g., optional files)
+                old_basename = os.path.basename(output_files[key])
+                new_path = os.path.join(self.new_brand_code_dir_path, old_basename)
+                output_files[key] = new_path
+                self.logger.debug(f"  Updated {key}: {new_path}")
+
     def copy_final_files_to_public_share_dirs(self, brand_code, base_name, output_files):
         self.logger.info(f"Copying final MP4, 720p MP4, and ZIP to public share directory...")
 

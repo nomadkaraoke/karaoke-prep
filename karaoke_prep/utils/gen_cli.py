@@ -1,7 +1,8 @@
 #!/usr/bin/env python
+print("DEBUG: gen_cli.py starting imports...")
 import argparse
 import logging
-import pkg_resources
+from importlib import metadata
 import tempfile
 import os
 import sys
@@ -11,6 +12,8 @@ import time
 import pyperclip
 from karaoke_prep import KaraokePrep
 from karaoke_prep.karaoke_finalise import KaraokeFinalise
+
+print("DEBUG: gen_cli.py imports complete.")
 
 
 def is_url(string):
@@ -24,11 +27,14 @@ def is_file(string):
 
 
 async def async_main():
+    print("DEBUG: async_main() started.")
     logger = logging.getLogger(__name__)
     log_handler = logging.StreamHandler()
     log_formatter = logging.Formatter(fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     log_handler.setFormatter(log_formatter)
     logger.addHandler(log_handler)
+
+    print("DEBUG: async_main() logger configured.")
 
     parser = argparse.ArgumentParser(
         description="Generate karaoke videos with synchronized lyrics. Handles the entire process from downloading audio and lyrics to creating the final video.",
@@ -42,7 +48,13 @@ async def async_main():
         help="[Media or playlist URL] [Artist] [Title] of song to process. If URL is provided, Artist and Title are optional but increase chance of fetching the correct lyrics. If Artist and Title are provided with no URL, the top YouTube search result will be fetched.",
     )
 
-    package_version = pkg_resources.get_distribution("karaoke-gen").version
+    # Get version using importlib.metadata
+    try:
+        package_version = metadata.version("karaoke-gen")
+    except metadata.PackageNotFoundError:
+        package_version = "unknown"
+        print("DEBUG: Could not find version for karaoke-gen")
+
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {package_version}")
 
     # Workflow control
@@ -278,6 +290,8 @@ async def async_main():
 
     args = parser.parse_args()
 
+    print("DEBUG: async_main() args parsed.")
+
     # Handle test email template case first
     if args.test_email_template:
         log_level = getattr(logging, args.log_level.upper())
@@ -290,6 +304,8 @@ async def async_main():
         )
         kfinalise.test_email_template()
         return
+
+    print("DEBUG: async_main() continuing after test_email_template check.")
 
     # Handle edit-lyrics mode
     if args.edit_lyrics:
@@ -458,6 +474,8 @@ async def async_main():
             
         return
         
+    print("DEBUG: async_main() continuing after edit_lyrics check.")
+
     # Handle finalise-only mode
     if args.finalise_only:
         log_level = getattr(logging, args.log_level.upper())
@@ -560,6 +578,8 @@ async def async_main():
         
         return
 
+    print("DEBUG: async_main() parsed positional args.")
+
     # For prep or full workflow, parse input arguments
     input_media, artist, title, filename_pattern = None, None, None, None
 
@@ -605,12 +625,16 @@ async def async_main():
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
 
+    print("DEBUG: async_main() log level set.")
+
     # Set up environment variables for lyrics-only mode
     if args.lyrics_only:
         args.skip_separation = True
         os.environ["KARAOKE_PREP_SKIP_AUDIO_SEPARATION"] = "1"
         os.environ["KARAOKE_PREP_SKIP_TITLE_END_SCREENS"] = "1"
         logger.info("Lyrics-only mode enabled: skipping audio separation and title/end screen generation")
+
+    print("DEBUG: async_main() instantiating KaraokePrep...")
 
     # Step 1: Run KaraokePrep
     logger.info(f"KaraokePrep beginning with input_media: {input_media} artist: {artist} and title: {title}")
@@ -644,7 +668,11 @@ async def async_main():
         style_params_json=args.style_params_json,
     )
 
+    print("DEBUG: async_main() KaraokePrep instantiated.")
+
     tracks = await kprep.process()
+
+    print("DEBUG: async_main() kprep.process() finished.")
 
     # If prep-only mode, display detailed output and exit
     if args.prep_only:
@@ -689,8 +717,11 @@ async def async_main():
         logger.info("Preparation phase complete. Exiting due to --prep-only flag.")
         return
 
+    print("DEBUG: async_main() continuing after prep_only check.")
+
     # Step 2: For each track, run KaraokeFinalise
     for track in tracks:
+        print(f"DEBUG: async_main() starting finalise loop for track: {track.get('track_output_dir')}")
         logger.info(f"Starting finalisation phase for {track['artist']} - {track['title']}...")
 
         # Use the track directory that was actually created by KaraokePrep
@@ -801,10 +832,15 @@ async def async_main():
             logger.error(f"Error during finalisation: {str(e)}")
             raise e
 
+    print("DEBUG: async_main() finished.")
+
 
 def main():
+    print("DEBUG: main() started.")
     asyncio.run(async_main())
+    print("DEBUG: main() finished.")
 
 
 if __name__ == "__main__":
+    print("DEBUG: __main__ block executing.")
     main() 
