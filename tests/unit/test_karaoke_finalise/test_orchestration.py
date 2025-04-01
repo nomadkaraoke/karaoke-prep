@@ -70,6 +70,8 @@ def test_execute_optional_features_all_enabled_new_code(
     """Test execute_optional_features with all features enabled and generating a new brand code."""
     finaliser_for_process.keep_brand_code = False
     replace_existing_yt = False
+    # Manually set the path as the mocked move won't do it
+    finaliser_for_process.new_brand_code_dir_path = os.path.join(ORGANISED_DIR, f"{BRAND_PREFIX}-0001 - {ARTIST} - {TITLE}")
 
     finaliser_for_process.execute_optional_features(ARTIST, TITLE, BASE_NAME, ALL_INPUT_FILES, ALL_OUTPUT_FILES, replace_existing_yt)
 
@@ -133,6 +135,11 @@ def test_execute_optional_features_some_disabled(
     finaliser_for_process.discord_notication_enabled = False
     finaliser_for_process.public_share_rclone_enabled = False
     finaliser_for_process.keep_brand_code = False
+    # Manually set the path as the mocked move won't do it
+    # Use the return value of the mocked get_next_brand_code
+    mock_get_next.return_value = f"{BRAND_PREFIX}-0002" # Example next code
+    finaliser_for_process.new_brand_code_dir_path = os.path.join(ORGANISED_DIR, f"{BRAND_PREFIX}-0002 - {ARTIST} - {TITLE}")
+
 
     finaliser_for_process.execute_optional_features(ARTIST, TITLE, BASE_NAME, ALL_INPUT_FILES, ALL_OUTPUT_FILES, False)
 
@@ -257,18 +264,39 @@ def test_process_some_disabled(
     assert "final_karaoke_txt_zip" not in result
 
 @patch.object(KaraokeFinalise, 'validate_input_parameters_for_features')
-@patch.object(KaraokeFinalise, 'find_with_vocals_file')
-# ... mock other methods ...
-def test_process_dry_run(mock_find_vocals, mock_validate, finaliser_for_process):
-    """Test process method in dry run mode."""
+@patch.object(KaraokeFinalise, 'find_with_vocals_file', return_value=WITH_VOCALS_MOV)
+@patch.object(KaraokeFinalise, 'get_names_from_withvocals', return_value=(BASE_NAME, ARTIST, TITLE))
+@patch.object(KaraokeFinalise, 'choose_instrumental_audio_file', return_value=INSTRUMENTAL_FLAC)
+@patch.object(KaraokeFinalise, 'check_input_files_exist', return_value=ALL_INPUT_FILES)
+@patch.object(KaraokeFinalise, 'prepare_output_filenames', return_value=ALL_OUTPUT_FILES)
+@patch.object(KaraokeFinalise, 'create_cdg_zip_file')
+@patch.object(KaraokeFinalise, 'create_txt_zip_file')
+@patch.object(KaraokeFinalise, 'remux_and_encode_output_video_files')
+@patch.object(KaraokeFinalise, 'execute_optional_features')
+@patch.object(KaraokeFinalise, 'draft_completion_email')
+def test_process_dry_run(
+    mock_draft_email, mock_exec_opt, mock_remux_encode, mock_create_txt, mock_create_cdg,
+    mock_prep_out, mock_check_in, mock_choose_instr, mock_get_names, mock_find_vocals,
+    mock_validate, finaliser_for_process):
+    """Test process method in dry run mode doesn't execute modifying steps."""
     finaliser_for_process.dry_run = True
 
-    # We don't need to mock everything, just check the initial warning
-    # and potentially that sub-methods inherit dry_run (tested elsewhere)
-    with patch.object(KaraokeFinalise, 'get_names_from_withvocals', side_effect=Exception("Should not reach here in simple dry run test")):
-         # Use side effect to ensure later methods aren't called if dry run logic fails early
-        finaliser_for_process.process()
+    finaliser_for_process.process()
 
+    # Check initial steps are called
     finaliser_for_process.logger.warning.assert_called_with("Dry run enabled. No actions will be performed.")
-    mock_validate.assert_called_once() # Validation should still run
-    mock_find_vocals.assert_called_once() # Should still find files
+    mock_validate.assert_called_once()
+    mock_find_vocals.assert_called_once()
+    mock_get_names.assert_called_once()
+    mock_choose_instr.assert_called_once()
+    mock_check_in.assert_called_once()
+    mock_prep_out.assert_called_once()
+
+    # Check modifying steps: CDG/TXT creation *are* called but should handle dry run internally.
+    # The main process dry run check happens *after* these.
+    mock_create_cdg.assert_called_once()
+    mock_create_txt.assert_called_once()
+    # These subsequent steps should NOT be called due to the dry run check in process()
+    mock_remux_encode.assert_not_called()
+    mock_exec_opt.assert_not_called()
+    mock_draft_email.assert_not_called()

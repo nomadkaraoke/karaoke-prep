@@ -110,12 +110,22 @@ def test_post_discord_notification_dry_run(mock_post_msg, finaliser_for_notify):
 
 # --- Gmail Authentication Tests ---
 
-def test_authenticate_gmail_new_token(finaliser_for_notify, mock_google_auth, mock_gmail_service):
+# Patch open for the secrets file read within the auth flow
+@patch("builtins.open", new_callable=mock_open, read_data='{"installed": {"client_id": "test_id"}}')
+def test_authenticate_gmail_new_token(mock_secrets_open, finaliser_for_notify, mock_google_auth, mock_gmail_service):
     """Test Gmail authentication flow when no token file exists."""
-    mock_google_auth["mock_path_exists"].return_value = False
+    mock_google_auth["mock_path_exists"].return_value = False # Token file doesn't exist
     mock_google_auth["mock_build"].return_value = mock_gmail_service
 
-    service = finaliser_for_notify.authenticate_gmail()
+    # Mock open specifically for the pickle dump write at the end
+    # Use a separate patch context for clarity
+    with patch("builtins.open", mock_open()) as mock_pickle_open_write:
+        service = finaliser_for_notify.authenticate_gmail()
+
+    # Check secrets file was opened by from_client_secrets_file
+    # This assertion might be tricky as the open happens inside the google lib call.
+    # Let's trust the google lib mock (`mock_flow_cls`) covers this.
+    # mock_secrets_open.assert_called_once_with(YOUTUBE_SECRETS_FILE_GMAIL, "r") # This mock might interfere
 
     mock_google_auth["mock_path_exists"].assert_called_once_with(GMAIL_TOKEN_FILE)
     mock_google_auth["mock_flow_cls"].from_client_secrets_file.assert_called_once_with(
@@ -126,30 +136,43 @@ def test_authenticate_gmail_new_token(finaliser_for_notify, mock_google_auth, mo
     assert mock_google_auth["mock_pickle_dump"].call_args[0][0] == mock_google_auth["mock_credentials"]
     mock_google_auth["mock_build"].assert_called_once_with("gmail", "v1", credentials=mock_google_auth["mock_credentials"])
     assert service == mock_gmail_service
+    # Check pickle file was opened for writing
+    mock_pickle_open_write.assert_called_once_with(GMAIL_TOKEN_FILE, "wb")
 
-def test_authenticate_gmail_load_valid_token(finaliser_for_notify, mock_google_auth, mock_gmail_service):
+
+# Patch open for the pickle file read
+@patch("builtins.open", new_callable=mock_open)
+def test_authenticate_gmail_load_valid_token(mock_pickle_open, finaliser_for_notify, mock_google_auth, mock_gmail_service):
     """Test Gmail authentication using a valid existing token file."""
-    mock_google_auth["mock_path_exists"].return_value = True
-    mock_google_auth["mock_pickle_load"].return_value = mock_google_auth["mock_credentials"]
-    mock_google_auth["mock_credentials"].valid = True
+    mock_google_auth["mock_path_exists"].return_value = True # Token file exists
+    mock_google_auth["mock_pickle_load"].return_value = mock_google_auth["mock_credentials"] # mock pickle.load
+    mock_google_auth["mock_credentials"].valid = True # Token is valid
     mock_google_auth["mock_build"].return_value = mock_gmail_service
 
-    service = finaliser_for_notify.authenticate_gmail()
+    # Ensure the mock_open context manager is used for the pickle read
+    with mock_pickle_open:
+        service = finaliser_for_notify.authenticate_gmail()
 
     mock_google_auth["mock_path_exists"].assert_called_once_with(GMAIL_TOKEN_FILE)
-    mock_google_auth["mock_pickle_load"].assert_called_once_with(ANY)
-    mock_google_auth["mock_flow_instance"].run_local_server.assert_not_called()
-    mock_google_auth["mock_pickle_dump"].assert_not_called()
+    # Check pickle file was opened for reading
+    mock_pickle_open.assert_called_once_with(GMAIL_TOKEN_FILE, "rb")
+    # Ensure pickle.load was called with the file handle returned by mock_open
+    mock_google_auth["mock_pickle_load"].assert_called_once_with(mock_pickle_open())
+    mock_google_auth["mock_flow_instance"].run_local_server.assert_not_called() # Should not run flow
+    mock_google_auth["mock_pickle_dump"].assert_not_called() # Should not save token again
     mock_google_auth["mock_build"].assert_called_once_with("gmail", "v1", credentials=mock_google_auth["mock_credentials"])
     assert service == mock_gmail_service
 
-def test_authenticate_gmail_refresh_token(finaliser_for_notify, mock_google_auth, mock_gmail_service):
+
+# Patch open for both pickle read and write
+@patch("builtins.open", new_callable=mock_open)
+def test_authenticate_gmail_refresh_token(mock_pickle_open, finaliser_for_notify, mock_google_auth, mock_gmail_service):
     """Test Gmail authentication refreshing an expired token."""
-    mock_google_auth["mock_path_exists"].return_value = True
-    mock_google_auth["mock_pickle_load"].return_value = mock_google_auth["mock_credentials"]
-    mock_google_auth["mock_credentials"].valid = False
-    mock_google_auth["mock_credentials"].expired = True
-    mock_google_auth["mock_credentials"].refresh_token = "fake_refresh_token"
+    mock_google_auth["mock_path_exists"].return_value = True # Token file exists
+    mock_google_auth["mock_pickle_load"].return_value = mock_google_auth["mock_credentials"] # mock pickle.load
+    mock_google_auth["mock_credentials"].valid = False # Token is invalid
+    mock_google_auth["mock_credentials"].expired = True # But expired
+    mock_google_auth["mock_credentials"].refresh_token = "fake_refresh_token" # And has refresh token
     mock_google_auth["mock_build"].return_value = mock_gmail_service
 
     with patch('google.auth.transport.requests.Request') as mock_request:
@@ -158,20 +181,30 @@ def test_authenticate_gmail_refresh_token(finaliser_for_notify, mock_google_auth
         mock_refresh.assert_called_once_with(mock_request())
 
     mock_google_auth["mock_path_exists"].assert_called_once_with(GMAIL_TOKEN_FILE)
-    mock_google_auth["mock_pickle_load"].assert_called_once_with(ANY)
-    mock_google_auth["mock_flow_instance"].run_local_server.assert_not_called()
-    mock_google_auth["mock_pickle_dump"].assert_called_once()
+    # Check pickle file was opened for reading then writing
+    mock_pickle_open.assert_has_calls([
+        call(GMAIL_TOKEN_FILE, "rb"),
+        call(GMAIL_TOKEN_FILE, "wb")
+    ])
+    # Ensure pickle.load was called with the file handle returned by mock_open for read
+    mock_google_auth["mock_pickle_load"].assert_called_once_with(mock_pickle_open())
+    mock_google_auth["mock_flow_instance"].run_local_server.assert_not_called() # Should not run flow
+    # Ensure pickle.dump was called with the file handle returned by mock_open for write
+    mock_google_auth["mock_pickle_dump"].assert_called_once_with(mock_google_auth["mock_credentials"], mock_pickle_open())
     mock_google_auth["mock_build"].assert_called_once_with("gmail", "v1", credentials=mock_google_auth["mock_credentials"])
     assert service == mock_gmail_service
 
 # --- Gmail Draft Creation Tests ---
 
+# Patch open for the template read
 @patch('builtins.open', new_callable=mock_open, read_data="YT: {youtube_url}\nDB: {dropbox_url}")
 @patch.object(KaraokeFinalise, 'authenticate_gmail')
-@patch('email.mime.text.MIMEText', return_value=MagicMock(spec=MIMEText)) # Mock MIMEText instance
+# Patch MIMEText where it's used inside the karaoke_finalise module
+@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.MIMEText', return_value=MagicMock(spec=MIMEText))
 @patch('base64.urlsafe_b64encode')
 def test_draft_completion_email_success(mock_b64encode, mock_mime_text_cls, mock_auth_gmail, mock_open_template, finaliser_for_notify, mock_gmail_service):
     """Test successful email draft creation."""
+    finaliser_for_notify.dry_run = False # Ensure not in dry run
     mock_auth_gmail.return_value = mock_gmail_service
     # Mock the result of as_bytes() on the MIMEText instance
     mock_mime_instance = mock_mime_text_cls.return_value
@@ -218,7 +251,9 @@ def test_draft_completion_email_dry_run(mock_auth_gmail, mock_open_template, fin
     mock_auth_gmail.assert_not_called() # Auth not needed for dry run
     expected_subject = f"{finaliser_for_notify.brand_code}: {ARTIST} - {TITLE}"
     finaliser_for_notify.logger.info.assert_any_call(f"DRY RUN: Would create email draft with subject: {expected_subject}")
-    finaliser_for_notify.logger.info.assert_any_call(pytest.string_containing("DRY RUN: Email body:"))
+    # Check that the log message contains the expected dry run text for the body
+    body_log_found = any("DRY RUN: Email body:" in call_args[0][0] for call_args in finaliser_for_notify.logger.info.call_args_list)
+    assert body_log_found, "Expected dry run log message for email body not found."
 
 
 @patch.object(KaraokeFinalise, 'draft_completion_email')

@@ -107,8 +107,9 @@ def test_init_ffmpeg_command_info(mock_logger):
 
 def test_init_ffmpeg_command_frozen(mock_logger):
     """Test ffmpeg command uses bundled path when frozen."""
-    with patch('sys.frozen', True), \
-         patch('sys._MEIPASS', '/path/to/frozen/app'), \
+    # Add create=True because sys.frozen doesn't normally exist
+    with patch('sys.frozen', True, create=True), \
+         patch('sys._MEIPASS', '/path/to/frozen/app', create=True), \
          patch.object(KaraokeFinalise, 'detect_best_aac_codec', return_value='aac'):
         finaliser = KaraokeFinalise(logger=mock_logger, **MINIMAL_CONFIG)
     expected_path = os.path.join('/path/to/frozen/app', 'ffmpeg.exe')
@@ -116,7 +117,8 @@ def test_init_ffmpeg_command_frozen(mock_logger):
 
 def test_init_ffmpeg_command_not_frozen(mock_logger):
     """Test ffmpeg command uses system path when not frozen."""
-    with patch('sys.frozen', False), \
+    # Add create=True because sys.frozen doesn't normally exist
+    with patch('sys.frozen', False, create=True), \
          patch.object(KaraokeFinalise, 'detect_best_aac_codec', return_value='aac'):
         finaliser = KaraokeFinalise(logger=mock_logger, **MINIMAL_CONFIG)
     assert finaliser.ffmpeg_base_command.startswith("ffmpeg ")
