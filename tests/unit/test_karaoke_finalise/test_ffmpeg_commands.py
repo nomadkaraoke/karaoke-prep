@@ -220,7 +220,14 @@ def test_remux_and_encode_all_steps_mov_input(
     """Test the full remux/encode process with a .mov input requiring conversion."""
 
     # Simulate output files *do* exist initially to trigger overwrite prompt, end_mov also exists
-    mock_isfile.side_effect = lambda f: f in [OUTPUT_FILES["final_karaoke_lossless_mp4"], OUTPUT_FILES["final_karaoke_lossless_mkv"], INPUT_FILES["title_mov"], END_MOV]
+    # Also simulate WITH_VOCALS_MOV exists for the os.remove check after conversion
+    mock_isfile.side_effect = lambda f: f in [
+        OUTPUT_FILES["final_karaoke_lossless_mp4"],
+        OUTPUT_FILES["final_karaoke_lossless_mkv"],
+        INPUT_FILES["title_mov"],
+        END_MOV,
+        WITH_VOCALS_MOV # Ensure this returns True for the os.remove check
+    ]
 
     # Mock prepare_concat_filter to return specific values
     mock_env_mov_input = f"-i '/abs/path/{END_MOV}'"

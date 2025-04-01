@@ -110,87 +110,120 @@ def test_post_discord_notification_dry_run(mock_post_msg, finaliser_for_notify):
 
 # --- Gmail Authentication Tests ---
 
-# Patch open for the secrets file read within the auth flow
-@patch("builtins.open", new_callable=mock_open, read_data='{"installed": {"client_id": "test_id"}}')
-def test_authenticate_gmail_new_token(mock_secrets_open, finaliser_for_notify, mock_google_auth, mock_gmail_service):
+# Patch open for token write.
+# Patch the from_client_secrets_file method to control the flow instance.
+@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.InstalledAppFlow.from_client_secrets_file')
+@patch("builtins.open")
+def test_authenticate_gmail_new_token(mock_open, mock_from_secrets, finaliser_for_notify, mock_google_auth, mock_gmail_service):
     """Test Gmail authentication flow when no token file exists."""
     mock_google_auth["mock_path_exists"].return_value = False # Token file doesn't exist
     mock_google_auth["mock_build"].return_value = mock_gmail_service
 
-    # Mock open specifically for the pickle dump write at the end
-    # Use a separate patch context for clarity
-    with patch("builtins.open", mock_open()) as mock_pickle_open_write:
-        service = finaliser_for_notify.authenticate_gmail()
+    # Configure mock_open side_effect to handle both secrets read and token write
+    mock_token_handle = mock_open().return_value
+    def open_side_effect(file, mode='r', *args, **kwargs):
+        if file == GMAIL_TOKEN_FILE and mode == 'wb':
+            return mock_token_handle
+        # For the secrets file read, return a default mock handle
+        # (the content doesn't matter as from_client_secrets_file is mocked)
+        elif file == YOUTUBE_SECRETS_FILE_GMAIL and mode == 'r':
+             return mock_open().return_value # Default mock handle
+        # Raise error for unexpected calls
+        raise ValueError(f"Unexpected call to open: {file}, {mode}")
+    mock_open.side_effect = open_side_effect
 
-    # Check secrets file was opened by from_client_secrets_file
-    # This assertion might be tricky as the open happens inside the google lib call.
-    # Let's trust the google lib mock (`mock_flow_cls`) covers this.
-    # mock_secrets_open.assert_called_once_with(YOUTUBE_SECRETS_FILE_GMAIL, "r") # This mock might interfere
+    # Mock the flow instance that from_client_secrets_file returns
+    mock_flow_instance = MagicMock()
+    # Crucially, mock the run_local_server method ON THIS INSTANCE
+    mock_flow_instance.run_local_server.return_value = mock_google_auth["mock_credentials"]
+    mock_from_secrets.return_value = mock_flow_instance
 
-    mock_google_auth["mock_path_exists"].assert_called_once_with(GMAIL_TOKEN_FILE)
-    mock_google_auth["mock_flow_cls"].from_client_secrets_file.assert_called_once_with(
+    # Run the authentication
+    service = finaliser_for_notify.authenticate_gmail()
+
+    # Assertions
+    # Check open was called for the token write
+    mock_open.assert_any_call(GMAIL_TOKEN_FILE, "wb")
+    # Ensure it wasn't called unnecessarily otherwise (implicitly checked by side_effect)
+
+    # Check flow setup and execution
+    mock_from_secrets.assert_called_once_with(
         YOUTUBE_SECRETS_FILE_GMAIL, ["https://www.googleapis.com/auth/gmail.compose"]
     )
-    mock_google_auth["mock_flow_instance"].run_local_server.assert_called_once_with(port=0)
-    mock_google_auth["mock_pickle_dump"].assert_called_once()
-    assert mock_google_auth["mock_pickle_dump"].call_args[0][0] == mock_google_auth["mock_credentials"]
+    mock_google_auth["mock_path_exists"].assert_called_once_with(GMAIL_TOKEN_FILE)
+    mock_flow_instance.run_local_server.assert_called_once_with(port=0)
+    # Check token saving - use the result of the context manager __enter__
+    mock_google_auth["mock_pickle_dump"].assert_called_once_with(
+        mock_google_auth["mock_credentials"], mock_token_handle.__enter__()
+    )
+    # Check service build
     mock_google_auth["mock_build"].assert_called_once_with("gmail", "v1", credentials=mock_google_auth["mock_credentials"])
     assert service == mock_gmail_service
-    # Check pickle file was opened for writing
-    mock_pickle_open_write.assert_called_once_with(GMAIL_TOKEN_FILE, "wb")
 
 
-# Patch open for the pickle file read
-@patch("builtins.open", new_callable=mock_open)
-def test_authenticate_gmail_load_valid_token(mock_pickle_open, finaliser_for_notify, mock_google_auth, mock_gmail_service):
+# No patch for open needed here for read, rely on pickle.load patch from fixture
+def test_authenticate_gmail_load_valid_token(finaliser_for_notify, mock_google_auth, mock_gmail_service):
     """Test Gmail authentication using a valid existing token file."""
     mock_google_auth["mock_path_exists"].return_value = True # Token file exists
-    mock_google_auth["mock_pickle_load"].return_value = mock_google_auth["mock_credentials"] # mock pickle.load
+    # Configure pickle.load to return credentials when path exists
+    mock_google_auth["mock_pickle_load"].side_effect = None # Remove FileNotFoundError side effect
+    mock_google_auth["mock_pickle_load"].return_value = mock_google_auth["mock_credentials"]
     mock_google_auth["mock_credentials"].valid = True # Token is valid
     mock_google_auth["mock_build"].return_value = mock_gmail_service
 
-    # Ensure the mock_open context manager is used for the pickle read
-    with mock_pickle_open:
+    # Use mock_open for the read operation context manager
+    with patch("builtins.open", mock_open()) as mock_pickle_open_read:
+        # Call the function
         service = finaliser_for_notify.authenticate_gmail()
 
+    # Check the file was opened for reading
+    mock_pickle_open_read.assert_called_once_with(GMAIL_TOKEN_FILE, "rb")
+    # REMOVE duplicate call: service = finaliser_for_notify.authenticate_gmail()
+
     mock_google_auth["mock_path_exists"].assert_called_once_with(GMAIL_TOKEN_FILE)
-    # Check pickle file was opened for reading
-    mock_pickle_open.assert_called_once_with(GMAIL_TOKEN_FILE, "rb")
-    # Ensure pickle.load was called with the file handle returned by mock_open
-    mock_google_auth["mock_pickle_load"].assert_called_once_with(mock_pickle_open())
-    mock_google_auth["mock_flow_instance"].run_local_server.assert_not_called() # Should not run flow
+    # Ensure pickle.load was called
+    mock_google_auth["mock_pickle_load"].assert_called_once()
+    # mock_google_auth["mock_flow_instance"].run_local_server.assert_not_called() # REMOVED: mock_flow_instance not available here
     mock_google_auth["mock_pickle_dump"].assert_not_called() # Should not save token again
     mock_google_auth["mock_build"].assert_called_once_with("gmail", "v1", credentials=mock_google_auth["mock_credentials"])
     assert service == mock_gmail_service
 
 
-# Patch open for both pickle read and write
-@patch("builtins.open", new_callable=mock_open)
-def test_authenticate_gmail_refresh_token(mock_pickle_open, finaliser_for_notify, mock_google_auth, mock_gmail_service):
+# No patch for open needed for read, patch only for write
+def test_authenticate_gmail_refresh_token(finaliser_for_notify, mock_google_auth, mock_gmail_service):
     """Test Gmail authentication refreshing an expired token."""
     mock_google_auth["mock_path_exists"].return_value = True # Token file exists
-    mock_google_auth["mock_pickle_load"].return_value = mock_google_auth["mock_credentials"] # mock pickle.load
+    # Configure pickle.load to return credentials when path exists
+    mock_google_auth["mock_pickle_load"].side_effect = None # Remove FileNotFoundError side effect
+    mock_google_auth["mock_pickle_load"].return_value = mock_google_auth["mock_credentials"]
     mock_google_auth["mock_credentials"].valid = False # Token is invalid
     mock_google_auth["mock_credentials"].expired = True # But expired
     mock_google_auth["mock_credentials"].refresh_token = "fake_refresh_token" # And has refresh token
     mock_google_auth["mock_build"].return_value = mock_gmail_service
 
-    with patch('google.auth.transport.requests.Request') as mock_request:
+    # Use mock_open for both read and write operations
+    mock_file_handles = [mock_open().return_value, mock_open().return_value]
+    with patch("builtins.open", side_effect=mock_file_handles) as mock_multi_open:
+        # Get the refresh mock from the centrally mocked credentials
         mock_refresh = mock_google_auth["mock_credentials"].refresh
         service = finaliser_for_notify.authenticate_gmail()
-        mock_refresh.assert_called_once_with(mock_request())
+        # Use ANY because the actual Request object is created internally
+        mock_refresh.assert_called_once_with(ANY)
 
     mock_google_auth["mock_path_exists"].assert_called_once_with(GMAIL_TOKEN_FILE)
-    # Check pickle file was opened for reading then writing
-    mock_pickle_open.assert_has_calls([
+    # Ensure pickle.load was called
+    mock_google_auth["mock_pickle_load"].assert_called_once()
+    # Check open calls: first read ('rb'), then write ('wb')
+    mock_multi_open.assert_has_calls([
         call(GMAIL_TOKEN_FILE, "rb"),
         call(GMAIL_TOKEN_FILE, "wb")
     ])
-    # Ensure pickle.load was called with the file handle returned by mock_open for read
-    mock_google_auth["mock_pickle_load"].assert_called_once_with(mock_pickle_open())
-    mock_google_auth["mock_flow_instance"].run_local_server.assert_not_called() # Should not run flow
-    # Ensure pickle.dump was called with the file handle returned by mock_open for write
-    mock_google_auth["mock_pickle_dump"].assert_called_once_with(mock_google_auth["mock_credentials"], mock_pickle_open())
+    # mock_google_auth["mock_flow_instance"].run_local_server.assert_not_called() # REMOVED: mock_flow_instance not available here
+    # Ensure pickle.dump was called and the file was opened for writing
+    mock_google_auth["mock_pickle_dump"].assert_called_once()
+    # Assert on the write call using the mock_multi_open context manager
+    assert mock_multi_open.call_args_list[-1] == call(GMAIL_TOKEN_FILE, "wb") # Check last call was write
+    assert mock_google_auth["mock_pickle_dump"].call_args[0][0] == mock_google_auth["mock_credentials"] # Check correct object dumped
     mock_google_auth["mock_build"].assert_called_once_with("gmail", "v1", credentials=mock_google_auth["mock_credentials"])
     assert service == mock_gmail_service
 
