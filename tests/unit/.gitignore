@@ -1,0 +1,24 @@
+# Test cache
+__pycache__/
+.pytest_cache/
+
+# Coverage reports
+.coverage
+htmlcov/
+coverage.xml
+
+# Virtual environments
+venv/
+env/
+.env/
+
+# IDE files
+.vscode/
+.idea/
+
+# Temporary files
+*.pyc
+*.pyo
+*.pyd
+*~
+.DS_Store
