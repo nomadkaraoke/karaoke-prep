@@ -2,8 +2,9 @@ import os
 import pytest
 import glob
 import shutil
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch, mock_open, call
 from karaoke_prep.karaoke_prep import KaraokePrep
+import yt_dlp # Keep import for patching target
 
 class TestFileOperations:
     def test_copy_input_media(self, basic_karaoke_prep, temp_dir):
@@ -45,75 +46,100 @@ class TestFileOperations:
         output_filename = os.path.join(temp_dir, "output")
         downloaded_file = output_filename + ".mp4"
         
-        # Mock the yt_dlp.YoutubeDL context manager
+        # Mock the yt_dlp.YoutubeDL context manager and its methods
         mock_ydl_instance = MagicMock()
-        mock_ydl = MagicMock(return_value=mock_ydl_instance)
+        # Mock extract_info to prevent network calls during download process
+        mock_ydl_instance.extract_info.return_value = {'id': 'video_id', 'formats': [], 'ext': 'mp4'} 
+        # Completely mock the download method to do nothing
+        mock_ydl_instance.download = MagicMock(return_value=None) 
         
         # Mock glob.glob to return our "downloaded" file
         mock_glob_result = [downloaded_file]
         
-        with patch('yt_dlp.YoutubeDL', mock_ydl), \
+        # Patch the 'ydl' alias used in karaoke_prep.py and glob.glob
+        with patch('karaoke_prep.karaoke_prep.ydl') as mock_ydl_context, \
              patch('glob.glob', return_value=mock_glob_result):
+            
+            # Configure the context manager to return our mock instance
+            mock_ydl_context.return_value.__enter__.return_value = mock_ydl_instance
             
             # Create the file that glob will "find"
             os.makedirs(os.path.dirname(downloaded_file), exist_ok=True)
             with open(downloaded_file, "w") as f:
                 f.write("test video content")
             
-            # Configure mock_ydl_instance.download to do nothing
-            mock_ydl_instance.download.return_value = None
+            # Call the method
+            result = basic_karaoke_prep.download_video(url, output_filename)
             
-            # Patch os.system to avoid actual command execution
-            with patch('os.system'):
-                result = basic_karaoke_prep.download_video(url, output_filename)
-                
-                # Verify the correct file path was returned
-                assert result == downloaded_file
-                
-                # Verify yt_dlp was called with correct arguments
-                mock_ydl_instance.download.assert_called_once_with([url])
+            # Verify the correct file path was returned
+            assert result == downloaded_file
+            
+            # Verify ydl was instantiated with correct options
+            expected_ydl_opts = {
+                "quiet": True,
+                "format": "bv*+ba/b",
+                "outtmpl": f"{output_filename}.%(ext)s",
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
+            }
+            mock_ydl_context.assert_called_once_with(expected_ydl_opts)
+            
+            # Verify download was called on the instance
+            mock_ydl_instance.download.assert_called_once_with([url])
+            
+            # Verify glob was called
+            glob.glob.assert_called_once_with(f"{output_filename}.*")
     
     def test_download_video_no_files_found(self, basic_karaoke_prep):
         """Test downloading a video when no files are found after download."""
         url = "https://example.com/video"
         output_filename = "output"
         
-        # Mock the yt_dlp.YoutubeDL context manager
+        # Mock the yt_dlp.YoutubeDL context manager and its methods
         mock_ydl_instance = MagicMock()
-        mock_ydl = MagicMock(return_value=mock_ydl_instance)
+        # Mock extract_info to prevent network calls during download process
+        mock_ydl_instance.extract_info.return_value = {'id': 'video_id', 'formats': [], 'ext': 'mp4'}
+        # Completely mock the download method to do nothing
+        mock_ydl_instance.download = MagicMock(return_value=None)
         
         # Mock glob.glob to return empty list (no files found)
-        with patch('yt_dlp.YoutubeDL', mock_ydl), \
+        with patch('karaoke_prep.karaoke_prep.ydl') as mock_ydl_context, \
              patch('glob.glob', return_value=[]):
             
-            # Configure mock_ydl_instance.download to do nothing
-            mock_ydl_instance.download.return_value = None
+            # Configure the context manager to return our mock instance
+            mock_ydl_context.return_value.__enter__.return_value = mock_ydl_instance
             
-            # Patch os.system to avoid actual command execution
-            with patch('os.system'):
-                result = basic_karaoke_prep.download_video(url, output_filename)
-                
-                # Verify None was returned
-                assert result is None
-                
-                # Verify yt_dlp was called with correct arguments
-                mock_ydl_instance.download.assert_called_once_with([url])
+            # Call the method
+            result = basic_karaoke_prep.download_video(url, output_filename)
+            
+            # Verify None was returned
+            assert result is None
+            
+            # Verify ydl was instantiated
+            mock_ydl_context.assert_called_once()
+            
+            # Verify download was called on the instance
+            mock_ydl_instance.download.assert_called_once_with([url])
+            
+            # Verify glob was called
+            glob.glob.assert_called_once_with(f"{output_filename}.*")
     
-    def test_extract_still_image_from_video(self, basic_karaoke_prep, mock_ffmpeg):
+    def test_extract_still_image_from_video(self, basic_karaoke_prep):
         """Test extracting a still image from a video."""
         input_filename = "input.mp4"
         output_filename = "output"
         
-        result = basic_karaoke_prep.extract_still_image_from_video(input_filename, output_filename)
-        
-        # Verify the correct file path was returned
-        assert result == output_filename + ".png"
-        
-        # Verify ffmpeg was called with correct arguments
-        expected_command = f'{basic_karaoke_prep.ffmpeg_base_command} -i "{input_filename}" -ss 00:00:30 -vframes 1 "{output_filename}.png"'
-        mock_ffmpeg.assert_called_once_with(expected_command)
+        # Patch os.system directly within this test
+        with patch('os.system') as mock_os_system:
+            result = basic_karaoke_prep.extract_still_image_from_video(input_filename, output_filename)
+            
+            # Verify the correct file path was returned
+            assert result == output_filename + ".png"
+            
+            # Verify os.system was called with correct arguments
+            expected_command = f'{basic_karaoke_prep.ffmpeg_base_command} -i "{input_filename}" -ss 00:00:30 -vframes 1 "{output_filename}.png"'
+            mock_os_system.assert_called_once_with(expected_command)
     
-    def test_convert_to_wav_success(self, basic_karaoke_prep, mock_ffmpeg, temp_dir):
+    def test_convert_to_wav_success(self, basic_karaoke_prep, temp_dir):
         """Test converting input audio to WAV format successfully."""
         # Create a test input file
         input_filename = os.path.join(temp_dir, "input.mp3")
@@ -130,13 +156,15 @@ class TestFileOperations:
             
             output_filename = os.path.join(temp_dir, "output")
             
-            # Configure mock_ffmpeg to do nothing
-            mock_ffmpeg.return_value = 0
-            
-            result = basic_karaoke_prep.convert_to_wav(input_filename, output_filename)
-            
-            # Verify the correct file path was returned
-            assert result == output_filename + ".wav"
+            # Patch os.system directly
+            with patch('os.system') as mock_os_system:
+                result = basic_karaoke_prep.convert_to_wav(input_filename, output_filename)
+                
+                # Verify the correct file path was returned
+                assert result == output_filename + ".wav"
+                
+                # Verify os.system was called
+                mock_os_system.assert_called_once()
     
     def test_convert_to_wav_file_not_found(self, basic_karaoke_prep):
         """Test converting input audio when the file is not found."""

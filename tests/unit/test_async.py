@@ -3,7 +3,7 @@ import pytest
 import asyncio
 import signal
 import sys
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch, AsyncMock, ANY
 from karaoke_prep.karaoke_prep import KaraokePrep
 
 class TestAsync:
@@ -28,28 +28,39 @@ class TestAsync:
              patch.object(basic_karaoke_prep, 'create_title_video'), \
              patch.object(basic_karaoke_prep, 'create_end_video'), \
              patch('asyncio.create_task') as mock_create_task, \
-             patch('asyncio.gather') as mock_gather, \
+             patch('asyncio.gather', new_callable=AsyncMock) as mock_gather, \
              patch('os.makedirs'):
             
             # Configure mock asyncio.gather to return mock results
-            mock_gather.return_value = [{}, {}]
+            mock_gather.return_value = [{}, {}] # gather itself returns the list directly
             
             # Configure mock asyncio.create_task to return a mock future
-            mock_future = MagicMock()
+            mock_future = AsyncMock() # Use AsyncMock for tasks
             mock_create_task.return_value = mock_future
             
             # Mock the return value of prep_single_track
             expected_result = {
-                "track_output_dir": track_output_dir,
+                "track_output_dir": temp_dir, # Use temp_dir here
                 "artist": "Test Artist",
                 "title": "Test Title",
+                "extractor": "Original",
+                "extracted_info": None,
+                "lyrics": None,
+                "processed_lyrics": None,
                 "input_media": "copied_file.mp4",
+                "input_still_image": None,
                 "input_audio_wav": "output.wav",
-                "separated_audio": {}
+                "separated_audio": {},
+                "title_image_png": ANY,
+                "title_image_jpg": ANY,
+                "title_video": ANY,
+                "end_image_png": ANY,
+                "end_image_jpg": ANY,
+                "end_video": ANY,
             }
             
             # Configure the mock to return our expected result
-            mock_future.result.return_value = expected_result
+            # No need to mock future.result, the function returns the dict directly
             
             # Call the method
             result = await basic_karaoke_prep.prep_single_track()
@@ -83,16 +94,16 @@ class TestAsync:
              patch.object(basic_karaoke_prep, 'create_title_video'), \
              patch.object(basic_karaoke_prep, 'create_end_video'), \
              patch('asyncio.create_task') as mock_create_task, \
-             patch('asyncio.gather') as mock_gather, \
+             patch('asyncio.gather', new_callable=AsyncMock) as mock_gather, \
              patch('os.makedirs'), \
              patch('os.path.exists', return_value=False), \
              patch('glob.glob', return_value=[]):
             
             # Configure mock asyncio.gather to return mock results
-            mock_gather.return_value = [{}, {}]
+            mock_gather.return_value = [{}, {}] # gather itself returns the list directly
             
             # Configure mock asyncio.create_task to return a mock future
-            mock_future = MagicMock()
+            mock_future = AsyncMock() # Use AsyncMock for tasks
             mock_create_task.return_value = mock_future
             
             # Set URL and extracted info
@@ -108,11 +119,21 @@ class TestAsync:
                 "input_media": "downloaded_file.mp4",
                 "input_still_image": "still_image.png",
                 "input_audio_wav": "output.wav",
-                "separated_audio": {}
+                "separated_audio": {},
+                "extractor": "Youtube",
+                "extracted_info": None, # Assuming parse_single_track_metadata is mocked
+                "lyrics": None,
+                "processed_lyrics": None,
+                "title_image_png": ANY,
+                "title_image_jpg": ANY,
+                "title_video": ANY,
+                "end_image_png": ANY,
+                "end_image_jpg": ANY,
+                "end_video": ANY,
             }
             
             # Configure the mock to return our expected result
-            mock_future.result.return_value = expected_result
+            # No need to mock future.result, the function returns the dict directly
             
             # Call the method
             result = await basic_karaoke_prep.prep_single_track()
@@ -131,23 +152,33 @@ class TestAsync:
         basic_karaoke_prep.output_dir = temp_dir
         
         # Mock dependencies
+        # Define side effect for glob.glob
+        def glob_side_effect(pattern):
+            if pattern.endswith("*.webm"):
+                return ["existing_file.webm"]
+            elif pattern.endswith("*.png"):
+                return ["existing_file.png"]
+            elif pattern.endswith("*.wav"):
+                return ["existing_file.wav"]
+            return []
+
         with patch.object(basic_karaoke_prep, 'parse_single_track_metadata'), \
              patch.object(basic_karaoke_prep, 'setup_output_paths', return_value=(temp_dir, "Test Artist - Test Title")), \
-             patch('glob.glob', return_value=["existing_file.webm", "existing_file.png", "existing_file.wav"]), \
+             patch('glob.glob', side_effect=glob_side_effect), \
              patch.object(basic_karaoke_prep, 'transcribe_lyrics', return_value={}), \
              patch.object(basic_karaoke_prep, 'process_audio_separation', return_value={}), \
              patch.object(basic_karaoke_prep, 'create_title_video'), \
              patch.object(basic_karaoke_prep, 'create_end_video'), \
              patch('asyncio.create_task') as mock_create_task, \
-             patch('asyncio.gather') as mock_gather, \
+             patch('asyncio.gather', new_callable=AsyncMock) as mock_gather, \
              patch('os.makedirs'), \
              patch('os.path.exists', return_value=True):
             
             # Configure mock asyncio.gather to return mock results
-            mock_gather.return_value = [{}, {}]
+            mock_gather.return_value = [{}, {}] # gather itself returns the list directly
             
             # Configure mock asyncio.create_task to return a mock future
-            mock_future = MagicMock()
+            mock_future = AsyncMock() # Use AsyncMock for tasks
             mock_create_task.return_value = mock_future
             
             # Set URL and extracted info
@@ -160,14 +191,24 @@ class TestAsync:
                 "track_output_dir": temp_dir,
                 "artist": "Test Artist",
                 "title": "Test Title",
-                "input_media": "existing_file.webm",
-                "input_still_image": "existing_file.png",
-                "input_audio_wav": "existing_file.wav",
-                "separated_audio": {}
+                "input_media": "existing_file.webm", # Correct based on glob mock order
+                "input_still_image": "existing_file.png", # Correct based on glob mock order
+                "input_audio_wav": "existing_file.wav", # Correct based on glob mock order
+                "separated_audio": {},
+                "extractor": "Youtube",
+                "extracted_info": None, # Assuming parse_single_track_metadata is mocked
+                "lyrics": None,
+                "processed_lyrics": None,
+                "title_image_png": ANY,
+                "title_image_jpg": ANY,
+                "title_video": ANY,
+                "end_image_png": ANY,
+                "end_image_jpg": ANY,
+                "end_video": ANY,
             }
             
             # Configure the mock to return our expected result
-            mock_future.result.return_value = expected_result
+            # No need to mock future.result, the function returns the dict directly
             
             # Call the method
             result = await basic_karaoke_prep.prep_single_track()
@@ -205,8 +246,18 @@ class TestAsync:
                 "title": "Test Title",
                 "input_media": "copied_file.mp4",
                 "input_audio_wav": "output.wav",
-                "lyrics": None,
-                "separated_audio": {}
+                "lyrics": None, # This is expected when skip_lyrics=True
+                "separated_audio": {},
+                "extractor": "Original",
+                "extracted_info": None,
+                "processed_lyrics": None,
+                "input_still_image": None,
+                "title_image_png": ANY,
+                "title_image_jpg": ANY,
+                "title_video": ANY,
+                "end_image_png": ANY,
+                "end_image_jpg": ANY,
+                "end_video": ANY,
             }
             
             # Call the method
@@ -237,14 +288,14 @@ class TestAsync:
              patch.object(basic_karaoke_prep, 'create_title_video'), \
              patch.object(basic_karaoke_prep, 'create_end_video'), \
              patch('asyncio.create_task') as mock_create_task, \
-             patch('asyncio.gather') as mock_gather, \
+             patch('asyncio.gather', new_callable=AsyncMock) as mock_gather, \
              patch('os.makedirs'):
             
             # Configure mock asyncio.gather to return mock results
-            mock_gather.return_value = [{}, {}]
+            mock_gather.return_value = [{}, {}] # gather itself returns the list directly
             
             # Configure mock asyncio.create_task to return a mock future
-            mock_future = MagicMock()
+            mock_future = AsyncMock() # Use AsyncMock for tasks
             mock_create_task.return_value = mock_future
             
             # Mock the return value of prep_single_track
@@ -259,11 +310,22 @@ class TestAsync:
                     "backing_vocals": {},
                     "other_stems": {},
                     "combined_instrumentals": {}
-                }
+                },
+                "extractor": "Original",
+                "extracted_info": None,
+                "lyrics": None, # transcribe_lyrics is mocked to return {}
+                "processed_lyrics": None,
+                "input_still_image": None,
+                "title_image_png": ANY,
+                "title_image_jpg": ANY,
+                "title_video": ANY,
+                "end_image_png": ANY,
+                "end_image_jpg": ANY,
+                "end_video": ANY,
             }
             
             # Configure the mock to return our expected result
-            mock_future.result.return_value = expected_result
+            # No need to mock future.result, the function returns the dict directly
             
             # Call the method
             result = await basic_karaoke_prep.prep_single_track()

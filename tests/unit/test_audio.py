@@ -3,8 +3,8 @@ import pytest
 import glob
 import json
 import tempfile
-from unittest.mock import MagicMock, patch, call
-from datetime import datetime
+from unittest.mock import MagicMock, patch, call, mock_open
+import datetime as dt # Use alias to avoid conflict
 import fcntl
 from pydub import AudioSegment
 from karaoke_prep.karaoke_prep import KaraokePrep
@@ -98,42 +98,67 @@ class TestAudio:
         backing_model = "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"
         other_model = "htdemucs_6s.yaml"
         
-        # Clean instrumental separation output
+        # Determine intermediate filenames based on input to _separate_backing_vocals
+        # The input path for backing vocal separation is the output vocals from the clean separation
+        clean_vocals_output_path = os.path.join(stems_dir, f"{artist_title} (Vocals {clean_model}).flac")
+        # audio-separator appends _(Vocals) or _(Instrumental) to the *input* filename stem (without extension), relative to the input file's directory
+        clean_vocals_input_stem = clean_vocals_output_path[:-len(basic_karaoke_prep.lossless_output_format)-1] # Remove .flac
+        intermediate_bv_vocals = f"{clean_vocals_input_stem}_(Vocals).{basic_karaoke_prep.lossless_output_format}" 
+        intermediate_bv_instrumental = f"{clean_vocals_input_stem}_(Instrumental).{basic_karaoke_prep.lossless_output_format}"
+
         mock_separator.separate.side_effect = [
-            # Clean instrumental model outputs
+            # 1. Clean instrumental model outputs (called by _separate_clean_instrumental)
+            # These are output relative to the *input* audio file's directory (temp_dir)
             [
-                os.path.join(temp_dir, f"{artist_title} (Vocals)_{clean_model}.flac"),
-                os.path.join(temp_dir, f"{artist_title} (Instrumental)_{clean_model}.flac")
+                # These names need the model name appended by the separator convention
+                os.path.join(temp_dir, f"{artist_title}_(Vocals)_{clean_model}.{basic_karaoke_prep.lossless_output_format}"), 
+                os.path.join(temp_dir, f"{artist_title}_(Instrumental)_{clean_model}.{basic_karaoke_prep.lossless_output_format}") 
             ],
-            # Other stems model outputs
+            # 2. Other stems model outputs (called by _separate_other_stems)
+            # These are also output relative to the *input* audio file's directory (temp_dir)
             [
-                os.path.join(temp_dir, f"{artist_title}_(Piano)_{other_model}.flac"),
-                os.path.join(temp_dir, f"{artist_title}_(Guitar)_{other_model}.flac")
+                os.path.join(temp_dir, f"{artist_title}_(Piano)_{other_model}.{basic_karaoke_prep.lossless_output_format}"),
+                os.path.join(temp_dir, f"{artist_title}_(Guitar)_{other_model}.{basic_karaoke_prep.lossless_output_format}")
             ],
-            # Backing vocals model outputs
+            # 3. Backing vocals model outputs (called by _separate_backing_vocals)
+            # These are output relative to the *vocals input* file's directory (stems_dir)
             [
-                os.path.join(temp_dir, f"{artist_title} (Vocals)_{backing_model}.flac"),
-                os.path.join(temp_dir, f"{artist_title} (Instrumental)_{backing_model}.flac")
+                intermediate_bv_vocals, # e.g., .../stems/Artist - Title (Vocals model_clean)_(Vocals).flac
+                intermediate_bv_instrumental # e.g., .../stems/Artist - Title (Vocals model_clean)_(Instrumental).flac
             ]
         ]
         
         # Mock dependencies
         with patch('audio_separator.separator.Separator', return_value=mock_separator), \
-             patch('os.rename'), \
+             patch('os.rename') as mock_rename, \
              patch('os.path.exists', return_value=True), \
              patch('os.getpid', return_value=12345), \
-             patch('datetime.now', return_value=datetime.fromisoformat("2023-01-01T12:00:00")), \
+             patch('datetime.datetime') as mock_datetime, \
              patch('json.dump'), \
              patch('fcntl.flock'), \
              patch('os.remove'), \
              patch('os.system'), \
-             patch('open', create=True) as mock_open, \
+             patch('builtins.open', mock_open(read_data='{"pid": 123, "start_time": "2023-01-01T11:00:00", "track": "Old Track"}')) as mock_file_open, \
              patch.object(basic_karaoke_prep, '_normalize_audio') as mock_normalize_audio, \
-             patch.object(basic_karaoke_prep, '_file_exists', return_value=False):
-            
-            # Mock the lock file
-            mock_file = MagicMock()
-            mock_open.return_value = mock_file
+             patch.object(basic_karaoke_prep, '_file_exists') as mock_file_exists:
+
+            # Configure _file_exists side effect: False initially, then True for normalization checks
+            # Needs to return False for:
+            # 1. clean instrumental path check (_separate_clean_instrumental)
+            # 2. clean vocals path check (_separate_clean_instrumental)
+            # 3. other stem piano path check (_separate_other_stems loop 1)
+            # 4. other stem guitar path check (_separate_other_stems loop 1) - Assuming 1 'other' model
+            # 5. lead vocals path check (_separate_backing_vocals)
+            # 6. backing vocals path check (_separate_backing_vocals)
+            # 7. combined instrumental path check (_generate_combined_instrumentals)
+            # Then True for normalization checks:
+            # 8. clean instrumental path check (in _normalize_audio_files)
+            # 9. combined instrumental path check (in _normalize_audio_files)
+            mock_file_exists.side_effect = [False] * 7 + [True] * 2
+
+            # Configure the mock datetime object
+            mock_datetime.now.return_value = dt.datetime.fromisoformat("2023-01-01T12:00:00")
+            mock_datetime.fromisoformat.side_effect = lambda *args, **kwargs: dt.datetime.fromisoformat(*args, **kwargs)
             
             # Call the method
             result = basic_karaoke_prep.process_audio_separation(
@@ -154,8 +179,9 @@ class TestAudio:
             # Verify Separator.separate was called for each separation
             assert mock_separator.separate.call_count == 3
             
-            # Verify _normalize_audio was called
-            assert mock_normalize_audio.call_count > 0
+            # Verify _normalize_audio was called for the expected files
+            # The number depends on how many combined instrumentals are generated (1 in this case) + the clean instrumental
+            assert mock_normalize_audio.call_count == 2 
     
     def test_process_audio_separation_with_skip_env_var(self, basic_karaoke_prep, temp_dir):
         """Test process_audio_separation with KARAOKE_PREP_SKIP_AUDIO_SEPARATION environment variable."""
@@ -170,11 +196,7 @@ class TestAudio:
         # Mock environment variable
         with patch.dict('os.environ', {'KARAOKE_PREP_SKIP_AUDIO_SEPARATION': '1'}), \
              patch('fcntl.flock'), \
-             patch('open', create=True) as mock_open:
-            
-            # Mock the lock file
-            mock_file = MagicMock()
-            mock_open.return_value = mock_file
+             patch('builtins.open', mock_open()) as mock_file_open:
             
             # Call the method
             result = basic_karaoke_prep.process_audio_separation(
