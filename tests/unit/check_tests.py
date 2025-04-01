@@ -1,59 +1,43 @@
 #!/usr/bin/env python3
-"""
-Simple script to check for syntax errors in test files.
-This doesn't run the actual tests but helps verify that the test files are valid Python.
-"""
-
 import os
 import sys
 import importlib.util
-import traceback
 
 def check_file(file_path):
-    """Check a Python file for syntax errors."""
+    """Check if a Python file can be imported without errors."""
     try:
-        # Try to compile the file to check for syntax errors
-        with open(file_path, 'r') as f:
-            source = f.read()
-        compile(source, file_path, 'exec')
-        print(f"✓ {file_path} - No syntax errors")
+        spec = importlib.util.spec_from_file_location("module.name", file_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        print(f"✅ {file_path} - OK")
         return True
     except Exception as e:
-        print(f"✗ {file_path} - Error: {e}")
-        traceback.print_exc()
+        print(f"❌ {file_path} - ERROR: {e}")
         return False
 
 def main():
-    """Check all test files for syntax errors."""
-    # Get the directory of this script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    """Check all test files in the current directory."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    test_files = [f for f in os.listdir(current_dir) if f.startswith("test_") and f.endswith(".py")]
     
-    # Add the project root to the Python path
-    project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-    sys.path.insert(0, project_root)
+    if not test_files:
+        print("No test files found.")
+        return 0
     
-    # Get all Python files in the directory
-    test_files = [f for f in os.listdir(script_dir) if f.startswith('test_') and f.endswith('.py')]
+    print(f"Checking {len(test_files)} test files...")
     
-    # Check each file
     success = True
-    for file in test_files:
-        file_path = os.path.join(script_dir, file)
+    for file_name in sorted(test_files):
+        file_path = os.path.join(current_dir, file_name)
         if not check_file(file_path):
             success = False
     
-    # Check conftest.py
-    conftest_path = os.path.join(script_dir, 'conftest.py')
-    if os.path.exists(conftest_path):
-        if not check_file(conftest_path):
-            success = False
-    
     if success:
-        print("\nAll test files passed syntax check!")
+        print("\nAll test files are valid Python code.")
         return 0
     else:
-        print("\nSome test files have syntax errors.")
+        print("\nSome test files have errors. Please fix them before running the tests.")
         return 1
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

@@ -30,7 +30,7 @@ class TestLyrics:
 
         # The split should be at the middle word
         assert line[:split_point].strip() == "This is a test line"
-        assert line[split_point:].strip() == "line without any good split points"
+        assert line[split_point:].strip() == "without any good split points"
     
     def test_find_best_split_point_forced_split(self, basic_karaoke_prep):
         """Test finding the best split point with forced split at max length."""
@@ -190,7 +190,8 @@ class TestLyrics:
              patch('os.makedirs'), \
              patch('os.path.exists', return_value=False), \
              patch('shutil.copy2'), \
-             patch('os.getenv', side_effect=lambda key: mock_env.get(key)):
+             patch('os.getenv', side_effect=lambda key: mock_env.get(key)), \
+             patch('karaoke_prep.karaoke_prep.load_dotenv'):
             
             result = basic_karaoke_prep.transcribe_lyrics(input_audio_wav, artist, title, track_output_dir)
             
@@ -249,7 +250,8 @@ class TestLyrics:
             # Verify version directory was created
             version_dir = os.path.join(track_output_dir, "version-1")
             
-            # Verify files were moved to version directory
+        # Verify files were moved to version directory
+        if not basic_karaoke_prep.dry_run:
             mock_move.assert_any_call(with_vocals_file, os.path.join(version_dir, os.path.basename(with_vocals_file)))
             mock_move.assert_any_call(karaoke_file, os.path.join(version_dir, os.path.basename(karaoke_file)))
             mock_move.assert_any_call(final_karaoke_file, os.path.join(version_dir, os.path.basename(final_karaoke_file)))

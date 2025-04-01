@@ -1,10 +1,10 @@
-# KaraokePrep Unit Tests
+# Unit Tests for KaraokePrep
 
-This directory contains unit tests for the `KaraokePrep` class in the `karaoke_prep` module.
+This directory contains unit tests for the KaraokePrep class.
 
-## Test Structure
+## Test Files
 
-The tests are organized into logical groups:
+The tests are organized into the following files:
 
 - `test_initialization.py`: Tests for initialization and basic functionality
 - `test_file_operations.py`: Tests for file operations (copy, download, convert)
@@ -16,58 +16,30 @@ The tests are organized into logical groups:
 
 ## Running the Tests
 
-### Prerequisites
-
-First, activate the conda environment:
-
-```bash
-conda activate karaoke-prep
-```
-
-Then install the required test dependencies:
+To run the tests, you need to have the test dependencies installed:
 
 ```bash
 pip install -r requirements-test.txt
 ```
 
-### Running All Tests
-
-To run all tests with coverage reporting:
+Then you can run the tests with:
 
 ```bash
-./run_tests.py
+python run_tests.py
 ```
 
-### Checking Test Files for Syntax Errors
+This will run all the tests and generate a coverage report.
 
-If you don't have pytest installed, you can still check the test files for syntax errors:
+## Checking Test Files
+
+If you want to check if the test files are valid Python code without running the tests, you can use:
 
 ```bash
-./check_tests.py
+python check_tests.py
 ```
 
-This will verify that all test files are valid Python code without actually running the tests.
-
-### Running Specific Tests
-
-To run a specific test file:
-
-```bash
-./run_tests.py test_initialization.py
-```
-
-To run a specific test class:
-
-```bash
-./run_tests.py test_initialization.py::TestInitialization
-```
-
-To run a specific test method:
-
-```bash
-./run_tests.py test_initialization.py::TestInitialization::test_init_with_defaults
-```
+This will check if all the test files can be imported without errors.
 
 ## Test Coverage
 
-The tests aim to provide comprehensive coverage of the `KaraokePrep` class functionality. When running the tests with the `run_tests.py` script, a coverage report will be displayed showing which parts of the code are covered by the tests.
+The tests aim to cover all the functionality of the KaraokePrep class. The coverage report will show you which parts of the code are covered by the tests.

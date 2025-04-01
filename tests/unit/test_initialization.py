@@ -61,6 +61,7 @@ class TestInitialization:
                 "video_duration": 10,
                 "background_color": "#FF0000",
                 "background_image": None,
+                "existing_image": None,
                 "font": "CustomFont.ttf",
                 "artist_color": "#ffffff",
                 "title_color": "#ffffff",
@@ -68,12 +69,15 @@ class TestInitialization:
                 "extra_text_color": "#ffffff",
                 "title_region": "10, 10, 100, 50",
                 "artist_region": "10, 70, 100, 50",
-                "extra_text_region": "10, 130, 100, 50"
+                "extra_text_region": "10, 130, 100, 50",
+                "title_text_transform": None,
+                "artist_text_transform": None
             },
             "end": {
                 "video_duration": 8,
                 "background_color": "#0000FF",
                 "background_image": None,
+                "existing_image": None,
                 "font": "CustomFont.ttf",
                 "artist_color": "#ffffff",
                 "title_color": "#ffffff",
@@ -81,7 +85,9 @@ class TestInitialization:
                 "extra_text_color": "#ffffff",
                 "title_region": None,
                 "artist_region": None,
-                "extra_text_region": None
+                "extra_text_region": None,
+                "title_text_transform": None,
+                "artist_text_transform": None
             }
         }
         

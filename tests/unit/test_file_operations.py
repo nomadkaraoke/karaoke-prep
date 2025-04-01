@@ -63,13 +63,15 @@ class TestFileOperations:
             # Configure mock_ydl_instance.download to do nothing
             mock_ydl_instance.download.return_value = None
             
-            result = basic_karaoke_prep.download_video(url, output_filename)
-            
-            # Verify the correct file path was returned
-            assert result == downloaded_file
-            
-            # Verify yt_dlp was called with correct arguments
-            mock_ydl_instance.download.assert_called_once_with([url])
+            # Patch os.system to avoid actual command execution
+            with patch('os.system'):
+                result = basic_karaoke_prep.download_video(url, output_filename)
+                
+                # Verify the correct file path was returned
+                assert result == downloaded_file
+                
+                # Verify yt_dlp was called with correct arguments
+                mock_ydl_instance.download.assert_called_once_with([url])
     
     def test_download_video_no_files_found(self, basic_karaoke_prep):
         """Test downloading a video when no files are found after download."""
@@ -87,13 +89,15 @@ class TestFileOperations:
             # Configure mock_ydl_instance.download to do nothing
             mock_ydl_instance.download.return_value = None
             
-            result = basic_karaoke_prep.download_video(url, output_filename)
-            
-            # Verify None was returned
-            assert result is None
-            
-            # Verify yt_dlp was called with correct arguments
-            mock_ydl_instance.download.assert_called_once_with([url])
+            # Patch os.system to avoid actual command execution
+            with patch('os.system'):
+                result = basic_karaoke_prep.download_video(url, output_filename)
+                
+                # Verify None was returned
+                assert result is None
+                
+                # Verify yt_dlp was called with correct arguments
+                mock_ydl_instance.download.assert_called_once_with([url])
     
     def test_extract_still_image_from_video(self, basic_karaoke_prep, mock_ffmpeg):
         """Test extracting a still image from a video."""
