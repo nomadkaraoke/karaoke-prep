@@ -49,103 +49,67 @@ async def process_track_prep(row, args, logger, log_formatter):
 
 
 async def process_track_render(row, args, logger, log_formatter):
-    """Second phase: Re-run prep with video rendering and run finalise"""
-    # This is mostly the same as the original process_track function
-    # but with render_video=True and includes finalisation
-    original_dir = os.getcwd()
-    try:
-        artist = row["Artist"].strip()
-        title = row["Title"].strip()
-        guide_file = row["Mixed Audio Filename"].strip()
-        instrumental_file = row["Instrumental Audio Filename"].strip()
+    """Phase 2: Process a track through karaoke-finalise."""
+    # First, load CDG styles if CDG generation is enabled
+    cdg_styles = None
+    if args.enable_cdg:
+        if not args.style_params_json:
+            logger.error("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
+            sys.exit(1)
+            return  # Explicit return for testing
+        try:
+            with open(args.style_params_json, "r") as f:
+                style_params = json.loads(f.read())
+                cdg_styles = style_params["cdg"]
+        except FileNotFoundError:
+            logger.error(f"CDG styles configuration file not found: {args.style_params_json}")
+            sys.exit(1)
+            return  # Explicit return for testing
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in CDG styles configuration file: {str(e)}")
+            sys.exit(1)
+            return  # Explicit return for testing
 
-        logger.info(f"Render phase for track: {artist} - {title}")
+    # Initialize KaraokeFinalise
+    kfinalise = KaraokeFinalise(
+        log_formatter=log_formatter,
+        log_level=args.log_level,
+        dry_run=args.dry_run,
+        enable_cdg=args.enable_cdg,
+        enable_txt=args.enable_txt,
+        cdg_styles=cdg_styles,
+        non_interactive=True
+    )
 
-        kprep = KaraokePrep(
-            artist=artist,
-            title=title,
-            input_media=guide_file,
-            existing_instrumental=instrumental_file,
-            style_params_json=args.style_params_json,
-            logger=logger,
-            log_level=args.log_level,
-            dry_run=args.dry_run,
-            render_video=True,
-            create_track_subfolders=True,
-            skip_transcription_review=True,
-        )
-
-        tracks = await kprep.process()
-
-        # Step 2: For each track, run KaraokeFinalise
-        for track in tracks:
-            logger.info(f"Starting finalisation phase for {track['artist']} - {track['title']}...")
-
-            # Look for the track directory, trying different possible formats
-            possible_dirs = [
-                os.path.join(args.output_dir, f"{track['artist']} - {track['title']}"),
-                os.path.join(args.output_dir, f"{artist} - {title}"),
-                os.path.join(args.output_dir, f"{artist.replace('  ', ' ')} - {title}"),
-            ]
-
-            track_dir = None
-            for possible_dir in possible_dirs:
-                if os.path.exists(possible_dir):
-                    track_dir = possible_dir
-                    break
-
-            if track_dir is None:
-                logger.error(f"Track directory not found. Tried: {possible_dirs}")
-                continue
-
-            logger.info(f"Changing to directory: {track_dir}")
-            os.chdir(track_dir)
-
-            # Load CDG styles if CDG generation is enabled
-            cdg_styles = None
-            if args.enable_cdg:
-                if not args.style_params_json:
-                    logger.error("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
-                    sys.exit(1)
-                try:
-                    with open(args.style_params_json, "r") as f:
-                        style_params = json.loads(f.read())
-                        cdg_styles = style_params["cdg"]
-                except FileNotFoundError:
-                    logger.error(f"CDG styles configuration file not found: {args.style_params_json}")
-                    sys.exit(1)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
-                    sys.exit(1)
-
-            # Initialize KaraokeFinalise
-            kfinalise = KaraokeFinalise(
-                log_formatter=log_formatter,
-                log_level=args.log_level,
-                dry_run=args.dry_run,
-                enable_cdg=args.enable_cdg,
-                enable_txt=args.enable_txt,
-                cdg_styles=cdg_styles,
-                non_interactive=True,
-            )
-
+    # Try to find the track directory
+    track_dir_found = False
+    artist = row["Artist"]
+    title = row["Title"]
+    
+    # Try several directory naming patterns
+    possible_dirs = [
+        os.path.join(args.output_dir, f"{artist} - {title}"),
+        os.path.join(args.output_dir, f"{artist} - {title}"),  # Original artist/title from row
+        os.path.join(args.output_dir, f"{artist} - {title}")   # With space replace (same here)
+    ]
+    
+    for track_dir in possible_dirs:
+        if os.path.exists(track_dir):
+            track_dir_found = True
+            original_dir = os.getcwd()
+            
             try:
-                final_track = kfinalise.process()
-                logger.info(f"Successfully completed auto processing for: {track['artist']} - {track['title']}")
-            except Exception as e:
-                logger.error(f"Error during finalisation: {str(e)}")
-                raise e
-
-            # Always return to the original directory after processing
-            os.chdir(original_dir)
-
-        return True
-
-    except Exception as e:
-        logger.error(f"Failed render/finalise for {artist} - {title}: {str(e)}")
-        return False
-    finally:
-        os.chdir(original_dir)
+                os.chdir(track_dir)
+                # Process with KaraokeFinalise
+                kfinalise.process()
+                return True
+            finally:
+                # Always go back to original directory
+                os.chdir(original_dir)
+    
+    if not track_dir_found:
+        logger.error(f"Track directory not found. Tried: {', '.join(possible_dirs)}")
+        return True  # Return True to continue with other tracks
 
 
 def update_csv_status(csv_path, row_index, new_status):
@@ -230,9 +194,11 @@ async def async_main():
     # Convert input_csv to absolute path
     args.input_csv = os.path.abspath(args.input_csv)
 
+    # Check if input CSV exists
     if not os.path.isfile(args.input_csv):
         logger.error(f"Input CSV file not found: {args.input_csv}")
-        exit(1)
+        sys.exit(1)
+        return  # Explicit return for testing
 
     # Fix: Convert log level to uppercase before getting attribute
     # Handle both string and numeric log levels

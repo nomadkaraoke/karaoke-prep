@@ -321,7 +321,8 @@ async def async_main():
         # Format could be either "Artist - Title" or "BRAND-XXXX - Artist - Title"
         if " - " not in current_dir:
             logger.error("Current directory name does not contain ' - ' separator. Cannot extract artist and title.")
-            exit(1)
+            sys.exit(1)
+            return  # Explicit return for testing
             
         parts = current_dir.split(" - ")
         if len(parts) == 2:
@@ -332,7 +333,8 @@ async def async_main():
             title = " - ".join(parts[2:])
         else:
             logger.error(f"Could not parse artist and title from directory name: {current_dir}")
-            exit(1)
+            sys.exit(1)
+            return  # Explicit return for testing
             
         logger.info(f"Extracted artist: {artist}, title: {title}")
         
@@ -380,17 +382,20 @@ async def async_main():
         if args.enable_cdg:
             if not args.style_params_json:
                 logger.error("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
-                exit(1)
+                sys.exit(1)
+                return  # Explicit return for testing
             try:
                 with open(args.style_params_json, "r") as f:
                     style_params = json.loads(f.read())
                     cdg_styles = style_params["cdg"]
             except FileNotFoundError:
                 logger.error(f"CDG styles configuration file not found: {args.style_params_json}")
-                exit(1)
+                sys.exit(1)
+                return  # Explicit return for testing
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
-                exit(1)
+                sys.exit(1)
+                return  # Explicit return for testing
         
         # Run KaraokeFinalise with keep_brand_code=True and replace_existing=True
         kfinalise = KaraokeFinalise(
@@ -489,17 +494,20 @@ async def async_main():
         if args.enable_cdg:
             if not args.style_params_json:
                 logger.error("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
-                exit(1)
+                sys.exit(1)
+                return  # Explicit return for testing
             try:
                 with open(args.style_params_json, "r") as f:
                     style_params = json.loads(f.read())
                     cdg_styles = style_params["cdg"]
             except FileNotFoundError:
                 logger.error(f"CDG styles configuration file not found: {args.style_params_json}")
-                exit(1)
+                sys.exit(1)
+                return  # Explicit return for testing
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
-                exit(1)
+                sys.exit(1)
+                return  # Explicit return for testing
 
         kfinalise = KaraokeFinalise(
             log_formatter=log_formatter,
@@ -587,7 +595,8 @@ async def async_main():
 
     if not args.args:
         parser.print_help()
-        exit(1)
+        sys.exit(1)
+        return  # Explicit return for testing
 
     # Allow 3 forms of positional arguments:
     # 1. URL or Media File only (may be single track URL, playlist URL, or local file)
@@ -601,15 +610,17 @@ async def async_main():
         elif len(args.args) > 1:
             artist = args.args[1]
         else:
-            logger.warn("Input media provided without Artist and Title, both will be guessed from title")
+            logger.warning("Input media provided without Artist and Title, both will be guessed from title")
 
     elif os.path.isdir(args.args[0]):
         if not args.filename_pattern:
             logger.error("Filename pattern is required when processing a folder.")
-            exit(1)
+            sys.exit(1)
+            return  # Explicit return for testing
         if len(args.args) <= 1:
             logger.error("Second parameter provided must be Artist name; Artist is required when processing a folder.")
-            exit(1)
+            sys.exit(1)
+            return  # Explicit return for testing
 
         input_media = args.args[0]
         artist = args.args[1]
@@ -618,11 +629,12 @@ async def async_main():
     elif len(args.args) > 1:
         artist = args.args[0]
         title = args.args[1]
-        logger.warn(f"No input media provided, the top YouTube search result for {artist} - {title} will be used.")
+        logger.warning(f"No input media provided, the top YouTube search result for {artist} - {title} will be used.")
 
     else:
         parser.print_help()
-        exit(1)
+        sys.exit(1)
+        return  # Explicit return for testing
 
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
@@ -746,17 +758,20 @@ async def async_main():
         if args.enable_cdg:
             if not args.style_params_json:
                 logger.error("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
-                exit(1)
+                sys.exit(1)
+                return  # Explicit return for testing
             try:
                 with open(args.style_params_json, "r") as f:
                     style_params = json.loads(f.read())
                     cdg_styles = style_params["cdg"]
             except FileNotFoundError:
                 logger.error(f"CDG styles configuration file not found: {args.style_params_json}")
-                exit(1)
+                sys.exit(1)
+                return  # Explicit return for testing
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
-                exit(1)
+                sys.exit(1)
+                return  # Explicit return for testing
 
         # Initialize KaraokeFinalise
         kfinalise = KaraokeFinalise(

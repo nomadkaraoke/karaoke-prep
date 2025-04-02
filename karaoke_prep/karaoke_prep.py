@@ -312,12 +312,12 @@ class KaraokePrep:
         if not metadata_artist or not metadata_title:
             self.logger.warning("Could not parse artist and title from the input media metadata.")
 
-        if input_artist is None:
-            self.logger.warn(f"Artist not provided as input, setting to {metadata_artist} from input media metadata...")
+        if not self.artist and metadata_artist:
+            self.logger.warning(f"Artist not provided as input, setting to {metadata_artist} from input media metadata...")
             self.artist = metadata_artist
 
-        if input_title is None:
-            self.logger.warn(f"Title not provided as input, setting to {metadata_title} from input media metadata...")
+        if not self.title and metadata_title:
+            self.logger.warning(f"Title not provided as input, setting to {metadata_title} from input media metadata...")
             self.title = metadata_title
 
         if self.persistent_artist:
