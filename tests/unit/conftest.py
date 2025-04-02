@@ -4,6 +4,7 @@ import tempfile
 import logging
 from unittest.mock import MagicMock
 from karaoke_prep.karaoke_prep import KaraokePrep
+import inspect
 
 @pytest.fixture
 def mock_logger():
@@ -35,3 +36,9 @@ def basic_karaoke_prep(mock_logger, mock_ffmpeg):
         karaoke_prep._os_system = mock_os_system
         
         yield karaoke_prep
+
+def pytest_collection_modifyitems(items):
+    """Mark async tests with asyncio marker."""
+    for item in items:
+        if inspect.iscoroutinefunction(item.obj):
+            item.add_marker(pytest.mark.asyncio)

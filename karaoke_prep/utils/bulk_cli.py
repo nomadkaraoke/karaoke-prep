@@ -146,35 +146,56 @@ async def process_track_render(row, args, logger, log_formatter):
         return False
 
 
-def update_csv_status(csv_path, row_index, new_status):
-    """Update the status of a processed row in the CSV file"""
-    # Read all rows
-    with open(csv_path, "r") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
+def update_csv_status(csv_path, row_index, new_status, dry_run=False):
+    """Update the status of a processed row in the CSV file.
     
-    # Check if CSV has any rows
-    if not rows:
-        logger.error(f"CSV file {csv_path} is empty or has no data rows")
-        return
+    Args:
+        csv_path (str): Path to the CSV file
+        row_index (int): Index of the row to update
+        new_status (str): New status to set
+        dry_run (bool): If True, log the update but don't modify the file
         
-    # Update status for the processed row
-    if row_index < 0 or row_index >= len(rows):
-        logger.error(f"Row index {row_index} is out of range for CSV with {len(rows)} rows")
-        return
+    Returns:
+        bool: True if updated, False if in dry run mode or error occurred
+    """
+    if dry_run:
+        logger.info(f"DRY RUN: Would update row {row_index} in {csv_path} to status '{new_status}'")
+        return False
         
-    rows[row_index]["Status"] = new_status
+    try:
+        # Read all rows
+        with open(csv_path, "r") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        
+        # Check if CSV has any rows
+        if not rows:
+            logger.error(f"CSV file {csv_path} is empty or has no data rows")
+            return False
+            
+        # Update status for the processed row
+        if row_index < 0 or row_index >= len(rows):
+            logger.error(f"Row index {row_index} is out of range for CSV with {len(rows)} rows")
+            return False
+            
+        rows[row_index]["Status"] = new_status
 
-    # Write back to CSV
-    fieldnames = rows[0].keys()
-    with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+        # Write back to CSV
+        fieldnames = rows[0].keys()
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        
+        return True
+    
+    except Exception as e:
+        logger.error(f"Error updating CSV status: {str(e)}")
+        return False
 
 
-async def async_main():
-    """Main async function to process bulk tracks from CSV"""
+def parse_arguments():
+    """Parse command line arguments"""
     parser = argparse.ArgumentParser(
         description="Process multiple karaoke tracks in bulk from a CSV file.",
         formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, max_help_position=54),
@@ -225,7 +246,88 @@ async def async_main():
         help="Optional: perform a dry run without making any changes (default: %(default)s). Example: --dry_run",
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def validate_input_csv(csv_path):
+    """Validate that the input CSV file exists.
+    
+    Args:
+        csv_path (str): Path to the CSV file
+        
+    Returns:
+        bool: True if the file exists, False otherwise
+    """
+    if not os.path.isfile(csv_path):
+        logger.error(f"Input CSV file not found: {csv_path}")
+        return False
+    return True
+
+
+async def process_csv_rows(csv_path, rows, args, logger, log_formatter):
+    """Process all rows in a CSV file.
+    
+    Args:
+        csv_path (str): Path to the CSV file
+        rows (list): List of CSV rows as dictionaries
+        args (argparse.Namespace): Command line arguments
+        logger (logging.Logger): Logger instance
+        log_formatter (logging.Formatter): Log formatter
+        
+    Returns:
+        dict: A summary of the processing results
+    """
+    results = {
+        "prep_success": 0,
+        "prep_failed": 0,
+        "render_success": 0,
+        "render_failed": 0,
+        "skipped": 0
+    }
+    
+    # Phase 1: Initial prep for all tracks
+    logger.info("Starting Phase 1: Initial prep for all tracks")
+    for i, row in enumerate(rows):
+        status = row["Status"].lower() if "Status" in row else ""
+        if status != "uploaded":
+            logger.info(f"Skipping {row.get('Artist', 'Unknown')} - {row.get('Title', 'Unknown')} (Status: {row.get('Status', 'Unknown')})")
+            results["skipped"] += 1
+            continue
+
+        success = await process_track_prep(row, args, logger, log_formatter)
+        if success:
+            results["prep_success"] += 1
+            if not args.dry_run:
+                update_csv_status(csv_path, i, "Prep_Complete", args.dry_run)
+        else:
+            results["prep_failed"] += 1
+            if not args.dry_run:
+                update_csv_status(csv_path, i, "Prep_Failed", args.dry_run)
+
+    # Phase 2: Render and finalise all tracks
+    logger.info("Starting Phase 2: Render and finalise for all tracks")
+    for i, row in enumerate(rows):
+        status = row["Status"].lower() if "Status" in row else ""
+        if status not in ["prep_complete", "uploaded"]:
+            logger.info(f"Skipping {row.get('Artist', 'Unknown')} - {row.get('Title', 'Unknown')} (Status: {row.get('Status', 'Unknown')})")
+            continue
+
+        success = await process_track_render(row, args, logger, log_formatter)
+        if success:
+            results["render_success"] += 1
+            if not args.dry_run:
+                update_csv_status(csv_path, i, "Completed", args.dry_run)
+        else:
+            results["render_failed"] += 1
+            if not args.dry_run:
+                update_csv_status(csv_path, i, "Render_Failed", args.dry_run)
+    
+    return results
+
+
+async def async_main():
+    """Main async function to process bulk tracks from CSV"""
+    args = parse_arguments()
 
     # Convert input_csv to absolute path
     args.input_csv = os.path.abspath(args.input_csv)
@@ -242,8 +344,7 @@ async def async_main():
             logger.setLevel(logging.INFO)
 
     # Check if input CSV exists
-    if not os.path.isfile(args.input_csv):
-        logger.error(f"Input CSV file not found: {args.input_csv}")
+    if not validate_input_csv(args.input_csv):
         sys.exit(1)
         return  # Explicit return for testing
 
@@ -254,47 +355,37 @@ async def async_main():
         reader = csv.DictReader(f)
         rows = list(reader)
 
-    # Phase 1: Initial prep for all tracks
-    logger.info("Starting Phase 1: Initial prep for all tracks")
-    for i, row in enumerate(rows):
-        status = row["Status"].lower() if "Status" in row else ""
-        if status != "uploaded":
-            logger.info(f"Skipping {row.get('Artist', 'Unknown')} - {row.get('Title', 'Unknown')} (Status: {row.get('Status', 'Unknown')})")
-            continue
-
-        success = await process_track_prep(row, args, logger, log_formatter)
-        if not args.dry_run:
-            if success:
-                update_csv_status(args.input_csv, i, "Prep_Complete")
-            else:
-                update_csv_status(args.input_csv, i, "Prep_Failed")
-
-    # Phase 2: Render and finalise all tracks
-    logger.info("Starting Phase 2: Render and finalise for all tracks")
-    for i, row in enumerate(rows):
-        status = row["Status"].lower() if "Status" in row else ""
-        if status not in ["prep_complete", "uploaded"]:
-            logger.info(f"Skipping {row.get('Artist', 'Unknown')} - {row.get('Title', 'Unknown')} (Status: {row.get('Status', 'Unknown')})")
-            continue
-
-        success = await process_track_render(row, args, logger, log_formatter)
-        if not args.dry_run:
-            if success:
-                update_csv_status(args.input_csv, i, "Completed")
-            else:
-                update_csv_status(args.input_csv, i, "Render_Failed")
+    # Process the CSV rows
+    results = await process_csv_rows(args.input_csv, rows, args, logger, log_formatter)
+    
+    # Log summary
+    logger.info(f"Processing complete. Summary: {results}")
+    return results
 
 
-def main():
-    """Main entry point for the CLI."""
-    # Set up logging only once
+def setup_logging(log_level=logging.INFO):
+    """Set up logging with the given log level.
+    
+    Args:
+        log_level (int): Logging level (e.g., logging.INFO, logging.DEBUG)
+        
+    Returns:
+        logging.Formatter: The log formatter for use by other functions
+    """
     global log_formatter  # Make log_formatter accessible to other functions
     log_handler = logging.StreamHandler()
     log_formatter = logging.Formatter(fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     log_handler.setFormatter(log_formatter)
     logger.addHandler(log_handler)
-    logger.setLevel(logging.INFO)  # Default log level, may be overridden by args
+    logger.setLevel(log_level)
+    return log_formatter
 
+
+def main():
+    """Main entry point for the CLI."""
+    # Set up logging
+    setup_logging()
+    
     # Run the async main function using asyncio
     asyncio.run(async_main())
 
