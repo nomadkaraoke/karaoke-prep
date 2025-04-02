@@ -337,7 +337,7 @@ async def async_main():
         logger.info(f"Extracted artist: {artist}, title: {title}")
         
         # Initialize KaraokePrep
-        kprep = KaraokePrep(
+        kprep_coroutine = KaraokePrep(
             artist=artist,
             title=title,
             input_media=None,  # Will be set by backup_existing_outputs
@@ -364,6 +364,8 @@ async def async_main():
             subtitle_offset_ms=args.subtitle_offset_ms,
             style_params_json=args.style_params_json,
         )
+        
+        kprep = await kprep_coroutine
         
         # Backup existing outputs and get the input audio file
         track_output_dir = os.getcwd()
@@ -638,7 +640,7 @@ async def async_main():
 
     # Step 1: Run KaraokePrep
     logger.info(f"KaraokePrep beginning with input_media: {input_media} artist: {artist} and title: {title}")
-    kprep = KaraokePrep(
+    kprep_coroutine = KaraokePrep(
         artist=artist,
         title=title,
         input_media=input_media,
@@ -667,10 +669,16 @@ async def async_main():
         subtitle_offset_ms=args.subtitle_offset_ms,
         style_params_json=args.style_params_json,
     )
+    
+    kprep = await kprep_coroutine
 
     print("DEBUG: async_main() KaraokePrep instantiated.")
-
-    tracks = await kprep.process()
+    
+    print(f"DEBUG: kprep type: {type(kprep)}")
+    print(f"DEBUG: kprep.process type: {type(kprep.process)}")
+    process_coroutine = kprep.process()
+    print(f"DEBUG: process_coroutine type: {type(process_coroutine)}")
+    tracks = await process_coroutine
 
     print("DEBUG: async_main() kprep.process() finished.")
 
@@ -843,4 +851,4 @@ def main():
 
 if __name__ == "__main__":
     print("DEBUG: __main__ block executing.")
-    main() 
+    main()

@@ -153,8 +153,17 @@ def update_csv_status(csv_path, row_index, new_status):
     # Read all rows
     with open(csv_path, "r") as f:
         rows = list(csv.DictReader(f))
-
+    
+    # Check if CSV has any rows
+    if not rows:
+        logger.error(f"CSV file {csv_path} is empty or has no data rows")
+        return
+        
     # Update status for the processed row
+    if row_index < 0 or row_index >= len(rows):
+        logger.error(f"Row index {row_index} is out of range for CSV with {len(rows)} rows")
+        return
+        
     rows[row_index]["Status"] = new_status
 
     # Write back to CSV
@@ -226,8 +235,10 @@ async def async_main():
         exit(1)
 
     # Fix: Convert log level to uppercase before getting attribute
-    log_level = getattr(logging, args.log_level.upper())
-    args.log_level = log_level  # Store the numeric log level in args
+    # Handle both string and numeric log levels
+    if isinstance(args.log_level, str):
+        log_level = getattr(logging, args.log_level.upper())
+        args.log_level = log_level  # Store the numeric log level in args
 
     logger.info(f"Starting bulk processing with input CSV: {args.input_csv}")
 
