@@ -56,7 +56,7 @@ async def process_track_render(row, args, logger, log_formatter):
         if not args.style_params_json:
             logger.error("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
             sys.exit(1)
-            return  # Explicit return for testing
+            return False  # Explicit return for testing
         try:
             with open(args.style_params_json, "r") as f:
                 style_params = json.loads(f.read())
@@ -64,59 +64,94 @@ async def process_track_render(row, args, logger, log_formatter):
         except FileNotFoundError:
             logger.error(f"CDG styles configuration file not found: {args.style_params_json}")
             sys.exit(1)
-            return  # Explicit return for testing
+            return False  # Explicit return for testing
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in CDG styles configuration file: {str(e)}")
             sys.exit(1)
-            return  # Explicit return for testing
+            return False  # Explicit return for testing
 
-    # Initialize KaraokeFinalise
-    kfinalise = KaraokeFinalise(
-        log_formatter=log_formatter,
-        log_level=args.log_level,
-        dry_run=args.dry_run,
-        enable_cdg=args.enable_cdg,
-        enable_txt=args.enable_txt,
-        cdg_styles=cdg_styles,
-        non_interactive=True
-    )
-
-    # Try to find the track directory
-    track_dir_found = False
-    artist = row["Artist"]
-    title = row["Title"]
+    original_dir = os.getcwd()
+    artist = row["Artist"].strip()
+    title = row["Title"].strip()
+    guide_file = row["Mixed Audio Filename"].strip()
+    instrumental_file = row["Instrumental Audio Filename"].strip()
     
-    # Try several directory naming patterns
-    possible_dirs = [
-        os.path.join(args.output_dir, f"{artist} - {title}"),
-        os.path.join(args.output_dir, f"{artist} - {title}"),  # Original artist/title from row
-        os.path.join(args.output_dir, f"{artist} - {title}")   # With space replace (same here)
-    ]
+    try:
+        # Initialize KaraokeFinalise first (needed for test assertions)
+        kfinalise = KaraokeFinalise(
+            log_formatter=log_formatter,
+            log_level=args.log_level,
+            dry_run=args.dry_run,
+            enable_cdg=args.enable_cdg,
+            enable_txt=args.enable_txt,
+            cdg_styles=cdg_styles,
+            non_interactive=True
+        )
+        
+        # Try to find the track directory
+        track_dir_found = False
+        
+        # Try several directory naming patterns
+        possible_dirs = [
+            os.path.join(args.output_dir, f"{artist} - {title}"),
+            os.path.join(args.output_dir, f"{artist} - {title}"),  # Original artist/title from row
+            os.path.join(args.output_dir, f"{artist} - {title}")   # With space replace (same here)
+        ]
+        
+        for track_dir in possible_dirs:
+            if os.path.exists(track_dir):
+                track_dir_found = True
+                break
+        
+        if not track_dir_found:
+            logger.error(f"Track directory not found. Tried: {', '.join(possible_dirs)}")
+            return True  # Return True to continue with other tracks
+        
+        # First run KaraokePrep with video rendering enabled
+        logger.info(f"Video rendering for track: {artist} - {title}")
+        kprep = KaraokePrep(
+            artist=artist,
+            title=title,
+            input_media=guide_file,
+            existing_instrumental=instrumental_file,
+            style_params_json=args.style_params_json,
+            logger=logger,
+            log_level=args.log_level,
+            dry_run=args.dry_run,
+            render_video=True,  # Second phase: with video rendering
+            create_track_subfolders=True,
+            skip_transcription_review=True,
+        )
+        
+        tracks = await kprep.process()
+        
+        # Process with KaraokeFinalise in the track directory
+        for track_dir in possible_dirs:
+            if os.path.exists(track_dir):
+                try:
+                    os.chdir(track_dir)
+                    # Process with KaraokeFinalise
+                    kfinalise.process()
+                    return True
+                except Exception as e:
+                    logger.error(f"Error during finalisation: {str(e)}")
+                    raise  # Re-raise to be caught by outer try/except
+                finally:
+                    # Always go back to original directory
+                    os.chdir(original_dir)
     
-    for track_dir in possible_dirs:
-        if os.path.exists(track_dir):
-            track_dir_found = True
-            original_dir = os.getcwd()
-            
-            try:
-                os.chdir(track_dir)
-                # Process with KaraokeFinalise
-                kfinalise.process()
-                return True
-            finally:
-                # Always go back to original directory
-                os.chdir(original_dir)
-    
-    if not track_dir_found:
-        logger.error(f"Track directory not found. Tried: {', '.join(possible_dirs)}")
-        return True  # Return True to continue with other tracks
+    except Exception as e:
+        logger.error(f"Failed render/finalise for {artist} - {title}: {str(e)}")
+        os.chdir(original_dir)  # Make sure we go back to original directory
+        return False
 
 
 def update_csv_status(csv_path, row_index, new_status):
     """Update the status of a processed row in the CSV file"""
     # Read all rows
     with open(csv_path, "r") as f:
-        rows = list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        rows = list(reader)
     
     # Check if CSV has any rows
     if not rows:
@@ -139,6 +174,7 @@ def update_csv_status(csv_path, row_index, new_status):
 
 
 async def async_main():
+    """Main async function to process bulk tracks from CSV"""
     parser = argparse.ArgumentParser(
         description="Process multiple karaoke tracks in bulk from a CSV file.",
         formatter_class=lambda prog: argparse.RawTextHelpFormatter(prog, max_help_position=54),
@@ -194,17 +230,22 @@ async def async_main():
     # Convert input_csv to absolute path
     args.input_csv = os.path.abspath(args.input_csv)
 
+    # Set log level
+    if isinstance(args.log_level, str):
+        try:
+            log_level = getattr(logging, args.log_level.upper())
+            args.log_level = log_level  # Store the numeric log level in args
+            logger.setLevel(log_level)
+        except AttributeError:
+            logger.warning(f"Invalid log level: {args.log_level}. Using INFO.")
+            args.log_level = logging.INFO
+            logger.setLevel(logging.INFO)
+
     # Check if input CSV exists
     if not os.path.isfile(args.input_csv):
         logger.error(f"Input CSV file not found: {args.input_csv}")
         sys.exit(1)
         return  # Explicit return for testing
-
-    # Fix: Convert log level to uppercase before getting attribute
-    # Handle both string and numeric log levels
-    if isinstance(args.log_level, str):
-        log_level = getattr(logging, args.log_level.upper())
-        args.log_level = log_level  # Store the numeric log level in args
 
     logger.info(f"Starting bulk processing with input CSV: {args.input_csv}")
 
@@ -216,8 +257,9 @@ async def async_main():
     # Phase 1: Initial prep for all tracks
     logger.info("Starting Phase 1: Initial prep for all tracks")
     for i, row in enumerate(rows):
-        if row["Status"].lower() != "uploaded":
-            logger.info(f"Skipping {row['Artist']} - {row['Title']} (Status: {row['Status']})")
+        status = row["Status"].lower() if "Status" in row else ""
+        if status != "uploaded":
+            logger.info(f"Skipping {row.get('Artist', 'Unknown')} - {row.get('Title', 'Unknown')} (Status: {row.get('Status', 'Unknown')})")
             continue
 
         success = await process_track_prep(row, args, logger, log_formatter)
@@ -230,8 +272,9 @@ async def async_main():
     # Phase 2: Render and finalise all tracks
     logger.info("Starting Phase 2: Render and finalise for all tracks")
     for i, row in enumerate(rows):
-        if row["Status"].lower() not in ["prep_complete", "uploaded"]:
-            logger.info(f"Skipping {row['Artist']} - {row['Title']} (Status: {row['Status']})")
+        status = row["Status"].lower() if "Status" in row else ""
+        if status not in ["prep_complete", "uploaded"]:
+            logger.info(f"Skipping {row.get('Artist', 'Unknown')} - {row.get('Title', 'Unknown')} (Status: {row.get('Status', 'Unknown')})")
             continue
 
         success = await process_track_render(row, args, logger, log_formatter)
@@ -243,12 +286,14 @@ async def async_main():
 
 
 def main():
+    """Main entry point for the CLI."""
     # Set up logging only once
     global log_formatter  # Make log_formatter accessible to other functions
     log_handler = logging.StreamHandler()
     log_formatter = logging.Formatter(fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     log_handler.setFormatter(log_formatter)
     logger.addHandler(log_handler)
+    logger.setLevel(logging.INFO)  # Default log level, may be overridden by args
 
     # Run the async main function using asyncio
     asyncio.run(async_main())
