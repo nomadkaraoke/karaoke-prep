@@ -54,21 +54,21 @@ async def process_track_render(row, args, logger, log_formatter):
     cdg_styles = None
     if args.enable_cdg:
         if not args.style_params_json:
-            logger.error("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
-            sys.exit(1)
-            return False  # Explicit return for testing
+            # Raise ValueError instead of sys.exit
+            raise ValueError("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
         try:
             with open(args.style_params_json, "r") as f:
-                style_params = json.loads(f.read())
+                style_params = json.load(f) # Use json.load directly with file object
+                # Check if 'cdg' key exists
+                if "cdg" not in style_params:
+                    raise ValueError(f"'cdg' key not found in style parameters file: {args.style_params_json}")
                 cdg_styles = style_params["cdg"]
         except FileNotFoundError:
-            logger.error(f"CDG styles configuration file not found: {args.style_params_json}")
-            sys.exit(1)
-            return False  # Explicit return for testing
+            # Re-raise FileNotFoundError
+            raise FileNotFoundError(f"CDG styles configuration file not found: {args.style_params_json}")
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in CDG styles configuration file: {str(e)}")
-            sys.exit(1)
-            return False  # Explicit return for testing
+            # Raise ValueError for invalid JSON
+            raise ValueError(f"Invalid JSON in CDG styles configuration file: {str(e)}")
 
     original_dir = os.getcwd()
     artist = row["Artist"].strip()
@@ -246,7 +246,50 @@ def parse_arguments():
         help="Optional: perform a dry run without making any changes (default: %(default)s). Example: --dry_run",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Convert input_csv to absolute path early
+    args.input_csv = os.path.abspath(args.input_csv)
+
+    # Validate and convert log level
+    if isinstance(args.log_level, str):
+        try:
+            log_level_int = getattr(logging, args.log_level.upper())
+            args.log_level = log_level_int  # Store the numeric log level back in args
+        except AttributeError:
+            # Raise ValueError for invalid log level string
+            raise ValueError(f"Invalid log level string: {args.log_level}")
+    elif not isinstance(args.log_level, int):
+         # If it's neither string nor int, raise error
+         raise ValueError(f"Invalid log level type: {type(args.log_level)}")
+
+    return args
+
+
+def _parse_and_validate_args():
+    """Parses arguments and performs initial validation."""
+    args = parse_arguments() # Calls the modified parse_arguments
+
+    # Validate input CSV existence (raises FileNotFoundError if invalid)
+    if not validate_input_csv(args.input_csv):
+         raise FileNotFoundError(f"Input CSV file not found: {args.input_csv}")
+
+    # Validate style params JSON existence if CDG is enabled
+    if args.enable_cdg:
+        if not args.style_params_json:
+            raise ValueError("CDG styles JSON file path (--style_params_json) is required when --enable_cdg is used")
+        if not os.path.isfile(args.style_params_json):
+             raise FileNotFoundError(f"CDG styles configuration file not found: {args.style_params_json}")
+        # Basic JSON validation can also happen here if desired, or deferred to process_track_render
+        try:
+            with open(args.style_params_json, 'r') as f:
+                json.load(f)
+        except json.JSONDecodeError as e:
+             raise ValueError(f"Invalid JSON in CDG styles configuration file: {args.style_params_json} - {e}")
+        except FileNotFoundError: # Should be caught above, but belt-and-suspenders
+             raise FileNotFoundError(f"CDG styles configuration file not found: {args.style_params_json}")
+
+    return args
 
 
 def validate_input_csv(csv_path):
@@ -262,6 +305,29 @@ def validate_input_csv(csv_path):
         logger.error(f"Input CSV file not found: {csv_path}")
         return False
     return True
+
+
+def _read_csv_file(csv_path):
+    """Reads the CSV file and returns rows as a list of dictionaries."""
+    try:
+        with open(csv_path, "r", newline='') as f: # Added newline=''
+            reader = csv.DictReader(f)
+            # Check for required columns before reading all rows
+            required_columns = {"Artist", "Title", "Mixed Audio Filename", "Instrumental Audio Filename", "Status"}
+            if not required_columns.issubset(reader.fieldnames):
+                 missing = required_columns - set(reader.fieldnames)
+                 raise ValueError(f"CSV file missing required columns: {', '.join(missing)}")
+            rows = list(reader)
+        if not rows:
+             logger.warning(f"CSV file {csv_path} is empty or contains only headers.")
+        return rows
+    except FileNotFoundError:
+        # This should ideally be caught earlier by validate_input_csv, but handle defensively
+        logger.error(f"CSV file not found during read: {csv_path}")
+        raise # Re-raise the exception
+    except Exception as e:
+        logger.error(f"Error reading CSV file {csv_path}: {e}")
+        raise # Re-raise other read errors
 
 
 async def process_csv_rows(csv_path, rows, args, logger, log_formatter):
@@ -327,33 +393,27 @@ async def process_csv_rows(csv_path, rows, args, logger, log_formatter):
 
 async def async_main():
     """Main async function to process bulk tracks from CSV"""
-    args = parse_arguments()
+    # Parse and validate arguments first (raises exceptions on failure)
+    args = _parse_and_validate_args()
 
-    # Convert input_csv to absolute path
-    args.input_csv = os.path.abspath(args.input_csv)
-
-    # Set log level
-    if isinstance(args.log_level, str):
-        try:
-            log_level = getattr(logging, args.log_level.upper())
-            args.log_level = log_level  # Store the numeric log level in args
-            logger.setLevel(log_level)
-        except AttributeError:
-            logger.warning(f"Invalid log level: {args.log_level}. Using INFO.")
-            args.log_level = logging.INFO
-            logger.setLevel(logging.INFO)
-
-    # Check if input CSV exists
-    if not validate_input_csv(args.input_csv):
-        sys.exit(1)
-        return  # Explicit return for testing
+    # Set log level based on validated args (logger should already be partially set up by main)
+    logger.setLevel(args.log_level)
+    logger.info(f"Log level set to {logging.getLevelName(args.log_level)}")
+    if args.dry_run:
+        logger.info("Dry run mode enabled. No changes will be made.")
 
     logger.info(f"Starting bulk processing with input CSV: {args.input_csv}")
 
-    # Read CSV
-    with open(args.input_csv, "r") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
+    # Read CSV (raises exceptions on failure)
+    rows = _read_csv_file(args.input_csv)
+
+    # Check if log_formatter is available (should be set by main)
+    global log_formatter
+    if log_formatter is None:
+         # This case should ideally not happen if main() calls setup_logging correctly
+         logger.warning("Log formatter not found, setting up default.")
+         log_formatter = setup_logging(args.log_level)
+
 
     # Process the CSV rows
     results = await process_csv_rows(args.input_csv, rows, args, logger, log_formatter)
@@ -383,11 +443,38 @@ def setup_logging(log_level=logging.INFO):
 
 def main():
     """Main entry point for the CLI."""
-    # Set up logging
-    setup_logging()
-    
-    # Run the async main function using asyncio
-    asyncio.run(async_main())
+    log_formatter = None # Initialize log_formatter
+    try:
+        # Set up logging early to capture potential errors during setup/parsing
+        # Get initial args just for log level if provided, otherwise default
+        temp_args, _ = argparse.ArgumentParser(add_help=False).parse_known_args()
+        initial_log_level_str = getattr(temp_args, 'log_level', 'info')
+        try:
+            initial_log_level = getattr(logging, initial_log_level_str.upper())
+        except AttributeError:
+            initial_log_level = logging.INFO
+            print(f"Warning: Invalid initial log level '{initial_log_level_str}'. Using INFO.", file=sys.stderr)
+
+        log_formatter = setup_logging(initial_log_level)
+
+        # Run the async main function using asyncio
+        asyncio.run(async_main())
+        logger.info("Bulk processing finished successfully.")
+        sys.exit(0)
+    except (FileNotFoundError, ValueError, argparse.ArgumentError) as e:
+        # Log specific configuration/setup errors before exiting
+        if logger.handlers: # Check if logger was set up
+             logger.error(f"Configuration error: {str(e)}")
+        else: # Fallback if logging setup failed
+             print(f"Error: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        # Catch any other unexpected errors during processing
+        if logger.handlers:
+            logger.exception(f"An unexpected error occurred during bulk processing: {str(e)}") # Use exception for traceback
+        else:
+            print(f"An unexpected error occurred: {str(e)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

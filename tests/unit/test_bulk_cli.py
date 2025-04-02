@@ -84,70 +84,70 @@ def mock_log_formatter():
     """Fixture for a mock log formatter."""
     return MagicMock(spec=logging.Formatter)
 
-@patch(mock_module_paths["KaraokePrep"])
-@patch(mock_module_paths["KaraokeFinalise"])
-@patch(mock_module_paths["os_path_isfile"], return_value=True)
-@patch(mock_module_paths["os_path_exists"])
-@patch(mock_module_paths["os_chdir"])
-@patch(mock_module_paths["os_getcwd"], return_value="/fake/original/dir")
-@patch(mock_module_paths["open_func"], new_callable=mock_open, read_data=SAMPLE_CSV_DATA)
-@patch(mock_module_paths["csv_DictReader"])
-@patch(mock_module_paths["csv_DictWriter"])
-@patch(mock_module_paths["update_csv_status"], new_callable=AsyncMock)  # Mock the async wrapper if needed, or the function itself
-@pytest.mark.skip(reason="Needs to be refactored to properly test the full flow")
+# Add mocks for the new helper functions and process_csv_rows
+@patch("karaoke_prep.utils.bulk_cli.process_csv_rows", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.bulk_cli._read_csv_file")
+@patch("karaoke_prep.utils.bulk_cli._parse_and_validate_args")
+@patch("karaoke_prep.utils.bulk_cli.setup_logging") # Mock logging setup as well
+@patch("karaoke_prep.utils.bulk_cli.logger") # Mock the module-level logger directly
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_async_main_flow(
-    mock_update_csv, mock_csv_writer, mock_csv_reader, mock_open_file,
-    mock_getcwd, mock_chdir, mock_exists, mock_isfile,
-    mock_kfinalise, mock_kprep, mock_args, mock_logger, mock_log_formatter
+    mock_bulk_cli_logger, mock_setup_logging, mock_parse_args, mock_read_csv, mock_process_rows, # Added mock_bulk_cli_logger back
+    mock_args, mock_logger, mock_log_formatter # Keep fixtures needed by args/mocks
 ):
-    """Test the main async_main function orchestrates the two phases correctly."""
+    """Test the refactored async_main function orchestrates argument parsing, CSV reading, and processing."""
 
-    # Configure mocks
-    mock_kprep_instance = AsyncMock()
-    mock_kprep.return_value = mock_kprep_instance
-    mock_kprep_instance.process = AsyncMock(return_value=[{"artist": "Test", "title": "Track"}])  # Simulate successful prep
+    # --- Mock Configuration ---
+    # 1. Mock _parse_and_validate_args to return our fixture args
+    mock_parse_args.return_value = mock_args
 
-    mock_kfinalise_instance = mock_kfinalise.return_value
-    mock_kfinalise_instance.process = MagicMock(return_value={"final": "track"})  # Simulate successful finalise
+    # 2. Mock _read_csv_file to return sample rows
+    sample_rows = list(csv.DictReader(SAMPLE_CSV_DATA.splitlines()))
+    mock_read_csv.return_value = sample_rows
 
-    # Simulate CSV reading with real CSV data
-    mock_csv_reader.return_value = csv.DictReader(SAMPLE_CSV_DATA.splitlines())
+    # 3. Mock setup_logging to return the mock formatter
+    mock_setup_logging.return_value = mock_log_formatter
 
-    # Simulate os.path.exists for track directory finding in phase 2
-    mock_exists.side_effect = lambda p: "Artist One - Title One" in p or "Artist Five - Title Five" in p
+    # 4. Mock process_csv_rows (AsyncMock) - we just check it's called correctly
+    mock_process_rows.return_value = {"summary": "results"} # Return some dummy result
 
-    # Give args the output_dir property needed by process_track_render
-    mock_args.output_dir = os.path.join(mock_args.input_csv, "..")
-    
-    # Mock argparse to return our mock_args
-    with patch(mock_module_paths["ArgumentParser"]) as mock_parser:
-        mock_parser.return_value.parse_args.return_value = mock_args
+    # --- Inject Mocks & Run ---
+    # Ensure setup_logging returns the formatter when called
+    mock_setup_logging.return_value = mock_log_formatter
+    # We also need to ensure the global log_formatter is set as async_main checks it.
+    bulk_cli.log_formatter = mock_log_formatter # Set the global formatter
 
-        # Inject mock logger and formatter
-        bulk_cli.logger = mock_logger
-        bulk_cli.log_formatter = mock_log_formatter
+    # Run the async_main function
+    result = await bulk_cli.async_main()
 
-        # Run the test
-        await bulk_cli.async_main()
+    # --- Assertions ---
+    # 1. Check _parse_and_validate_args was called
+    mock_parse_args.assert_called_once()
 
-    # Assertions for process_track_prep
-    # Called for each track with 'Uploaded' status (Artist One and Artist Five)
-    prep_calls = mock_kprep.call_args_list
-    assert len(prep_calls) == 2, f"Expected 2 prep calls, got {len(prep_calls)}"
-    
-    # Check KaraokeFinalise calls (should happen during render phase)
-    assert mock_kfinalise.call_count == 2  # Once for Artist One, once for Artist Five
-    
-    # Check CSV updates (mocked function)
-    assert mock_update_csv.call_count == 4  # Prep Success (x2), Render Success (x2)
-    
-    # Check directory changes
-    assert mock_chdir.call_count >= 2  # At least called to original dir after each process
+    # 2. Check logger level was set directly on the module logger
+    mock_bulk_cli_logger.setLevel.assert_called_with(mock_args.log_level)
+    # No need to assert setup_logging call for level setting
+
+    # 3. Check _read_csv_file was called with the validated CSV path from args
+    mock_read_csv.assert_called_once_with(mock_args.input_csv)
+
+    # 4. Check process_csv_rows was awaited correctly, passing the patched module logger
+    mock_process_rows.assert_awaited_once_with(
+        mock_args.input_csv,
+        sample_rows,
+        mock_args,
+        mock_bulk_cli_logger, # Pass the patched module logger
+        mock_log_formatter # Check it's called with the formatter
+    )
+
+    # 5. Check the final result is returned
+    assert result == {"summary": "results"}
 
 
 @patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
 @patch("karaoke_prep.utils.bulk_cli.os.chdir")
 @patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_prep_success(mock_getcwd, mock_chdir, mock_kprep, mock_args, mock_logger, mock_log_formatter):
     """Test process_track_prep successfully calls KaraokePrep."""
     mock_kprep_instance = AsyncMock()
@@ -177,6 +177,7 @@ async def test_process_track_prep_success(mock_getcwd, mock_chdir, mock_kprep, m
 @patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
 @patch("karaoke_prep.utils.bulk_cli.os.chdir")
 @patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_prep_failure(mock_getcwd, mock_chdir, mock_kprep, mock_args, mock_logger, mock_log_formatter):
     """Test process_track_prep handles exceptions from KaraokePrep."""
     mock_kprep_instance = AsyncMock()
@@ -197,6 +198,7 @@ async def test_process_track_prep_failure(mock_getcwd, mock_chdir, mock_kprep, m
 @patch("karaoke_prep.utils.bulk_cli.os.chdir")
 @patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", new_callable=mock_open, read_data=SAMPLE_STYLE_JSON) # For reading style JSON if CDG enabled
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_success(
     mock_open_file, mock_getcwd, mock_chdir, mock_exists, mock_kfinalise, mock_kprep,
     mock_args, mock_logger, mock_log_formatter
@@ -257,6 +259,7 @@ async def test_process_track_render_success(
 @patch("karaoke_prep.utils.bulk_cli.os.chdir")
 @patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", new_callable=mock_open, read_data=SAMPLE_STYLE_JSON)
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_finalise_failure(
     mock_open_file, mock_getcwd, mock_chdir, mock_exists, mock_kfinalise, mock_kprep,
     mock_args, mock_logger, mock_log_formatter
@@ -401,32 +404,38 @@ def test_validate_input_csv_exists(mock_isfile):
 @patch(mock_module_paths["ArgumentParser"])
 @patch(mock_module_paths["os_path_abspath"])
 @patch(mock_module_paths["os_path_isfile"], return_value=False)  # Simulate file not found
-@patch(mock_module_paths["asyncio_run"])  # Prevent actual run
-@patch(mock_module_paths["logger"])  # Mock logger to check error message
-@patch(mock_module_paths["sys_exit"])  # Mock sys.exit
-@pytest.mark.skip(reason="Needs to be refactored to properly test CSV file not found error")
-def test_async_main_csv_not_found(mock_exit, mock_logger, mock_run, mock_isfile, mock_abspath, mock_parser_class):
-    """Test async_main exits if input CSV is not found."""
-    # Configure mock parser to return args with nonexistent CSV
+@patch(mock_module_paths["asyncio_run"])  # Keep mock_run for now, might be useful later
+@patch(mock_module_paths["logger"])
+# Test the helper function directly
+def test_parse_and_validate_args_csv_not_found(mock_logger, mock_run, mock_isfile, mock_abspath, mock_parser_class):
+    """Test _parse_and_validate_args raises FileNotFoundError if input CSV is not found."""
+    # Configure mocks for parse_arguments called within _parse_and_validate_args
     mock_parser_instance = mock_parser_class.return_value
+    mock_abspath.side_effect = lambda p: f"/abs/{p}" # Mock abspath used in parse_arguments
+    mock_isfile.return_value = False # Mock isfile called by validate_input_csv
+
     mock_args = argparse.Namespace(
         input_csv="nonexistent.csv",
         style_params_json="styles.json",
         output_dir="output",
         enable_cdg=False,
         enable_txt=False,
-        log_level="info",
+        log_level=logging.INFO, # parse_arguments now converts level to int
         dry_run=False,
     )
-    mock_parser_instance.parse_args.return_value = mock_args
+    mock_parser_instance.parse_args.return_value = mock_args # Mock return of parse_args
 
-    # Call main() which will call async_main
-    bulk_cli.main()
+    # Use pytest.raises to check for the expected exception from _parse_and_validate_args
+    with pytest.raises(FileNotFoundError) as excinfo:
+        bulk_cli._parse_and_validate_args() # Call the target function
 
     # Assertions
+    # Check the exception message (raised by _parse_and_validate_args)
+    assert "Input CSV file not found: /abs/nonexistent.csv" in str(excinfo.value)
+    # Verify logger.error was called by validate_input_csv (called by _parse_and_validate_args)
     mock_logger.error.assert_called_once_with("Input CSV file not found: /abs/nonexistent.csv")
-    mock_exit.assert_called_once_with(1)
-    mock_run.assert_not_called()  # Should not reach asyncio.run
+    # Verify os.path.isfile was called
+    mock_isfile.assert_called_once_with("/abs/nonexistent.csv")
 
 
 @patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
@@ -435,24 +444,26 @@ def test_async_main_csv_not_found(mock_exit, mock_logger, mock_run, mock_isfile,
 @patch("karaoke_prep.utils.bulk_cli.os.chdir")
 @patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", side_effect=FileNotFoundError("Styles not found")) # Simulate style file not found
-@patch("karaoke_prep.utils.bulk_cli.sys.exit") # Mock sys.exit
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_style_json_not_found_cdg(
-    mock_exit, mock_open_file, mock_getcwd, mock_chdir, mock_exists, mock_kfinalise, mock_kprep,
+    mock_open_file, mock_getcwd, mock_chdir, mock_exists, mock_kfinalise, mock_kprep,
     mock_args, mock_logger, mock_log_formatter
 ):
-    """Test process_track_render exits if style JSON not found when CDG enabled."""
+    """Test process_track_render raises FileNotFoundError if style JSON not found when CDG enabled."""
     row = {"Artist": "CDG Artist", "Title": "CDG Title", "Mixed Audio Filename": "mix_cdg.mp3", "Instrumental Audio Filename": "inst_cdg.mp3"}
     mock_args.enable_cdg = True # Enable CDG
     mock_args.style_params_json = "/fake/styles.json"
 
-    await bulk_cli.process_track_render(row, mock_args, mock_logger, mock_log_formatter)
+    # Use pytest.raises to check for the expected exception
+    with pytest.raises(FileNotFoundError) as excinfo:
+        await bulk_cli.process_track_render(row, mock_args, mock_logger, mock_log_formatter)
 
     # Assertions
     mock_open_file.assert_called_once_with(mock_args.style_params_json, "r")
-    mock_logger.error.assert_called_once_with(f"CDG styles configuration file not found: {mock_args.style_params_json}")
-    mock_exit.assert_called_once_with(1)
-    # We can no longer assert that finalise wasn't called because our mocked exit() and the return we added
-    # don't actually stop execution in a test environment - the code continues and calls kfinalise
+    # Check the exception message
+    assert f"CDG styles configuration file not found: {mock_args.style_params_json}" in str(excinfo.value)
+    # KaraokeFinalise should not have been initialized if style loading fails early
+    mock_kfinalise.assert_not_called()
 
 
 @patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
@@ -461,26 +472,26 @@ async def test_process_track_render_style_json_not_found_cdg(
 @patch("karaoke_prep.utils.bulk_cli.os.chdir")
 @patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", new_callable=mock_open, read_data="invalid json") # Simulate invalid JSON
-@patch("karaoke_prep.utils.bulk_cli.sys.exit") # Mock sys.exit
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_style_json_invalid_cdg(
-    mock_exit, mock_open_file, mock_getcwd, mock_chdir, mock_exists, mock_kfinalise, mock_kprep,
+    mock_open_file, mock_getcwd, mock_chdir, mock_exists, mock_kfinalise, mock_kprep,
     mock_args, mock_logger, mock_log_formatter
 ):
-    """Test process_track_render exits if style JSON is invalid when CDG enabled."""
+    """Test process_track_render raises ValueError if style JSON is invalid when CDG enabled."""
     row = {"Artist": "CDG Artist", "Title": "CDG Title", "Mixed Audio Filename": "mix_cdg.mp3", "Instrumental Audio Filename": "inst_cdg.mp3"}
     mock_args.enable_cdg = True # Enable CDG
     mock_args.style_params_json = "/fake/styles.json"
 
-    await bulk_cli.process_track_render(row, mock_args, mock_logger, mock_log_formatter)
+    # Use pytest.raises to check for the expected exception
+    with pytest.raises(ValueError) as excinfo:
+        await bulk_cli.process_track_render(row, mock_args, mock_logger, mock_log_formatter)
 
     # Assertions
     mock_open_file.assert_called_once_with(mock_args.style_params_json, "r")
-    # Use a more flexible assertion that doesn't rely on pytest.string_containing
-    error_message = mock_logger.error.call_args[0][0]
-    assert "Invalid JSON in CDG styles configuration file:" in error_message
-    mock_exit.assert_called_once_with(1)
-    # We can no longer assert that finalise wasn't called because our mocked exit() and the return we added
-    # don't actually stop execution in a test environment - the code continues and calls kfinalise
+    # Check the exception message
+    assert "Invalid JSON in CDG styles configuration file:" in str(excinfo.value)
+    # KaraokeFinalise should not have been initialized if style loading fails early
+    mock_kfinalise.assert_not_called()
 
 
 @patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
@@ -488,6 +499,7 @@ async def test_process_track_render_style_json_invalid_cdg(
 @patch("karaoke_prep.utils.bulk_cli.os.path.exists", return_value=False) # Simulate track dir NOT found
 @patch("karaoke_prep.utils.bulk_cli.os.chdir")
 @patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_track_dir_not_found(
     mock_getcwd, mock_chdir, mock_exists, mock_kfinalise, mock_kprep,
     mock_args, mock_logger, mock_log_formatter
@@ -514,56 +526,75 @@ async def test_process_track_render_track_dir_not_found(
     mock_chdir.assert_not_called()
 
 
-@patch(mock_module_paths["KaraokePrep"])
-@patch(mock_module_paths["KaraokeFinalise"])
-@patch(mock_module_paths["os_path_isfile"], return_value=True)
-@patch(mock_module_paths["os_path_exists"], return_value=True)
-@patch(mock_module_paths["os_chdir"])
-@patch(mock_module_paths["os_getcwd"], return_value="/fake/original/dir")
-@patch(mock_module_paths["open_func"], new_callable=mock_open, read_data=SAMPLE_CSV_DATA)
-@patch(mock_module_paths["csv_DictReader"])
-@patch(mock_module_paths["csv_DictWriter"])
-@patch(mock_module_paths["update_csv_status"])  # Use standard mock here
-@pytest.mark.skip(reason="Needs to be refactored to properly test dry run functionality")
+# Add mocks for the new helper functions and process_csv_rows
+@patch("karaoke_prep.utils.bulk_cli.process_csv_rows", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.bulk_cli._read_csv_file")
+@patch("karaoke_prep.utils.bulk_cli._parse_and_validate_args")
+@patch("karaoke_prep.utils.bulk_cli.setup_logging") # Mock logging setup
+@patch("karaoke_prep.utils.bulk_cli.logger") # Mock the module-level logger directly
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_async_main_dry_run(
-    mock_update_csv, mock_csv_writer, mock_csv_reader, mock_open_file,
-    mock_getcwd, mock_chdir, mock_exists, mock_isfile,
-    mock_kfinalise, mock_kprep, mock_args, mock_logger, mock_log_formatter
+    mock_bulk_cli_logger, mock_setup_logging, mock_parse_args, mock_read_csv, mock_process_rows, # Added mock_bulk_cli_logger back
+    mock_args, mock_logger, mock_log_formatter # Keep necessary fixtures
 ):
-    """Test that update_csv_status is not called during a dry run."""
-    # Configure mocks
-    mock_kprep_instance = AsyncMock()
-    mock_kprep.return_value = mock_kprep_instance
-    mock_kprep_instance.process = AsyncMock(return_value=[{"artist": "Test", "title": "Track"}])
-    
-    mock_kfinalise_instance = mock_kfinalise.return_value
-    mock_kfinalise_instance.process = MagicMock(return_value={"final": "track"})
-    
-    # Set dry_run=True for this test
+    """Test async_main correctly handles the dry_run flag."""
+
+    # --- Mock Configuration ---
+    # 1. Configure mock_args fixture to have dry_run = True
     mock_args.dry_run = True
-    mock_args.output_dir = os.path.join(mock_args.input_csv, "..")
-    
-    # Mock CSV data
-    mock_csv_reader.return_value = csv.DictReader(SAMPLE_CSV_DATA.splitlines())
 
-    # Patch the ArgumentParser to return our mock_args
-    with patch(mock_module_paths["ArgumentParser"]) as mock_parser:
-        mock_parser.return_value.parse_args.return_value = mock_args
-        
-        # Inject mocks
-        bulk_cli.logger = mock_logger
-        bulk_cli.log_formatter = mock_log_formatter
-        
-        # Run the test
-        await bulk_cli.async_main()
+    # 2. Mock _parse_and_validate_args to return the modified mock_args
+    mock_parse_args.return_value = mock_args
 
-    # Assertions
-    # Even with dry_run=True, process should still be called
-    assert mock_kprep.call_count > 0
-    mock_kprep_instance.process.assert_awaited()
-    
-    # But update_csv_status should not be called
-    mock_update_csv.assert_not_called()
+    # 3. Mock _read_csv_file
+    sample_rows = list(csv.DictReader(SAMPLE_CSV_DATA.splitlines()))
+    mock_read_csv.return_value = sample_rows
+
+    # 4. Mock setup_logging
+    mock_setup_logging.return_value = mock_log_formatter
+
+    # 5. Mock process_csv_rows
+    mock_process_rows.return_value = {"summary": "dry run results"}
+
+    # --- Inject Mocks & Run ---
+    # Ensure setup_logging returns the formatter when called
+    mock_setup_logging.return_value = mock_log_formatter
+    bulk_cli.log_formatter = mock_log_formatter # Set global formatter
+
+    # Run async_main
+    result = await bulk_cli.async_main()
+
+    # --- Assertions ---
+    # 1. Check _parse_and_validate_args called
+    mock_parse_args.assert_called_once()
+
+    # 2. Check logger level was set and info message logged directly on module logger
+    mock_bulk_cli_logger.setLevel.assert_called_with(mock_args.log_level)
+    mock_bulk_cli_logger.info.assert_any_call("Dry run mode enabled. No changes will be made.")
+    # No need to assert setup_logging call for level setting
+
+    # 3. Check _read_csv_file called
+    mock_read_csv.assert_called_once_with(mock_args.input_csv)
+
+    # 4. Check process_csv_rows was awaited with dry_run=True in args, passing the patched module logger
+    mock_process_rows.assert_awaited_once_with(
+        mock_args.input_csv,
+        sample_rows,
+        mock_args, # Ensure the args object passed has dry_run=True
+        mock_bulk_cli_logger, # Pass the patched module logger
+        mock_log_formatter
+    )
+    # Verify the args passed to process_csv_rows had dry_run=True
+    call_args, _ = mock_process_rows.call_args
+    passed_args_obj = call_args[2]
+    assert passed_args_obj.dry_run is True
+
+    # 5. Check result
+    assert result == {"summary": "dry run results"}
+
+    # Note: The check for update_csv_status *not* being called is now implicitly
+    # handled by testing process_csv_rows directly (like in test_process_csv_rows_dry_run).
+    # This test focuses on async_main passing the flag correctly.
 
 
 @patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
@@ -572,6 +603,7 @@ async def test_async_main_dry_run(
 @patch("karaoke_prep.utils.bulk_cli.os.chdir")
 @patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", new_callable=mock_open, read_data=SAMPLE_STYLE_JSON) # For reading style JSON
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_cdg_enabled(
     mock_open_file, mock_getcwd, mock_chdir, mock_exists, mock_kfinalise, mock_kprep,
     mock_args, mock_logger, mock_log_formatter
@@ -645,6 +677,7 @@ def test_setup_logging(mock_logger, mock_formatter, mock_handler):
 @patch("karaoke_prep.utils.bulk_cli.update_csv_status")
 @patch("karaoke_prep.utils.bulk_cli.process_track_render", new_callable=AsyncMock)
 @patch("karaoke_prep.utils.bulk_cli.process_track_prep", new_callable=AsyncMock)
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_csv_rows(mock_process_prep, mock_process_render, mock_update_csv, mock_args, mock_logger, mock_log_formatter):
     """Test the process_csv_rows function processes CSV rows correctly."""
     # Configure the mocks with return values for each call
@@ -694,6 +727,7 @@ async def test_process_csv_rows(mock_process_prep, mock_process_render, mock_upd
 @patch("karaoke_prep.utils.bulk_cli.update_csv_status")
 @patch("karaoke_prep.utils.bulk_cli.process_track_render", new_callable=AsyncMock)
 @patch("karaoke_prep.utils.bulk_cli.process_track_prep", new_callable=AsyncMock)
+@pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_csv_rows_dry_run(mock_process_prep, mock_process_render, mock_update_csv, mock_args, mock_logger, mock_log_formatter):
     """Test the process_csv_rows function in dry run mode."""
     # Configure the mocks
