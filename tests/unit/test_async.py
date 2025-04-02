@@ -501,8 +501,18 @@ class TestAsync:
         basic_karaoke_prep.title = "Test Title"
         
         # Mock dependencies
-        with patch.object(basic_karaoke_prep, 'extract_info_for_online_media'), \
+        with patch('karaoke_prep.metadata.ydl') as mock_ydl, \
              patch.object(basic_karaoke_prep, 'prep_single_track', new_callable=AsyncMock) as mock_prep_single_track:
+            
+            # Configure the mock ydl context manager
+            mock_ydl_instance = MagicMock()
+            mock_ydl_instance.extract_info.return_value = {
+                "title": "Test Video",
+                "extractor_key": "Youtube",
+                "id": "12345",
+                "url": "https://example.com/video"
+            }
+            mock_ydl.return_value.__enter__.return_value = mock_ydl_instance
             
             basic_karaoke_prep.extracted_info = {}  # Not a playlist
             mock_prep_single_track.return_value = {"track": "result"}
@@ -525,8 +535,13 @@ class TestAsync:
         basic_karaoke_prep.title = "Test Title"
         
         # Mock dependencies
-        with patch.object(basic_karaoke_prep, 'extract_info_for_online_media'), \
+        with patch('karaoke_prep.metadata.ydl') as mock_ydl, \
              patch.object(basic_karaoke_prep, 'process_playlist', new_callable=AsyncMock) as mock_process_playlist:
+            
+            # Configure the mock ydl context manager
+            mock_ydl_instance = MagicMock()
+            mock_ydl_instance.extract_info.return_value = {"playlist_count": 2}
+            mock_ydl.return_value.__enter__.return_value = mock_ydl_instance
             
             basic_karaoke_prep.extracted_info = {"playlist_count": 2}  # Is a playlist
             mock_process_playlist.return_value = [{"track": "result1"}, {"track": "result2"}]

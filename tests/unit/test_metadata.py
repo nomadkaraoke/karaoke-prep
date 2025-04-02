@@ -21,8 +21,8 @@ class TestMetadata:
         mock_ydl_instance = MagicMock()
         mock_ydl_instance.extract_info.return_value = mock_info
         
-        # Patch the 'ydl' alias used in karaoke_prep.py
-        with patch('karaoke_prep.karaoke_prep.ydl') as mock_ydl_context:
+        # Patch the 'ydl' alias used in metadata.py
+        with patch('karaoke_prep.metadata.ydl') as mock_ydl_context:
             # Configure the context manager mock
             mock_ydl_context.return_value.__enter__.return_value = mock_ydl_instance
             
@@ -59,8 +59,8 @@ class TestMetadata:
         mock_ydl_instance = MagicMock()
         mock_ydl_instance.extract_info.return_value = mock_search_result
         
-        # Patch the 'ydl' alias used in karaoke_prep.py
-        with patch('karaoke_prep.karaoke_prep.ydl') as mock_ydl_context:
+        # Patch the 'ydl' alias used in metadata.py
+        with patch('karaoke_prep.metadata.ydl') as mock_ydl_context:
             # Configure the context manager mock
             mock_ydl_context.return_value.__enter__.return_value = mock_ydl_instance
             
@@ -90,8 +90,8 @@ class TestMetadata:
         mock_ydl_instance = MagicMock()
         mock_ydl_instance.extract_info.return_value = mock_search_result
         
-        # Patch the 'ydl' alias used in karaoke_prep.py
-        with patch('karaoke_prep.karaoke_prep.ydl') as mock_ydl_context:
+        # Patch the 'ydl' alias used in metadata.py
+        with patch('karaoke_prep.metadata.ydl') as mock_ydl_context:
             # Configure the context manager mock
             mock_ydl_context.return_value.__enter__.return_value = mock_ydl_instance
 

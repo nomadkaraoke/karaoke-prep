@@ -20,6 +20,15 @@ from lyrics_transcriber.core.controller import LyricsControllerResult
 from pydub import AudioSegment
 import json
 from dotenv import load_dotenv
+from .config import (
+    load_style_params,
+    setup_title_format,
+    setup_end_format,
+    get_video_durations,
+    get_existing_images,
+    setup_ffmpeg_command,
+)
+from .metadata import extract_info_for_online_media, parse_track_metadata
 
 
 class KaraokePrep:
@@ -82,9 +91,9 @@ class KaraokePrep:
         self.logger.debug(f"KaraokePrep instantiating with input_media: {input_media} artist: {artist} title: {title}")
 
         self.dry_run = dry_run
-        self.extractor = None
-        self.media_id = None
-        self.url = None
+        self.extractor = None # Will be set later based on source (Original or yt-dlp extractor)
+        self.media_id = None # Will be set by parse_track_metadata if applicable
+        self.url = None # Will be set by parse_track_metadata if applicable
         self.input_media = input_media
         self.artist = artist
         self.title = title
@@ -119,113 +128,19 @@ class KaraokePrep:
         self.render_bounding_boxes = render_bounding_boxes
         self.style_params_json = style_params_json
 
-        # Load style parameters from JSON or use defaults
-        if style_params_json:
-            try:
-                with open(style_params_json, "r") as f:
-                    self.style_params = json.loads(f.read())
-            except FileNotFoundError:
-                self.logger.error(f"Style parameters configuration file not found: {style_params_json}")
-                sys.exit(1)
-            except json.JSONDecodeError as e:
-                self.logger.error(f"Invalid JSON in style parameters configuration file: {e}")
-                sys.exit(1)
-        else:
-            # Use default values
-            self.style_params = {
-                "intro": {
-                    "video_duration": 5,
-                    "existing_image": None,
-                    "background_color": "#000000",
-                    "background_image": None,
-                    "font": "Montserrat-Bold.ttf",
-                    "artist_color": "#ffdf6b",
-                    "artist_gradient": None,
-                    "title_color": "#ffffff",
-                    "title_gradient": None,
-                    "title_region": "370, 200, 3100, 480",
-                    "artist_region": "370, 700, 3100, 480",
-                    "extra_text": None,
-                    "extra_text_color": "#ffffff",
-                    "extra_text_gradient": None,
-                    "extra_text_region": "370, 1200, 3100, 480",
-                    "title_text_transform": None,  # none, uppercase, lowercase, propercase
-                    "artist_text_transform": None,  # none, uppercase, lowercase, propercase
-                },
-                "end": {
-                    "video_duration": 5,
-                    "existing_image": None,
-                    "background_color": "#000000",
-                    "background_image": None,
-                    "font": "Montserrat-Bold.ttf",
-                    "artist_color": "#ffdf6b",
-                    "artist_gradient": None,
-                    "title_color": "#ffffff",
-                    "title_gradient": None,
-                    "title_region": None,
-                    "artist_region": None,
-                    "extra_text": "THANK YOU FOR SINGING!",
-                    "extra_text_color": "#ff7acc",
-                    "extra_text_gradient": None,
-                    "extra_text_region": None,
-                    "title_text_transform": None,  # none, uppercase, lowercase, propercase
-                    "artist_text_transform": None,  # none, uppercase, lowercase, propercase
-                },
-            }
+        # Load style parameters using the config module
+        self.style_params = load_style_params(self.style_params_json, self.logger)
 
-        # Set up title format from style params
-        self.title_format = {
-            "background_color": self.style_params["intro"]["background_color"],
-            "background_image": self.style_params["intro"]["background_image"],
-            "font": self.style_params["intro"]["font"],
-            "artist_color": self.style_params["intro"]["artist_color"],
-            "artist_gradient": self.style_params["intro"].get("artist_gradient"),
-            "title_color": self.style_params["intro"]["title_color"],
-            "title_gradient": self.style_params["intro"].get("title_gradient"),
-            "extra_text": self.style_params["intro"]["extra_text"],
-            "extra_text_color": self.style_params["intro"]["extra_text_color"],
-            "extra_text_gradient": self.style_params["intro"].get("extra_text_gradient"),
-            "extra_text_region": self.style_params["intro"]["extra_text_region"],
-            "title_region": self.style_params["intro"]["title_region"],
-            "artist_region": self.style_params["intro"]["artist_region"],
-            "title_text_transform": self.style_params["intro"].get("title_text_transform"),
-            "artist_text_transform": self.style_params["intro"].get("artist_text_transform"),
-        }
+        # Set up title and end formats using the config module
+        self.title_format = setup_title_format(self.style_params)
+        self.end_format = setup_end_format(self.style_params)
 
-        # Set up end format from style params
-        self.end_format = {
-            "background_color": self.style_params["end"]["background_color"],
-            "background_image": self.style_params["end"]["background_image"],
-            "font": self.style_params["end"]["font"],
-            "artist_color": self.style_params["end"]["artist_color"],
-            "artist_gradient": self.style_params["end"].get("artist_gradient"),
-            "title_color": self.style_params["end"]["title_color"],
-            "title_gradient": self.style_params["end"].get("title_gradient"),
-            "extra_text": self.style_params["end"]["extra_text"],
-            "extra_text_color": self.style_params["end"]["extra_text_color"],
-            "extra_text_gradient": self.style_params["end"].get("extra_text_gradient"),
-            "extra_text_region": self.style_params["end"]["extra_text_region"],
-            "title_region": self.style_params["end"]["title_region"],
-            "artist_region": self.style_params["end"]["artist_region"],
-            "title_text_transform": self.style_params["end"].get("title_text_transform"),
-            "artist_text_transform": self.style_params["end"].get("artist_text_transform"),
-        }
+        # Get video durations and existing images using the config module
+        self.intro_video_duration, self.end_video_duration = get_video_durations(self.style_params)
+        self.existing_title_image, self.existing_end_image = get_existing_images(self.style_params)
 
-        # Store video durations and existing images
-        self.intro_video_duration = self.style_params["intro"]["video_duration"]
-        self.end_video_duration = self.style_params["end"]["video_duration"]
-        self.existing_title_image = self.style_params["intro"]["existing_image"]
-        self.existing_end_image = self.style_params["end"]["existing_image"]
-
-        # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
-        ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe") if getattr(sys, "frozen", False) else "ffmpeg"
-
-        self.ffmpeg_base_command = f"{ffmpeg_path} -hide_banner -nostats"
-
-        if self.log_level == logging.DEBUG:
-            self.ffmpeg_base_command += " -loglevel verbose"
-        else:
-            self.ffmpeg_base_command += " -loglevel fatal"
+        # Set up ffmpeg command using the config module
+        self.ffmpeg_base_command = setup_ffmpeg_command(self.log_level)
 
         self.logger.debug(f"Initialized title_format with extra_text: {self.title_format['extra_text']}")
         self.logger.debug(f"Initialized title_format with extra_text_region: {self.title_format['extra_text_region']}")
@@ -233,8 +148,8 @@ class KaraokePrep:
         self.logger.debug(f"Initialized end_format with extra_text: {self.end_format['extra_text']}")
         self.logger.debug(f"Initialized end_format with extra_text_region: {self.end_format['extra_text_region']}")
 
-        self.extracted_info = None
-        self.persistent_artist = None
+        self.extracted_info = None # Will be populated by extract_info_for_online_media if needed
+        self.persistent_artist = None # Used for playlists
 
         self.logger.debug(f"KaraokePrep lossless_output_format: {self.lossless_output_format}")
 
@@ -253,84 +168,20 @@ class KaraokePrep:
                 raise ValueError(f"Invalid region format: {region_str}. Expected format: 'x,y,width,height'")
         return None
 
+    # Compatibility methods for tests - these call the new functions in metadata.py
     def extract_info_for_online_media(self, input_url=None, input_artist=None, input_title=None):
-        self.logger.info(f"Extracting info for input_url: {input_url} input_artist: {input_artist} input_title: {input_title}")
-        if input_url is not None:
-            # If a URL is provided, use it to extract the metadata
-            with ydl({"quiet": True}) as ydl_instance:
-                self.extracted_info = ydl_instance.extract_info(input_url, download=False)
-        else:
-            # If no URL is provided, use the query to search for the top result
-            ydl_opts = {"quiet": "True", "format": "bestaudio", "noplaylist": "True", "extract_flat": True}
-            with ydl(ydl_opts) as ydl_instance:
-                query = f"{input_artist} {input_title}"
-                self.extracted_info = ydl_instance.extract_info(f"ytsearch1:{query}", download=False)["entries"][0]
-                if not self.extracted_info:
-                    raise Exception(f"No search results found on YouTube for query: {input_artist} {input_title}")
-
+        """Compatibility method that calls the function in metadata.py"""
+        self.extracted_info = extract_info_for_online_media(input_url, input_artist, input_title, self.logger)
+        return self.extracted_info
+        
     def parse_single_track_metadata(self, input_artist, input_title):
-        """
-        Parses self.extracted_info to extract URL, extractor, ID, artist and title.
-        """
-        # Default values if parsing fails
-        self.url = None
-        self.extractor = None
-        self.media_id = None
-
-        metadata_artist = ""
-        metadata_title = ""
-
-        if "url" in self.extracted_info:
-            self.url = self.extracted_info["url"]
-        elif "webpage_url" in self.extracted_info:
-            self.url = self.extracted_info["webpage_url"]
-        else:
-            raise Exception(f"Failed to extract URL from input media metadata: {self.extracted_info}")
-
-        if "extractor_key" in self.extracted_info:
-            self.extractor = self.extracted_info["extractor_key"]
-        elif "ie_key" in self.extracted_info:
-            self.extractor = self.extracted_info["ie_key"]
-        else:
-            raise Exception(f"Failed to find extractor name from input media metadata: {self.extracted_info}")
-
-        if "id" in self.extracted_info:
-            self.media_id = self.extracted_info["id"]
-
-        # Example: "Artist - Title"
-        if "title" in self.extracted_info and "-" in self.extracted_info["title"]:
-            metadata_artist, metadata_title = self.extracted_info["title"].split("-", 1)
-            metadata_artist = metadata_artist.strip()
-            metadata_title = metadata_title.strip()
-        elif "uploader" in self.extracted_info:
-            # Fallback to uploader as artist if title parsing fails
-            metadata_artist = self.extracted_info["uploader"]
-            if "title" in self.extracted_info:
-                metadata_title = self.extracted_info["title"].strip()
-
-        # If unable to parse, log an appropriate message
-        if not metadata_artist or not metadata_title:
-            self.logger.warning("Could not parse artist and title from the input media metadata.")
-
-        if not self.artist and metadata_artist:
-            self.logger.warning(f"Artist not provided as input, setting to {metadata_artist} from input media metadata...")
-            self.artist = metadata_artist
-
-        if not self.title and metadata_title:
-            self.logger.warning(f"Title not provided as input, setting to {metadata_title} from input media metadata...")
-            self.title = metadata_title
-
-        if self.persistent_artist:
-            self.logger.debug(
-                f"Resetting self.artist from {self.artist} to persistent artist: {self.persistent_artist} for consistency while processing playlist..."
-            )
-            self.artist = self.persistent_artist
-
-        if self.artist and self.title:
-            self.logger.info(f"Extracted url: {self.url}, artist: {self.artist}, title: {self.title}")
-        else:
-            self.logger.debug(self.extracted_info)
-            raise Exception("Failed to extract artist and title from the input media metadata.")
+        """Compatibility method that calls the function in metadata.py"""
+        metadata_result = parse_track_metadata(self.extracted_info, input_artist, input_title, self.persistent_artist, self.logger)
+        self.url = metadata_result["url"]
+        self.extractor = metadata_result["extractor"]
+        self.media_id = metadata_result["media_id"]
+        self.artist = metadata_result["artist"]
+        self.title = metadata_result["title"]
 
     def copy_input_media(self, input_media, output_filename_no_extension):
         self.logger.debug(f"Copying media from local path {input_media} to filename {output_filename_no_extension} + existing extension")
@@ -1473,7 +1324,14 @@ class KaraokePrep:
             if self.input_media is not None and os.path.isfile(self.input_media):
                 self.extractor = "Original"
             else:
-                self.parse_single_track_metadata(input_artist=self.artist, input_title=self.title)
+                # Use the imported parse_track_metadata function
+                if self.extracted_info is not None:
+                    metadata_result = parse_track_metadata(self.extracted_info, self.artist, self.title, self.persistent_artist, self.logger)
+                    self.url = metadata_result["url"]
+                    self.extractor = metadata_result["extractor"]
+                    self.media_id = metadata_result["media_id"]
+                    self.artist = metadata_result["artist"]
+                    self.title = metadata_result["title"]
 
             self.logger.info(f"Preparing output path for track: {self.title} by {self.artist}")
             if self.dry_run:
@@ -1796,7 +1654,8 @@ class KaraokePrep:
             return [await self.prep_single_track()]
         else:
             self.url = self.input_media
-            self.extract_info_for_online_media(input_url=self.url, input_artist=self.artist, input_title=self.title)
+            # Use the imported extract_info_for_online_media function
+            self.extracted_info = extract_info_for_online_media(input_url=self.url, input_artist=self.artist, input_title=self.title, logger=self.logger)
 
             if self.extracted_info and "playlist_count" in self.extracted_info:
                 self.persistent_artist = self.artist
