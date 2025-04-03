@@ -6,7 +6,7 @@ import subprocess
 import sys
 import json
 from karaoke_prep.karaoke_prep import KaraokePrep
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, call, patch, AsyncMock
 from karaoke_prep.utils.gen_cli import async_main
 import shlex
 import asyncio
@@ -41,20 +41,47 @@ async def test_karaoke_prep_integration():
             log_level="INFO"
         )
 
-        # Call process() and await the result
-        result = await kp.process()
+        # Mock external dependencies and handler methods
+        with patch('karaoke_prep.metadata.extract_info_for_online_media') as mock_extract, \
+             patch('karaoke_prep.metadata.parse_track_metadata') as mock_parse, \
+             patch.object(kp.file_handler, 'copy_input_media', return_value="copied.mp4") as mock_copy, \
+             patch.object(kp.file_handler, 'convert_to_wav', return_value="converted.wav") as mock_convert, \
+             patch.object(kp.file_handler, 'download_video') as mock_download, \
+             patch.object(kp.file_handler, 'extract_still_image_from_video') as mock_extract_image, \
+             patch.object(kp.file_handler, '_file_exists', return_value=False) as mock_file_exists, \
+             patch.object(kp.lyrics_processor, 'transcribe_lyrics', AsyncMock(return_value={
+                 'lrc_filepath': os.path.join(temp_dir, 'lyrics.lrc'),
+                 'ass_filepath': os.path.join(temp_dir, 'lyrics.ass'),
+                 'corrected_lyrics_text_filepath': os.path.join(temp_dir, 'lyrics.txt')
+             })) as mock_transcribe, \
+             patch.object(kp.audio_processor, 'process_audio_separation', AsyncMock(return_value={
+                 'clean_instrumental': {'instrumental': 'inst.flac', 'vocals': 'vocals.flac'},
+                 'other_stems': {},
+                 'backing_vocals': {},
+                 'combined_instrumentals': {}
+             })) as mock_separate, \
+             patch.object(kp.video_generator, 'create_title_video', AsyncMock()) as mock_create_title, \
+             patch.object(kp.video_generator, 'create_end_video', AsyncMock()) as mock_create_end, \
+             patch('os.system') as mock_os_system:
+
+            # Run the process
+            results = await kp.process()
 
         # Verify that the result is a list (even for a single track)
-        assert isinstance(result, list)
-        assert len(result) > 0
+        assert isinstance(results, list)
+        assert len(results) > 0
 
         # Get the first track result
-        track = result[0]
+        track = results[0]
         assert isinstance(track, dict)
         assert "track_output_dir" in track
         assert "artist" in track
         assert "title" in track
 
+        # Verify mocks were called as expected
+        mock_transcribe.assert_not_called()
+        mock_separate.assert_not_called()
+        # os.system might be called by convert_to_wav depending on implementation,
         # Verify that the expected output files exist and have non-zero sizes
         expected_files = [
             os.path.join(track["track_output_dir"], f"{track['artist']} - {track['title']} (Title).mov"),

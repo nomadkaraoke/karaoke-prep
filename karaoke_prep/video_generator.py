@@ -17,9 +17,15 @@ class VideoGenerator:
     def parse_region(self, region_str):
         if region_str:
             try:
-                return tuple(map(int, region_str.split(",")))
-            except ValueError:
-                raise ValueError(f"Invalid region format: {region_str}. Expected format: 'x,y,width,height'")
+                parts = region_str.split(",")
+                if len(parts) != 4:
+                    raise ValueError(f"Invalid region format: {region_str}. Expected 4 elements: 'x,y,width,height'")
+                return tuple(map(int, parts))
+            except ValueError as e:
+                # Re-raise specific format errors or general ValueError for int conversion issues
+                if "Expected 4 elements" in str(e):
+                    raise e
+                raise ValueError(f"Invalid region format: {region_str}. Could not convert to integers. Expected format: 'x,y,width,height'") from e
         return None
 
     def hex_to_rgb(self, hex_color):
@@ -78,14 +84,14 @@ class VideoGenerator:
                 title_text,
                 artist_text,
                 format,
-                render_bounding_boxes,
+                self.render_bounding_boxes,
             )
         else:
             self.logger.info("No font specified, skipping text rendering")
 
         # Save images and create video
         self._save_output_files(
-            background, output_image_filepath_noext, output_video_filepath, output_png, output_jpg, duration, resolution
+            background, output_image_filepath_noext, output_video_filepath, duration, resolution
         )
 
     def calculate_text_size_to_fit(self, draw, text, font_path, region):
@@ -316,7 +322,7 @@ class VideoGenerator:
 
         return background.resize(resolution)
 
-    def _render_all_text(self, draw, font_path, title_text, artist_text, format):
+    def _render_all_text(self, draw, font_path, title_text, artist_text, format, render_bounding_boxes):
         """Render all text elements on the image."""
         # Render title
         if format["title_region"]:
@@ -324,7 +330,7 @@ class VideoGenerator:
             region = self._render_text_in_region(
                 draw, title_text, font_path, region_parsed, format["title_color"], gradient=format.get("title_gradient")
             )
-            if self.render_bounding_boxes:
+            if render_bounding_boxes:
                 self._draw_bounding_box(draw, region, format["title_color"])
 
         # Render artist
@@ -333,7 +339,7 @@ class VideoGenerator:
             region = self._render_text_in_region(
                 draw, artist_text, font_path, region_parsed, format["artist_color"], gradient=format.get("artist_gradient")
             )
-            if self.render_bounding_boxes:
+            if render_bounding_boxes:
                 self._draw_bounding_box(draw, region, format["artist_color"])
 
         # Render extra text if provided
@@ -342,12 +348,12 @@ class VideoGenerator:
             region = self._render_text_in_region(
                 draw, format["extra_text"], font_path, region_parsed, format["extra_text_color"], gradient=format.get("extra_text_gradient")
             )
-            if self.render_bounding_boxes:
+            if render_bounding_boxes:
                 self._draw_bounding_box(draw, region, format["extra_text_color"])
 
     def _save_output_files(
         self, background, output_image_filepath_noext, output_video_filepath, duration, resolution
-    ):  # Note: output_png/jpg removed, handled by instance var
+    ):
         """Save the output image files and create video if needed."""
         # Save static background image
         if self.output_png:
@@ -375,6 +381,8 @@ class VideoGenerator:
 
     def _transform_text(self, text, transform_type):
         """Helper method to transform text based on specified type."""
+        if text is None:
+            return None # Return None if input is None
         if transform_type == "uppercase":
             return text.upper()
         elif transform_type == "lowercase":
@@ -395,11 +403,8 @@ class VideoGenerator:
             format=format,
             output_image_filepath_noext=output_image_filepath_noext,
             output_video_filepath=output_video_filepath,
-            existing_image=self.existing_title_image,
-            duration=self.intro_video_duration,
-            render_bounding_boxes=self.render_bounding_boxes,
-            output_png=self.output_png,
-            output_jpg=self.output_jpg,
+            existing_image=existing_title_image,
+            duration=intro_video_duration,
         )
 
     def create_end_video(
@@ -414,9 +419,6 @@ class VideoGenerator:
             format=format,
             output_image_filepath_noext=output_image_filepath_noext,
             output_video_filepath=output_video_filepath,
-            existing_image=self.existing_end_image,
-            duration=self.end_video_duration,
-            render_bounding_boxes=self.render_bounding_boxes,
-            output_png=self.output_png,
-            output_jpg=self.output_jpg,
+            existing_image=existing_end_image,
+            duration=end_video_duration,
         )

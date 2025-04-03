@@ -8,6 +8,7 @@ import datetime as dt # Use alias to avoid conflict
 import fcntl
 from pydub import AudioSegment
 from karaoke_prep.karaoke_prep import KaraokePrep
+from audio_separator.separator import Separator # Keep for patching target
 
 class TestAudio:
     def test_separate_audio(self, basic_karaoke_prep, temp_dir):
@@ -37,7 +38,7 @@ class TestAudio:
              patch('os.rename') as mock_rename:
             
             # Call the method
-            basic_karaoke_prep.separate_audio(
+            basic_karaoke_prep.audio_processor.separate_audio(
                 audio_file=audio_file,
                 model_name=model_name,
                 artist_title=artist_title,
@@ -66,7 +67,7 @@ class TestAudio:
     def test_separate_audio_invalid_audio_file(self, basic_karaoke_prep):
         """Test separating audio with an invalid audio file."""
         with pytest.raises(Exception, match="Error: Invalid audio source provided."):
-            basic_karaoke_prep.separate_audio(
+            basic_karaoke_prep.audio_processor.separate_audio(
                 audio_file=None,
                 model_name="test_model.ckpt",
                 artist_title="Test Artist - Test Title",
@@ -139,8 +140,8 @@ class TestAudio:
              patch('os.remove'), \
              patch('os.system'), \
              patch('builtins.open', mock_open(read_data='{"pid": 123, "start_time": "2023-01-01T11:00:00", "track": "Old Track"}')) as mock_file_open, \
-             patch.object(basic_karaoke_prep, '_normalize_audio') as mock_normalize_audio, \
-             patch.object(basic_karaoke_prep, '_file_exists') as mock_file_exists:
+             patch.object(basic_karaoke_prep.audio_processor, '_normalize_audio_files') as mock_normalize_files, \
+             patch.object(basic_karaoke_prep.file_handler, '_file_exists') as mock_file_exists:
 
             # Configure _file_exists side effect: False initially, then True for normalization checks
             # Needs to return False for:
@@ -165,7 +166,7 @@ class TestAudio:
             mock_datetime.fromisoformat.side_effect = lambda *args, **kwargs: dt.datetime.fromisoformat(*args, **kwargs)
             
             # Call the method
-            result = basic_karaoke_prep.process_audio_separation(
+            result = basic_karaoke_prep.audio_processor.process_audio_separation(
                 audio_file=audio_file,
                 artist_title=artist_title,
                 track_output_dir=track_output_dir
@@ -183,9 +184,8 @@ class TestAudio:
             # Verify Separator.separate was called for each separation
             assert mock_separator.separate.call_count == 3
             
-            # Verify _normalize_audio was called for the expected files
-            # The number depends on how many combined instrumentals are generated (1 in this case) + the clean instrumental
-            assert mock_normalize_audio.call_count == 2 
+            # Verify _normalize_audio_files was called once
+            assert mock_normalize_files.call_count == 1
     
     def test_process_audio_separation_with_skip_env_var(self, basic_karaoke_prep, temp_dir):
         """Test process_audio_separation with KARAOKE_PREP_SKIP_AUDIO_SEPARATION environment variable."""
@@ -203,7 +203,7 @@ class TestAudio:
              patch('builtins.open', mock_open()) as mock_file_open:
             
             # Call the method
-            result = basic_karaoke_prep.process_audio_separation(
+            result = basic_karaoke_prep.audio_processor.process_audio_separation(
                 audio_file=audio_file,
                 artist_title=artist_title,
                 track_output_dir=track_output_dir
@@ -236,7 +236,7 @@ class TestAudio:
         # Mock dependencies
         with patch('pydub.AudioSegment.from_file', return_value=mock_audio):
             # Call the method
-            basic_karaoke_prep._normalize_audio(input_path, output_path)
+            basic_karaoke_prep.audio_processor._normalize_audio(input_path, output_path)
             
             # Verify AudioSegment.from_file was called with correct arguments
             AudioSegment.from_file.assert_called_once_with(input_path, format="flac")
@@ -266,7 +266,7 @@ class TestAudio:
         # Mock dependencies
         with patch('pydub.AudioSegment.from_file', return_value=mock_audio):
             # Call the method
-            basic_karaoke_prep._normalize_audio(input_path, output_path)
+            basic_karaoke_prep.audio_processor._normalize_audio(input_path, output_path)
             
             # Verify AudioSegment.from_file was called with correct arguments
             AudioSegment.from_file.assert_called_once_with(input_path, format="flac")
@@ -281,8 +281,8 @@ class TestAudio:
         """Test the _file_exists helper method."""
         # Test with existing file
         with patch('os.path.isfile', return_value=True):
-            assert basic_karaoke_prep._file_exists("existing_file.txt") is True
+            assert basic_karaoke_prep.file_handler._file_exists("existing_file.txt") is True
         
         # Test with non-existing file
         with patch('os.path.isfile', return_value=False):
-            assert basic_karaoke_prep._file_exists("non_existing_file.txt") is False
+            assert basic_karaoke_prep.file_handler._file_exists("non_existing_file.txt") is False

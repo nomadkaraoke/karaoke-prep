@@ -4,6 +4,7 @@ import logging
 import shutil
 import tempfile
 import yt_dlp.YoutubeDL as ydl
+from .utils import sanitize_filename
 
 
 # Placeholder class or functions for file handling
@@ -13,15 +14,6 @@ class FileHandler:
         self.ffmpeg_base_command = ffmpeg_base_command
         self.create_track_subfolders = create_track_subfolders
         self.dry_run = dry_run
-
-    def sanitize_filename(self, filename):
-        """Replace or remove characters that are unsafe for filenames."""
-        # Replace problematic characters with underscores
-        for char in ["\\", "/", ":", "*", "?", '"', "<", ">", "|"]:
-            filename = filename.replace(char, "_")
-        # Remove any trailing periods or spaces
-        filename = filename.rstrip(" ")
-        return filename
 
     def _file_exists(self, file_path):
         """Check if a file exists and log the result."""
@@ -108,16 +100,16 @@ class FileHandler:
 
         # If only title is provided, use it for both artist and title portions of paths
         if artist is None:
-            sanitized_title = self.sanitize_filename(title)
+            sanitized_title = sanitize_filename(title)
             artist_title = sanitized_title
         else:
-            sanitized_artist = self.sanitize_filename(artist)
-            sanitized_title = self.sanitize_filename(title)
+            sanitized_artist = sanitize_filename(artist)
+            sanitized_title = sanitize_filename(title)
             artist_title = f"{sanitized_artist} - {sanitized_title}"
 
-        track_output_dir = self.output_dir
+        track_output_dir = output_dir
         if self.create_track_subfolders:
-            track_output_dir = os.path.join(self.output_dir, f"{artist_title}")
+            track_output_dir = os.path.join(output_dir, f"{artist_title}")
 
         if not os.path.exists(track_output_dir):
             self.logger.debug(f"Output dir {track_output_dir} did not exist, creating")
@@ -140,8 +132,8 @@ class FileHandler:
         self.logger.info(f"Backing up existing outputs for {artist} - {title}")
 
         # Sanitize artist and title for filenames
-        sanitized_artist = self.sanitize_filename(artist)
-        sanitized_title = self.sanitize_filename(title)
+        sanitized_artist = sanitize_filename(artist)
+        sanitized_title = sanitize_filename(title)
         base_name = f"{sanitized_artist} - {sanitized_title}"
 
         # Find the next available version number

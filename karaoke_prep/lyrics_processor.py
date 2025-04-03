@@ -5,6 +5,7 @@ import shutil
 from lyrics_transcriber import LyricsTranscriber, OutputConfig, TranscriberConfig, LyricsConfig
 from lyrics_transcriber.core.controller import LyricsControllerResult
 from dotenv import load_dotenv
+from .utils import sanitize_filename
 
 
 # Placeholder class or functions for lyrics processing
@@ -19,15 +20,6 @@ class LyricsProcessor:
         self.skip_transcription_review = skip_transcription_review
         self.render_video = render_video
         self.subtitle_offset_ms = subtitle_offset_ms
-
-    def sanitize_filename(self, filename):
-        """Replace or remove characters that are unsafe for filenames."""
-        # Replace problematic characters with underscores
-        for char in ["\\", "/", ":", "*", "?", '"', "<", ">", "|"]:
-            filename = filename.replace(char, "_")
-        # Remove any trailing periods or spaces
-        filename = filename.rstrip(" ")
-        return filename
 
     def find_best_split_point(self, line):
         """
@@ -116,8 +108,8 @@ class LyricsProcessor:
         )
 
         # Check for existing files first using sanitized names
-        sanitized_artist = self.sanitize_filename(artist)
-        sanitized_title = self.sanitize_filename(title)
+        sanitized_artist = sanitize_filename(artist)
+        sanitized_title = sanitize_filename(title)
         parent_video_path = os.path.join(track_output_dir, f"{sanitized_artist} - {sanitized_title} (With Vocals).mkv")
         parent_lrc_path = os.path.join(track_output_dir, f"{sanitized_artist} - {sanitized_title} (Karaoke).lrc")
 

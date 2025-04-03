@@ -2,9 +2,10 @@ import os
 import pytest
 import glob
 import shutil
-from unittest.mock import MagicMock, patch, mock_open, call
+from unittest.mock import MagicMock, patch, mock_open, call, DEFAULT
 from karaoke_prep.karaoke_prep import KaraokePrep
 import yt_dlp # Keep import for patching target
+from karaoke_prep.utils import sanitize_filename # Import utility
 
 class TestFileOperations:
     def test_copy_input_media(self, basic_karaoke_prep, temp_dir):
@@ -18,7 +19,7 @@ class TestFileOperations:
         
         # Test with mocked shutil.copy2
         with patch('shutil.copy2') as mock_copy:
-            result = basic_karaoke_prep.copy_input_media(source_file, output_filename)
+            result = basic_karaoke_prep.file_handler.copy_input_media(source_file, output_filename)
             
             # Verify the correct file path was returned
             assert result == output_filename + ".mp4"
@@ -35,7 +36,7 @@ class TestFileOperations:
         
         # Test with mocked os.path.abspath to simulate same file
         with patch('os.path.abspath', side_effect=lambda x: x):
-            result = basic_karaoke_prep.copy_input_media(file_path, file_path[:-4])
+            result = basic_karaoke_prep.file_handler.copy_input_media(file_path, file_path[:-4])
             
             # Verify the correct file path was returned
             assert result == file_path
@@ -56,8 +57,8 @@ class TestFileOperations:
         # Mock glob.glob to return our "downloaded" file
         mock_glob_result = [downloaded_file]
         
-        # Patch the 'ydl' alias used in karaoke_prep.py and glob.glob
-        with patch('karaoke_prep.karaoke_prep.ydl') as mock_ydl_context, \
+        # Patch the 'ydl' class used in file_handler.py and glob.glob
+        with patch('karaoke_prep.file_handler.ydl') as mock_ydl_context, \
              patch('glob.glob', return_value=mock_glob_result):
             
             # Configure the context manager to return our mock instance
@@ -69,7 +70,7 @@ class TestFileOperations:
                 f.write("test video content")
             
             # Call the method
-            result = basic_karaoke_prep.download_video(url, output_filename)
+            result = basic_karaoke_prep.file_handler.download_video(url, output_filename)
             
             # Verify the correct file path was returned
             assert result == downloaded_file
@@ -102,14 +103,14 @@ class TestFileOperations:
         mock_ydl_instance.download = MagicMock(return_value=None)
         
         # Mock glob.glob to return empty list (no files found)
-        with patch('karaoke_prep.karaoke_prep.ydl') as mock_ydl_context, \
+        with patch('karaoke_prep.file_handler.ydl') as mock_ydl_context, \
              patch('glob.glob', return_value=[]):
             
             # Configure the context manager to return our mock instance
             mock_ydl_context.return_value.__enter__.return_value = mock_ydl_instance
             
             # Call the method
-            result = basic_karaoke_prep.download_video(url, output_filename)
+            result = basic_karaoke_prep.file_handler.download_video(url, output_filename)
             
             # Verify None was returned
             assert result is None
@@ -130,13 +131,13 @@ class TestFileOperations:
         
         # Patch os.system directly within this test
         with patch('os.system') as mock_os_system:
-            result = basic_karaoke_prep.extract_still_image_from_video(input_filename, output_filename)
+            result = basic_karaoke_prep.file_handler.extract_still_image_from_video(input_filename, output_filename)
             
             # Verify the correct file path was returned
             assert result == output_filename + ".png"
             
             # Verify os.system was called with correct arguments
-            expected_command = f'{basic_karaoke_prep.ffmpeg_base_command} -i "{input_filename}" -ss 00:00:30 -vframes 1 "{output_filename}.png"'
+            expected_command = f'{basic_karaoke_prep.file_handler.ffmpeg_base_command} -i "{input_filename}" -ss 00:00:30 -vframes 1 "{output_filename}.png"'
             mock_os_system.assert_called_once_with(expected_command)
     
     def test_convert_to_wav_success(self, basic_karaoke_prep, temp_dir):
@@ -158,7 +159,7 @@ class TestFileOperations:
             
             # Patch os.system directly
             with patch('os.system') as mock_os_system:
-                result = basic_karaoke_prep.convert_to_wav(input_filename, output_filename)
+                result = basic_karaoke_prep.file_handler.convert_to_wav(input_filename, output_filename)
                 
                 # Verify the correct file path was returned
                 assert result == output_filename + ".wav"
@@ -174,7 +175,7 @@ class TestFileOperations:
         # Mock os.path.isfile to return False
         with patch('os.path.isfile', return_value=False):
             with pytest.raises(Exception, match=f"Input audio file not found: {input_filename}"):
-                basic_karaoke_prep.convert_to_wav(input_filename, output_filename)
+                basic_karaoke_prep.file_handler.convert_to_wav(input_filename, output_filename)
     
     def test_convert_to_wav_empty_file(self, basic_karaoke_prep):
         """Test converting input audio when the file is empty."""
@@ -185,7 +186,7 @@ class TestFileOperations:
         with patch('os.path.isfile', return_value=True), \
              patch('os.path.getsize', return_value=0):
             with pytest.raises(Exception, match=f"Input audio file is empty: {input_filename}"):
-                basic_karaoke_prep.convert_to_wav(input_filename, output_filename)
+                basic_karaoke_prep.file_handler.convert_to_wav(input_filename, output_filename)
     
     def test_convert_to_wav_no_audio_stream(self, basic_karaoke_prep):
         """Test converting input audio when no audio stream is found."""
@@ -201,29 +202,32 @@ class TestFileOperations:
             mock_popen.return_value.read.return_value = "codec_type=video"
             
             with pytest.raises(Exception, match=f"No valid audio stream found in file: {input_filename}"):
-                basic_karaoke_prep.convert_to_wav(input_filename, output_filename)
+                basic_karaoke_prep.file_handler.convert_to_wav(input_filename, output_filename)
     
     def test_sanitize_filename(self, basic_karaoke_prep):
         """Test sanitizing filenames."""
         # Test with various problematic characters
-        assert basic_karaoke_prep.sanitize_filename('file/with\\chars:*?"<>|') == 'file_with_chars_______'
-        
-        # Test with trailing spaces
-        assert basic_karaoke_prep.sanitize_filename('file with spaces   ') == 'file with spaces'
+        assert sanitize_filename('file/with\\chars:*?"<>|') == 'file_with_chars_'
+        assert sanitize_filename("  leading spaces") == "leading spaces"
+        assert sanitize_filename("trailing spaces  ") == "trailing spaces"
+        assert sanitize_filename("trailing dots...") == "trailing dots"
+        assert sanitize_filename("multiple   spaces") == "multiple spaces"
+        assert sanitize_filename("valid_filename_123") == "valid_filename_123"
+        assert sanitize_filename("file_with__multiple___underscores") == "file_with_multiple_underscores"
     
     def test_setup_output_paths(self, basic_karaoke_prep, temp_dir):
         """Test setting up output paths."""
         # Test with both artist and title
         with patch('os.makedirs') as mock_makedirs:
-            basic_karaoke_prep.output_dir = temp_dir
-            track_output_dir, artist_title = basic_karaoke_prep.setup_output_paths("Test Artist", "Test Title")
+            basic_karaoke_prep.file_handler.output_dir = temp_dir
+            track_output_dir, artist_title = basic_karaoke_prep.file_handler.setup_output_paths(temp_dir, "Test Artist", "Test Title")
             
             assert artist_title == "Test Artist - Test Title"
             assert track_output_dir == temp_dir
             
             # Test with create_track_subfolders=True
-            basic_karaoke_prep.create_track_subfolders = True
-            track_output_dir, artist_title = basic_karaoke_prep.setup_output_paths("Test Artist", "Test Title")
+            basic_karaoke_prep.file_handler.create_track_subfolders = True
+            track_output_dir, artist_title = basic_karaoke_prep.file_handler.setup_output_paths(temp_dir, "Test Artist", "Test Title")
             
             expected_dir = os.path.join(temp_dir, "Test Artist - Test Title")
             assert track_output_dir == expected_dir
@@ -232,8 +236,8 @@ class TestFileOperations:
     def test_setup_output_paths_title_only(self, basic_karaoke_prep, temp_dir):
         """Test setting up output paths with only title."""
         with patch('os.makedirs'):
-            basic_karaoke_prep.output_dir = temp_dir
-            track_output_dir, artist_title = basic_karaoke_prep.setup_output_paths(None, "Test Title")
+            basic_karaoke_prep.file_handler.output_dir = temp_dir
+            track_output_dir, artist_title = basic_karaoke_prep.file_handler.setup_output_paths(temp_dir, None, "Test Title")
             
             assert artist_title == "Test Title"
             assert track_output_dir == temp_dir
@@ -241,4 +245,4 @@ class TestFileOperations:
     def test_setup_output_paths_no_inputs(self, basic_karaoke_prep):
         """Test setting up output paths with no inputs."""
         with pytest.raises(ValueError, match="Error: At least title or artist must be provided"):
-            basic_karaoke_prep.setup_output_paths(None, None)
+            basic_karaoke_prep.file_handler.setup_output_paths(basic_karaoke_prep.output_dir, None, None)

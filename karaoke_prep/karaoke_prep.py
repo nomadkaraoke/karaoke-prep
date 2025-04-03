@@ -13,11 +13,6 @@ import errno
 import psutil
 from datetime import datetime
 import importlib.resources as pkg_resources
-import yt_dlp.YoutubeDL as ydl
-from PIL import Image, ImageDraw, ImageFont
-from lyrics_transcriber import LyricsTranscriber, OutputConfig, TranscriberConfig, LyricsConfig
-from lyrics_transcriber.core.controller import LyricsControllerResult
-from pydub import AudioSegment
 import json
 from dotenv import load_dotenv
 from .config import (
@@ -29,6 +24,10 @@ from .config import (
     setup_ffmpeg_command,
 )
 from .metadata import extract_info_for_online_media, parse_track_metadata
+from .file_handler import FileHandler
+from .audio_processor import AudioProcessor
+from .lyrics_processor import LyricsProcessor
+from .video_generator import VideoGenerator
 
 
 class KaraokePrep:
@@ -99,34 +98,31 @@ class KaraokePrep:
         self.title = title
         self.filename_pattern = filename_pattern
 
-        # Audio Processing
-        self.clean_instrumental_model = clean_instrumental_model
-        self.backing_vocals_models = backing_vocals_models
-        self.other_stems_models = other_stems_models
-        self.model_file_dir = model_file_dir
-        self.existing_instrumental = existing_instrumental
-        self.skip_separation = skip_separation
-
-        # Input/Output
+        # Input/Output - Keep these as they might be needed for logic outside handlers or passed to multiple handlers
         self.output_dir = output_dir
         self.lossless_output_format = lossless_output_format.lower()
         self.create_track_subfolders = create_track_subfolders
         self.output_png = output_png
         self.output_jpg = output_jpg
 
-        # Lyrics
-        self.lyrics = None
+        # Lyrics Config - Keep needed ones
         self.lyrics_artist = lyrics_artist
         self.lyrics_title = lyrics_title
-        self.lyrics_file = lyrics_file
-        self.skip_lyrics = skip_lyrics
-        self.skip_transcription = skip_transcription
-        self.skip_transcription_review = skip_transcription_review
-        self.render_video = render_video
-        # Style
-        self.subtitle_offset_ms = subtitle_offset_ms
-        self.render_bounding_boxes = render_bounding_boxes
-        self.style_params_json = style_params_json
+        self.lyrics_file = lyrics_file # Passed to LyricsProcessor
+        self.skip_lyrics = skip_lyrics # Used in prep_single_track logic
+        self.skip_transcription = skip_transcription # Passed to LyricsProcessor
+        self.skip_transcription_review = skip_transcription_review # Passed to LyricsProcessor
+        self.render_video = render_video # Passed to LyricsProcessor
+        self.subtitle_offset_ms = subtitle_offset_ms # Passed to LyricsProcessor
+
+        # Audio Config - Keep needed ones
+        self.existing_instrumental = existing_instrumental # Used in prep_single_track logic
+        self.skip_separation = skip_separation # Used in prep_single_track logic
+        self.model_file_dir = model_file_dir # Passed to AudioProcessor
+
+        # Style Config - Keep needed ones
+        self.render_bounding_boxes = render_bounding_boxes # Passed to VideoGenerator
+        self.style_params_json = style_params_json # Passed to LyricsProcessor
 
         # Load style parameters using the config module
         self.style_params = load_style_params(self.style_params_json, self.logger)
@@ -142,6 +138,44 @@ class KaraokePrep:
         # Set up ffmpeg command using the config module
         self.ffmpeg_base_command = setup_ffmpeg_command(self.log_level)
 
+        # Instantiate Handlers
+        self.file_handler = FileHandler(
+            logger=self.logger,
+            ffmpeg_base_command=self.ffmpeg_base_command,
+            create_track_subfolders=self.create_track_subfolders,
+            dry_run=self.dry_run,
+        )
+
+        self.audio_processor = AudioProcessor(
+             logger=self.logger,
+             log_level=self.log_level,
+             log_formatter=self.log_formatter,
+             model_file_dir=self.model_file_dir,
+             lossless_output_format=self.lossless_output_format,
+             clean_instrumental_model=clean_instrumental_model, # Passed directly from args
+             backing_vocals_models=backing_vocals_models, # Passed directly from args
+             other_stems_models=other_stems_models, # Passed directly from args
+             ffmpeg_base_command=self.ffmpeg_base_command,
+        )
+
+        self.lyrics_processor = LyricsProcessor(
+             logger=self.logger,
+             style_params_json=self.style_params_json,
+             lyrics_file=self.lyrics_file,
+             skip_transcription=self.skip_transcription,
+             skip_transcription_review=self.skip_transcription_review,
+             render_video=self.render_video,
+             subtitle_offset_ms=self.subtitle_offset_ms,
+        )
+
+        self.video_generator = VideoGenerator(
+             logger=self.logger,
+             ffmpeg_base_command=self.ffmpeg_base_command,
+             render_bounding_boxes=self.render_bounding_boxes,
+             output_png=self.output_png,
+             output_jpg=self.output_jpg,
+        )
+
         self.logger.debug(f"Initialized title_format with extra_text: {self.title_format['extra_text']}")
         self.logger.debug(f"Initialized title_format with extra_text_region: {self.title_format['extra_text_region']}")
 
@@ -153,6 +187,7 @@ class KaraokePrep:
 
         self.logger.debug(f"KaraokePrep lossless_output_format: {self.lossless_output_format}")
 
+        # Use FileHandler method to check/create output dir
         if not os.path.exists(self.output_dir):
             self.logger.debug(f"Overall output dir {self.output_dir} did not exist, creating")
             os.makedirs(self.output_dir)
@@ -183,10 +218,11 @@ class KaraokePrep:
         try:
             self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
 
+            # Determine extractor early based on input type
             if self.input_media is not None and os.path.isfile(self.input_media):
                 self.extractor = "Original"
-            else:
-                # Use the imported parse_track_metadata function
+            elif self.input_media is not None: # Assume URL if not a local file
+                 # Use the imported parse_track_metadata function
                 if self.extracted_info is not None:
                     metadata_result = parse_track_metadata(
                         self.extracted_info, self.artist, self.title, self.persistent_artist, self.logger
@@ -194,14 +230,43 @@ class KaraokePrep:
                     self.url = metadata_result["url"]
                     self.extractor = metadata_result["extractor"]
                     self.media_id = metadata_result["media_id"]
+                    # Update artist/title if metadata parsing changed them
                     self.artist = metadata_result["artist"]
                     self.title = metadata_result["title"]
+                else:
+                    # Attempt to parse metadata even if extracted_info wasn't pre-populated
+                    # This handles direct URL input without prior extract_info call
+                    try:
+                        extracted = extract_info_for_online_media(self.input_media, self.artist, self.title, self.logger)
+                        if extracted:
+                             metadata_result = parse_track_metadata(
+                                 extracted, self.artist, self.title, self.persistent_artist, self.logger
+                             )
+                             self.url = metadata_result["url"]
+                             self.extractor = metadata_result["extractor"]
+                             self.media_id = metadata_result["media_id"]
+                             self.artist = metadata_result["artist"]
+                             self.title = metadata_result["title"]
+                        else:
+                             self.logger.warning("Could not extract info for URL, proceeding with provided details.")
+                             self.url = self.input_media # Use original input as URL
+                             self.extractor = "Unknown" # Default if extraction fails
+                    except Exception as meta_exc:
+                         self.logger.warning(f"Error during metadata extraction/parsing for URL: {meta_exc}")
+                         self.url = self.input_media
+                         self.extractor = "Unknown"
+            else: # Input media is None
+                 self.logger.error("No input media provided.")
+                 return None # Or raise error
+
+            # Now self.extractor should be set correctly for path generation etc.
 
             self.logger.info(f"Preparing output path for track: {self.title} by {self.artist}")
             if self.dry_run:
                 return None
 
-            track_output_dir, artist_title = self.setup_output_paths(self.artist, self.title)
+            # Delegate to FileHandler
+            track_output_dir, artist_title = self.file_handler.setup_output_paths(self.output_dir, self.artist, self.title)
 
             processed_track = {
                 "track_output_dir": track_output_dir,
@@ -229,10 +294,12 @@ class KaraokePrep:
                     output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor})")
 
                     self.logger.info(f"Copying input media from {self.input_media} to new directory...")
-                    processed_track["input_media"] = self.copy_input_media(self.input_media, output_filename_no_extension)
+                    # Delegate to FileHandler
+                    processed_track["input_media"] = self.file_handler.copy_input_media(self.input_media, output_filename_no_extension)
 
                     self.logger.info("Converting input media to WAV for audio processing...")
-                    processed_track["input_audio_wav"] = self.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
+                    # Delegate to FileHandler
+                    processed_track["input_audio_wav"] = self.file_handler.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
 
             else:
                 # WebM may not always be the output format from ytdlp, but it's common and this is just a convenience cache
@@ -249,6 +316,8 @@ class KaraokePrep:
                     processed_track["input_media"] = input_webm_glob[0]
                     processed_track["input_still_image"] = input_png_glob[0]
                     processed_track["input_audio_wav"] = input_wav_glob[0]
+                    # Set extractor for existing files case
+                    self.extractor = self.extractor or "Original" # Keep if already set by metadata parse
 
                     self.logger.info(f"Input media files already exist, skipping download: {processed_track['input_media']} + .wav + .png")
                 else:
@@ -256,15 +325,18 @@ class KaraokePrep:
                         output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} {self.media_id})")
 
                         self.logger.info(f"Downloading input media from {self.url}...")
-                        processed_track["input_media"] = self.download_video(self.url, output_filename_no_extension)
+                        # Delegate to FileHandler
+                        processed_track["input_media"] = self.file_handler.download_video(self.url, output_filename_no_extension)
 
                         self.logger.info("Extracting still image from downloaded media (if input is video)...")
-                        processed_track["input_still_image"] = self.extract_still_image_from_video(
+                        # Delegate to FileHandler
+                        processed_track["input_still_image"] = self.file_handler.extract_still_image_from_video(
                             processed_track["input_media"], output_filename_no_extension
                         )
 
                         self.logger.info("Converting downloaded video to WAV for audio processing...")
-                        processed_track["input_audio_wav"] = self.convert_to_wav(
+                        # Delegate to FileHandler
+                        processed_track["input_audio_wav"] = self.file_handler.convert_to_wav(
                             processed_track["input_media"], output_filename_no_extension
                         )
                     else:
@@ -289,7 +361,8 @@ class KaraokePrep:
                     # Run transcription in a separate thread
                     transcription_future = asyncio.create_task(
                         asyncio.to_thread(
-                            self.transcribe_lyrics, processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir
+                            # Delegate to LyricsProcessor
+                            self.lyrics_processor.transcribe_lyrics, processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir
                         )
                     )
                     self.logger.info(f"Transcription future created, type: {type(transcription_future)}")
@@ -299,7 +372,8 @@ class KaraokePrep:
                     # Run separation in a separate thread
                     separation_future = asyncio.create_task(
                         asyncio.to_thread(
-                            self.process_audio_separation,
+                            # Delegate to AudioProcessor
+                            self.audio_processor.process_audio_separation,
                             audio_file=processed_track["input_audio_wav"],
                             artist_title=artist_title,
                             track_output_dir=track_output_dir,
@@ -335,31 +409,48 @@ class KaraokePrep:
                     self.logger.info("Processing transcription results...")
                     try:
                         transcriber_outputs = results[0]
+                        # Check if the result is an exception or the actual output
                         if isinstance(transcriber_outputs, Exception):
                             self.logger.error(f"Error during lyrics transcription: {transcriber_outputs}")
+                            # Optionally log traceback: self.logger.exception("Transcription error:")
                             raise transcriber_outputs  # Re-raise the exception
-                        elif transcriber_outputs:
-                            self.logger.info("Successfully received transcription outputs")
-                            self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
-                            processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
+                        elif transcriber_outputs is not None and not isinstance(transcriber_outputs, asyncio.futures.Future): # Ensure it's not the placeholder future
+                            self.logger.info(f"Successfully received transcription outputs: {type(transcriber_outputs)}")
+                            # Ensure transcriber_outputs is a dictionary before calling .get()
+                            if isinstance(transcriber_outputs, dict):
+                                self.lyrics = transcriber_outputs.get("corrected_lyrics_text")
+                                processed_track["lyrics"] = transcriber_outputs.get("corrected_lyrics_text_filepath")
+                            else:
+                                self.logger.warning(f"Unexpected type for transcriber_outputs: {type(transcriber_outputs)}, value: {transcriber_outputs}")
+                        else:
+                             self.logger.info("Transcription task did not return results (possibly skipped or placeholder).")
                     except Exception as e:
                         self.logger.error(f"Error processing transcription results: {e}")
                         self.logger.exception("Full traceback:")
-                        raise  # Re-raise the exception
+                        raise # Re-raise the exception
 
                 # Handle separation results
                 if separation_future:
                     self.logger.info("Processing separation results...")
                     try:
                         separation_results = results[1]
+                         # Check if the result is an exception or the actual output
                         if isinstance(separation_results, Exception):
                             self.logger.error(f"Error during audio separation: {separation_results}")
+                             # Optionally log traceback: self.logger.exception("Separation error:")
+                            # Decide if you want to raise here or just log
+                        elif separation_results is not None and not isinstance(separation_results, asyncio.futures.Future): # Ensure it's not the placeholder future
+                            self.logger.info(f"Successfully received separation results: {type(separation_results)}")
+                            if isinstance(separation_results, dict):
+                                processed_track["separated_audio"] = separation_results
+                            else:
+                                 self.logger.warning(f"Unexpected type for separation_results: {type(separation_results)}, value: {separation_results}")
                         else:
-                            self.logger.info("Successfully received separation results")
-                            processed_track["separated_audio"] = separation_results
+                            self.logger.info("Separation task did not return results (possibly skipped or placeholder).")
                     except Exception as e:
                         self.logger.error(f"Error processing separation results: {e}")
                         self.logger.exception("Full traceback:")
+                        # Decide if you want to raise here or just log
 
                 self.logger.info("=== Parallel Processing Complete ===")
 
@@ -368,10 +459,18 @@ class KaraokePrep:
             processed_track["title_image_jpg"] = f"{output_image_filepath_noext}.jpg"
             processed_track["title_video"] = os.path.join(track_output_dir, f"{artist_title} (Title).mov")
 
-            if not self._file_exists(processed_track["title_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
+            # Use FileHandler._file_exists
+            if not self.file_handler._file_exists(processed_track["title_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
                 self.logger.info(f"Creating title video...")
-                self.create_title_video(
-                    self.artist, self.title, self.title_format, output_image_filepath_noext, processed_track["title_video"]
+                # Delegate to VideoGenerator
+                self.video_generator.create_title_video(
+                    artist=self.artist,
+                    title=self.title,
+                    format=self.title_format,
+                    output_image_filepath_noext=output_image_filepath_noext,
+                    output_video_filepath=processed_track["title_video"],
+                    existing_title_image=self.existing_title_image,
+                    intro_video_duration=self.intro_video_duration,
                 )
 
             output_image_filepath_noext = os.path.join(track_output_dir, f"{artist_title} (End)")
@@ -379,9 +478,19 @@ class KaraokePrep:
             processed_track["end_image_jpg"] = f"{output_image_filepath_noext}.jpg"
             processed_track["end_video"] = os.path.join(track_output_dir, f"{artist_title} (End).mov")
 
-            if not self._file_exists(processed_track["end_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
+            # Use FileHandler._file_exists
+            if not self.file_handler._file_exists(processed_track["end_video"]) and not os.environ.get("KARAOKE_PREP_SKIP_TITLE_END_SCREENS"):
                 self.logger.info(f"Creating end screen video...")
-                self.create_end_video(self.artist, self.title, self.end_format, output_image_filepath_noext, processed_track["end_video"])
+                 # Delegate to VideoGenerator
+                self.video_generator.create_end_video(
+                    artist=self.artist,
+                    title=self.title,
+                    format=self.end_format,
+                    output_image_filepath_noext=output_image_filepath_noext,
+                    output_video_filepath=processed_track["end_video"],
+                    existing_end_image=self.existing_end_image,
+                    end_video_duration=self.end_video_duration,
+                )
 
             if self.skip_separation:
                 self.logger.info("Skipping audio separation as requested.")
@@ -397,7 +506,8 @@ class KaraokePrep:
 
                 instrumental_path = os.path.join(track_output_dir, f"{artist_title} (Instrumental Custom){existing_instrumental_extension}")
 
-                if not self._file_exists(instrumental_path):
+                # Use FileHandler._file_exists
+                if not self.file_handler._file_exists(instrumental_path):
                     shutil.copy2(self.existing_instrumental, instrumental_path)
 
                 processed_track["separated_audio"]["Custom"] = {
@@ -405,11 +515,15 @@ class KaraokePrep:
                     "vocals": None,
                 }
             else:
-                self.logger.info(f"Separating audio for track: {self.title} by {self.artist}")
-                separation_results = self.process_audio_separation(
-                    audio_file=processed_track["input_audio_wav"], artist_title=artist_title, track_output_dir=track_output_dir
-                )
-                processed_track["separated_audio"] = separation_results
+                # Only run separation if not skipped
+                if not self.skip_separation:
+                    self.logger.info(f"Separating audio for track: {self.title} by {self.artist}")
+                    # Delegate to AudioProcessor (called directly, not in thread here)
+                    separation_results = self.audio_processor.process_audio_separation(
+                        audio_file=processed_track["input_audio_wav"], artist_title=artist_title, track_output_dir=track_output_dir
+                    )
+                    processed_track["separated_audio"] = separation_results
+                # We don't need an else here, if skip_separation is true, separated_audio remains the default empty dict
 
             self.logger.info("Script finished, audio downloaded, lyrics fetched and audio separated!")
 

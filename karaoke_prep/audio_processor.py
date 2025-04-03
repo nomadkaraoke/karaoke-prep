@@ -394,10 +394,3 @@ class AudioProcessor:
 
         self.logger.info(f"Normalized audio saved, replacing: {output_path}")
         self.logger.debug(f"Original peak: {peak_amplitude} dB, Applied gain: {gain_db} dB")
-
-    def _file_exists(self, file_path):
-        """Check if a file exists and log the result."""
-        exists = os.path.isfile(file_path)
-        if exists:
-            self.logger.info(f"File already exists, skipping creation: {file_path}")
-        return exists

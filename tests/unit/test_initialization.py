@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import json
 import logging
 from karaoke_prep.karaoke_prep import KaraokePrep
+import tempfile
 
 class TestInitialization:
     def test_init_with_defaults(self, mock_logger):
@@ -130,14 +131,18 @@ class TestInitialization:
     
     def test_parse_region(self):
         """Test the parse_region static method."""
+        # Instantiate a basic KaraokePrep to access video_generator
+        kp = KaraokePrep(logger=MagicMock())
         # Test valid region string
-        region = KaraokePrep.parse_region("10, 20, 300, 400")
+        # Call on video_generator
+        region = kp.video_generator.parse_region("10,20,300,400")
         assert region == (10, 20, 300, 400)
-        
+
         # Test None input
-        region = KaraokePrep.parse_region(None)
-        assert region is None
-        
-        # Test invalid region string
-        with pytest.raises(ValueError):
-            KaraokePrep.parse_region("10, 20, invalid, 400")
+        assert kp.video_generator.parse_region(None) is None
+
+        # Test invalid format
+        with pytest.raises(ValueError, match="Invalid region format: 10,20,300. Expected 4 elements: 'x,y,width,height'"):
+            kp.video_generator.parse_region("10,20,300")
+        with pytest.raises(ValueError, match="Invalid region format: 10,twenty,300,400. Could not convert to integers. Expected format: 'x,y,width,height'"):
+            kp.video_generator.parse_region("10,twenty,300,400")

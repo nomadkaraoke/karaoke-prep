@@ -37,7 +37,7 @@ class TestVideo:
             mock_draw.return_value = mock_draw_obj
             
             # Call the method
-            basic_karaoke_prep.create_video(
+            basic_karaoke_prep.video_generator.create_video(
                 extra_text="Extra Text",
                 title_text="Test Title",
                 artist_text="Test Artist",
@@ -87,7 +87,7 @@ class TestVideo:
             mock_image.mode = "RGBA"
             
             # Call the method
-            basic_karaoke_prep.create_video(
+            basic_karaoke_prep.video_generator.create_video(
                 extra_text=None,
                 title_text=None,
                 artist_text=None,
@@ -143,7 +143,7 @@ class TestVideo:
             mock_draw.return_value = mock_draw_obj
             
             # Call the method
-            basic_karaoke_prep.create_video(
+            basic_karaoke_prep.video_generator.create_video(
                 extra_text="Extra Text",
                 title_text="Test Title",
                 artist_text="Test Artist",
@@ -165,6 +165,9 @@ class TestVideo:
     def test_create_video_with_no_output_images(self, basic_karaoke_prep, temp_dir):
         """Test creating a video without saving output images."""
         # Setup
+        # Re-init KaraokePrep with specific output flags for this test
+        kp_no_images = KaraokePrep(logger=basic_karaoke_prep.logger, output_png=False, output_jpg=False)
+
         output_image_filepath_noext = os.path.join(temp_dir, "output")
         output_video_filepath = os.path.join(temp_dir, "output.mov")
         
@@ -190,16 +193,14 @@ class TestVideo:
             mock_draw_obj.textbbox.return_value = (0, 0, 100, 50)
             mock_draw.return_value = mock_draw_obj
             
-            # Call the method
-            basic_karaoke_prep.create_video(
+            # Call the method on the specifically configured instance
+            kp_no_images.video_generator.create_video(
                 extra_text="Extra Text",
                 title_text="Test Title",
                 artist_text="Test Artist",
                 format=basic_karaoke_prep.title_format,
                 output_image_filepath_noext=output_image_filepath_noext,
                 output_video_filepath=output_video_filepath,
-                output_png=False,
-                output_jpg=False,
                 duration=5
             )
             
@@ -238,7 +239,7 @@ class TestVideo:
             mock_draw.return_value = mock_draw_obj
             
             # Call the method
-            basic_karaoke_prep.create_video(
+            basic_karaoke_prep.video_generator.create_video(
                 extra_text="Extra Text",
                 title_text="Test Title",
                 artist_text="Test Artist",
@@ -261,17 +262,19 @@ class TestVideo:
         output_video_filepath = os.path.join(temp_dir, "output.mov")
         
         # Mock dependencies
-        with patch.object(basic_karaoke_prep, 'create_video') as mock_create_video:
+        with patch.object(basic_karaoke_prep.video_generator, 'create_video') as mock_create_video:
             # Call the method
-            basic_karaoke_prep.create_title_video(
+            basic_karaoke_prep.video_generator.create_title_video(
                 artist="Test Artist",
                 title="Test Title",
                 format=basic_karaoke_prep.title_format,
                 output_image_filepath_noext=output_image_filepath_noext,
-                output_video_filepath=output_video_filepath
+                output_video_filepath=output_video_filepath,
+                existing_title_image=basic_karaoke_prep.existing_title_image,
+                intro_video_duration=basic_karaoke_prep.intro_video_duration
             )
             
-            # Verify create_video was called with correct arguments
+            # Verify create_video was called with transformed text and correct duration
             mock_create_video.assert_called_once_with(
                 title_text="Test Title",
                 artist_text="Test Artist",
@@ -281,9 +284,6 @@ class TestVideo:
                 output_video_filepath=output_video_filepath,
                 existing_image=basic_karaoke_prep.existing_title_image,
                 duration=basic_karaoke_prep.intro_video_duration,
-                render_bounding_boxes=basic_karaoke_prep.render_bounding_boxes,
-                output_png=basic_karaoke_prep.output_png,
-                output_jpg=basic_karaoke_prep.output_jpg
             )
     
     def test_create_end_video(self, basic_karaoke_prep, temp_dir):
@@ -293,17 +293,19 @@ class TestVideo:
         output_video_filepath = os.path.join(temp_dir, "output.mov")
         
         # Mock dependencies
-        with patch.object(basic_karaoke_prep, 'create_video') as mock_create_video:
+        with patch.object(basic_karaoke_prep.video_generator, 'create_video') as mock_create_video:
             # Call the method
-            basic_karaoke_prep.create_end_video(
+            basic_karaoke_prep.video_generator.create_end_video(
                 artist="Test Artist",
                 title="Test Title",
                 format=basic_karaoke_prep.end_format,
                 output_image_filepath_noext=output_image_filepath_noext,
-                output_video_filepath=output_video_filepath
+                output_video_filepath=output_video_filepath,
+                existing_end_image=basic_karaoke_prep.existing_end_image,
+                end_video_duration=basic_karaoke_prep.end_video_duration
             )
             
-            # Verify create_video was called with correct arguments
+            # Verify create_video was called with transformed text and correct duration
             mock_create_video.assert_called_once_with(
                 title_text="Test Title",
                 artist_text="Test Artist",
@@ -313,35 +315,35 @@ class TestVideo:
                 output_video_filepath=output_video_filepath,
                 existing_image=basic_karaoke_prep.existing_end_image,
                 duration=basic_karaoke_prep.end_video_duration,
-                render_bounding_boxes=basic_karaoke_prep.render_bounding_boxes,
-                output_png=basic_karaoke_prep.output_png,
-                output_jpg=basic_karaoke_prep.output_jpg
             )
     
     def test_hex_to_rgb(self, basic_karaoke_prep):
         """Test converting hex color to RGB tuple."""
         # Test with hash prefix
-        assert basic_karaoke_prep.hex_to_rgb("#FF0000") == (255, 0, 0)
+        assert basic_karaoke_prep.video_generator.hex_to_rgb("#FF0000") == (255, 0, 0)
         
         # Test without hash prefix
-        assert basic_karaoke_prep.hex_to_rgb("00FF00") == (0, 255, 0)
+        assert basic_karaoke_prep.video_generator.hex_to_rgb("00FF00") == (0, 255, 0)
         
-        # Test with lowercase
-        assert basic_karaoke_prep.hex_to_rgb("#0000ff") == (0, 0, 255)
+        # Test mixed case
+        assert basic_karaoke_prep.video_generator.hex_to_rgb("0000Ff") == (0, 0, 255)
     
     def test_transform_text(self, basic_karaoke_prep):
         """Test transforming text based on specified type."""
         # Test uppercase
-        assert basic_karaoke_prep._transform_text("test", "uppercase") == "TEST"
+        assert basic_karaoke_prep.video_generator._transform_text("test", "uppercase") == "TEST"
         
         # Test lowercase
-        assert basic_karaoke_prep._transform_text("TEST", "lowercase") == "test"
+        assert basic_karaoke_prep.video_generator._transform_text("TEST", "lowercase") == "test"
         
-        # Test propercase
-        assert basic_karaoke_prep._transform_text("test title", "propercase") == "Test Title"
+        # Test propercase (title)
+        assert basic_karaoke_prep.video_generator._transform_text("test title", "propercase") == "Test Title"
         
-        # Test none
-        assert basic_karaoke_prep._transform_text("Test", "none") == "Test"
+        # Test None
+        assert basic_karaoke_prep.video_generator._transform_text("test", "none") == "test"
         
-        # Test invalid transform type
-        assert basic_karaoke_prep._transform_text("Test", "invalid") == "Test"
+        # Test unknown
+        assert basic_karaoke_prep.video_generator._transform_text("test", "unknown") == "test"
+        
+        # Test None input
+        assert basic_karaoke_prep.video_generator._transform_text(None, "uppercase") is None
