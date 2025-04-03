@@ -37,6 +37,7 @@ argparse = ">=1.4.0"
 psutil = "^7.0.0"
 pyperclip = "*"
 pytest-asyncio = "^0.23.5"
+ffmpeg-python = "^0.2.0"
 
 [tool.poetry.group.dev.dependencies]
 black = ">=23"
