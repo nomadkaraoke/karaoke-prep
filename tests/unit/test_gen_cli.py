@@ -125,102 +125,112 @@ def mock_sleep():
 
 @patch("karaoke_prep.utils.gen_cli.is_url", return_value=True)
 @patch("karaoke_prep.utils.gen_cli.is_file", return_value=False)
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
-async def test_arg_parsing_url_only(mock_kprep, mock_isfile, mock_isurl, mock_base_args, mock_logger, caplog):
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
+async def test_arg_parsing_url_only(mock_kprep_class, mock_isfile, mock_isurl, mock_base_args, mock_logger, caplog):
     """Test URL-only argument parsing."""
     mock_base_args.args = ["https://example.com/song.mp3"]
-    mock_kprep.return_value = mock_kprep
-    mock_kprep.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser:
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
-    mock_kprep.assert_called_once()
+    mock_kprep_class.assert_called_once()
     # Verify that input_media=URL is passed
-    assert mock_kprep.call_args.kwargs["input_media"] == "https://example.com/song.mp3"
+    assert mock_kprep_class.call_args.kwargs["input_media"] == "https://example.com/song.mp3"
+    mock_kprep_instance.process.assert_awaited_once()
     # Verify warning in log
     assert "Input media provided without Artist and Title" in caplog.text
 
 @patch("karaoke_prep.utils.gen_cli.is_url", return_value=True)
 @patch("karaoke_prep.utils.gen_cli.is_file", return_value=False)
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
-async def test_arg_parsing_url_artist_title(mock_kprep, mock_isfile, mock_isurl, mock_base_args, mock_logger):
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
+async def test_arg_parsing_url_artist_title(mock_kprep_class, mock_isfile, mock_isurl, mock_base_args, mock_logger):
     """Test parsing: URL, Artist, Title."""
     mock_base_args.args = ["http://example.com/video.mp4", "URL Artist", "URL Title"]
-    mock_kprep.return_value = mock_kprep
-    mock_kprep.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser:
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
-    mock_kprep.assert_called_once()
-    call_kwargs = mock_kprep.call_args.kwargs
+    mock_kprep_class.assert_called_once()
+    call_kwargs = mock_kprep_class.call_args.kwargs
     assert call_kwargs["input_media"] == "http://example.com/video.mp4"
     assert call_kwargs["artist"] == "URL Artist"
+    mock_kprep_instance.process.assert_awaited_once()
     assert call_kwargs["title"] == "URL Title"
 
 @patch("karaoke_prep.utils.gen_cli.is_url", return_value=False)
 @patch("karaoke_prep.utils.gen_cli.is_file", return_value=True)
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
-async def test_arg_parsing_file_artist_title(mock_kprep, mock_isfile, mock_isurl, mock_base_args, mock_logger):
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
+async def test_arg_parsing_file_artist_title(mock_kprep_class, mock_isfile, mock_isurl, mock_base_args, mock_logger):
     """Test parsing: Local File, Artist, Title."""
     mock_base_args.args = ["/path/to/song.mp3", "File Artist", "File Title"]
-    mock_kprep.return_value = mock_kprep
-    mock_kprep.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser:
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
-    mock_kprep.assert_called_once()
-    call_kwargs = mock_kprep.call_args.kwargs
+    mock_kprep_class.assert_called_once()
+    call_kwargs = mock_kprep_class.call_args.kwargs
     assert call_kwargs["input_media"] == "/path/to/song.mp3"
     assert call_kwargs["artist"] == "File Artist"
+    mock_kprep_instance.process.assert_awaited_once()
     assert call_kwargs["title"] == "File Title"
 
 @patch("karaoke_prep.utils.gen_cli.is_url", return_value=False)
 @patch("karaoke_prep.utils.gen_cli.is_file", return_value=False)
 @patch("karaoke_prep.utils.gen_cli.os.path.isdir", return_value=False)
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
-async def test_arg_parsing_artist_title_only(mock_kprep, mock_isdir, mock_isfile, mock_isurl, mock_base_args, mock_logger, caplog):
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
+async def test_arg_parsing_artist_title_only(mock_kprep_class, mock_isdir, mock_isfile, mock_isurl, mock_base_args, mock_logger, caplog):
     """Test Artist and Title only argument parsing."""
     mock_base_args.args = ["Test Artist", "Test Title"]
-    mock_kprep.return_value = mock_kprep
-    mock_kprep.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser:
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
-    mock_kprep.assert_called_once()
+    mock_kprep_class.assert_called_once()
     # Verify that artist and title are passed, but not input_media
-    assert mock_kprep.call_args.kwargs["artist"] == "Test Artist"
-    assert mock_kprep.call_args.kwargs["title"] == "Test Title"
-    assert mock_kprep.call_args.kwargs["input_media"] is None
+    assert mock_kprep_class.call_args.kwargs["artist"] == "Test Artist"
+    assert mock_kprep_class.call_args.kwargs["title"] == "Test Title"
+    assert mock_kprep_class.call_args.kwargs["input_media"] is None
+    mock_kprep_instance.process.assert_awaited_once()
     # Verify warning about YouTube search is shown
     assert "No input media provided, the top YouTube search result for" in caplog.text
 
 @patch("karaoke_prep.utils.gen_cli.is_url", return_value=False)
 @patch("karaoke_prep.utils.gen_cli.is_file", return_value=False)
 @patch("karaoke_prep.utils.gen_cli.os.path.isdir", return_value=True)
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
-async def test_arg_parsing_folder_artist_pattern(mock_kprep, mock_isdir, mock_isfile, mock_isurl, mock_base_args, mock_logger):
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
+async def test_arg_parsing_folder_artist_pattern(mock_kprep_class, mock_isdir, mock_isfile, mock_isurl, mock_base_args, mock_logger):
     """Test parsing: Folder, Artist, Pattern."""
     mock_base_args.args = ["/path/to/folder", "Folder Artist"]
     mock_base_args.filename_pattern = r"(?P<index>\d+) - (?P<title>.+)\.mp3"
-    mock_kprep.return_value = mock_kprep
-    mock_kprep.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser:
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
-    mock_kprep.assert_called_once()
-    call_kwargs = mock_kprep.call_args.kwargs
+    mock_kprep_class.assert_called_once()
+    call_kwargs = mock_kprep_class.call_args.kwargs
     assert call_kwargs["input_media"] == "/path/to/folder"
     assert call_kwargs["artist"] == "Folder Artist"
+    mock_kprep_instance.process.assert_awaited_once()
     assert call_kwargs["filename_pattern"] == r"(?P<index>\d+) - (?P<title>.+)\.mp3"
 
 @patch("karaoke_prep.utils.gen_cli.is_url", return_value=False)
@@ -242,13 +252,14 @@ async def test_arg_parsing_folder_missing_pattern(mock_exit, mock_isdir, mock_is
 
 # --- Test Workflow Modes ---
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise") # Should not be called
-async def test_workflow_prep_only(mock_kfinalise, mock_kprep, mock_base_args, mock_logger):
+async def test_workflow_prep_only(mock_kfinalise, mock_kprep_class, mock_base_args, mock_logger):
     """Test --prep-only workflow."""
     mock_base_args.args = ["Artist", "Title"]
     mock_base_args.prep_only = True
-    mock_kprep_instance = mock_kprep.return_value
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
     mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK]) # Simulate prep output
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser, \
@@ -256,7 +267,7 @@ async def test_workflow_prep_only(mock_kfinalise, mock_kprep, mock_base_args, mo
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
-    mock_kprep.assert_called_once()
+    mock_kprep_class.assert_called_once()
     mock_kprep_instance.process.assert_awaited_once()
     mock_kfinalise.assert_not_called() # Finalise should be skipped
     # We'll just verify that the app exits correctly without checking specific log messages
@@ -284,21 +295,21 @@ async def test_workflow_finalise_only(mock_open, mock_kfinalise, mock_kprep, moc
     assert mock_logger.info.called
 
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
 @patch("karaoke_prep.utils.gen_cli.os.path.basename", return_value="Edit Artist - Edit Title")
 @patch("karaoke_prep.utils.gen_cli.os.getcwd", return_value="/fake/path/Edit Artist - Edit Title")
 @patch("builtins.open", new_callable=mock_open) # Mock open for style JSON if CDG enabled
-async def test_workflow_edit_lyrics(mock_open, mock_getcwd, mock_basename, mock_kfinalise, mock_kprep, mock_base_args, mock_logger):
+async def test_workflow_edit_lyrics(mock_open, mock_getcwd, mock_basename, mock_kfinalise, mock_kprep_class, mock_base_args, mock_logger):
     """Test --edit-lyrics workflow."""
     mock_base_args.edit_lyrics = True
     mock_base_args.enable_cdg = False # Simplify for now
 
     # Set up the KaraokePrep mock properly
-    mock_kprep_instance = AsyncMock()
-    mock_kprep.return_value = mock_kprep_instance
-    mock_kprep_instance.backup_existing_outputs = MagicMock(return_value="/fake/path/Edit Artist - Edit Title/input.wav")
-    mock_kprep_instance.process.return_value = [MOCK_PREP_TRACK] # Simulate prep output
+    mock_kprep_instance = MagicMock() # Instance mock
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.backup_existing_outputs = MagicMock(return_value="/fake/path/Edit Artist - Edit Title/input.wav") # Regular method
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK]) # Async method
 
     mock_kfinalise_instance = mock_kfinalise.return_value
     mock_kfinalise_instance.process = MagicMock(return_value=MOCK_FINAL_TRACK)
@@ -308,8 +319,8 @@ async def test_workflow_edit_lyrics(mock_open, mock_getcwd, mock_basename, mock_
         await gen_cli.async_main()
 
     # Check Prep call
-    mock_kprep.assert_called_once()
-    prep_call_kwargs = mock_kprep.call_args.kwargs
+    mock_kprep_class.assert_called_once()
+    prep_call_kwargs = mock_kprep_class.call_args.kwargs
     assert prep_call_kwargs["artist"] == "Edit Artist"
     assert prep_call_kwargs["title"] == "Edit Title"
     assert prep_call_kwargs["input_media"] is None  # Set to None initially
@@ -349,13 +360,14 @@ async def test_workflow_test_email_template(mock_kfinalise, mock_base_args, mock
     assert mock_logger.info.called
 
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
-async def test_workflow_lyrics_only(mock_kfinalise, mock_kprep, mock_base_args, mock_logger):
+async def test_workflow_lyrics_only(mock_kfinalise, mock_kprep_class, mock_base_args, mock_logger):
     """Test --lyrics-only workflow sets environment variables and skips."""
     mock_base_args.args = ["Artist", "Title"]
     mock_base_args.lyrics_only = True
-    mock_kprep_instance = mock_kprep.return_value
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
     mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
     mock_kfinalise_instance = mock_kfinalise.return_value
     mock_kfinalise_instance.process = MagicMock(return_value=MOCK_FINAL_TRACK)
@@ -370,33 +382,37 @@ async def test_workflow_lyrics_only(mock_kfinalise, mock_kprep, mock_base_args, 
         await gen_cli.async_main()
 
     # Since we can't reliably test the os.environ, check that skip_separation was set
-    mock_kprep.assert_called_once()
-    prep_kwargs = mock_kprep.call_args.kwargs
+    mock_kprep_class.assert_called_once()
+    prep_kwargs = mock_kprep_class.call_args.kwargs
     assert prep_kwargs["skip_separation"] is True
+    mock_kprep_instance.process.assert_awaited_once()
     assert mock_logger.info.called
 
 
 # --- Test Finalise CDG Style Loading ---
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
 @patch("builtins.open", new_callable=mock_open, read_data=SAMPLE_STYLE_JSON)
 @patch("karaoke_prep.utils.gen_cli.os.chdir") # Mock chdir
 @patch("karaoke_prep.utils.gen_cli.os.path.exists", return_value=True) # Assume track dir exists
-async def test_finalise_cdg_style_loading(mock_exists, mock_chdir, mock_open, mock_kfinalise, mock_kprep, mock_base_args):
+async def test_finalise_cdg_style_loading(mock_exists, mock_chdir, mock_open, mock_kfinalise, mock_kprep_class, mock_base_args):
     """Test that CDG styles are loaded correctly when --enable_cdg is used."""
     mock_base_args.args = ["Artist", "Title"]
     mock_base_args.enable_cdg = True
     mock_base_args.style_params_json = "/fake/styles.json"
     expected_cdg_styles = {"some_style": "value"}
 
-    mock_kprep.return_value.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
     mock_kfinalise.return_value.process = MagicMock(return_value=MOCK_FINAL_TRACK)
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser:
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
+    mock_kprep_instance.process.assert_awaited_once()
     # Check open was called for the style file
     mock_open.assert_called_with("/fake/styles.json", "r")
 
@@ -407,50 +423,56 @@ async def test_finalise_cdg_style_loading(mock_exists, mock_chdir, mock_open, mo
     assert finalise_call_kwargs["cdg_styles"] == expected_cdg_styles
 
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
 @patch("builtins.open", side_effect=FileNotFoundError)
 @patch("karaoke_prep.utils.gen_cli.os.chdir")
 @patch("karaoke_prep.utils.gen_cli.os.path.exists", return_value=True)
 @patch("karaoke_prep.utils.gen_cli.sys.exit")
-async def test_finalise_cdg_style_file_not_found(mock_exit, mock_exists, mock_chdir, mock_open, mock_kfinalise, mock_kprep, mock_base_args, mock_logger):
+async def test_finalise_cdg_style_file_not_found(mock_exit, mock_exists, mock_chdir, mock_open, mock_kfinalise, mock_kprep_class, mock_base_args, mock_logger):
     """Test exit if CDG enabled but style file not found."""
     mock_base_args.args = ["Artist", "Title"]
     mock_base_args.enable_cdg = True
     mock_base_args.style_params_json = "/fake/styles.json"
 
-    mock_kprep.return_value.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser, \
          patch("karaoke_prep.utils.gen_cli.logging.getLogger", return_value=mock_logger):
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
+    mock_kprep_instance.process.assert_awaited_once()
     mock_open.assert_called_with("/fake/styles.json", "r")
     assert mock_logger.error.called
     mock_exit.assert_called_once_with(1)
     mock_kfinalise.assert_not_called()
 
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
 @patch("builtins.open", new_callable=mock_open, read_data="invalid json") # Invalid JSON
 @patch("karaoke_prep.utils.gen_cli.os.chdir")
 @patch("karaoke_prep.utils.gen_cli.os.path.exists", return_value=True)
 @patch("karaoke_prep.utils.gen_cli.sys.exit")
-async def test_finalise_cdg_style_invalid_json(mock_exit, mock_exists, mock_chdir, mock_open, mock_kfinalise, mock_kprep, mock_base_args, mock_logger):
+async def test_finalise_cdg_style_invalid_json(mock_exit, mock_exists, mock_chdir, mock_open, mock_kfinalise, mock_kprep_class, mock_base_args, mock_logger):
     """Test exit if CDG enabled but style file has invalid JSON."""
     mock_base_args.args = ["Artist", "Title"]
     mock_base_args.enable_cdg = True
     mock_base_args.style_params_json = "/fake/styles.json"
 
-    mock_kprep.return_value.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser, \
          patch("karaoke_prep.utils.gen_cli.logging.getLogger", return_value=mock_logger):
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
+    mock_kprep_instance.process.assert_awaited_once()
     mock_open.assert_called_with("/fake/styles.json", "r")
     # Assert sys.exit was called
     mock_exit.assert_called_once_with(1)
@@ -458,13 +480,14 @@ async def test_finalise_cdg_style_invalid_json(mock_exit, mock_exists, mock_chdi
     mock_kfinalise.assert_not_called()
 
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
-async def test_error_handling_kprep_failure(mock_kfinalise, mock_kprep, mock_base_args, mock_logger, caplog):
+async def test_error_handling_kprep_failure(mock_kfinalise, mock_kprep_class, mock_base_args, mock_logger, caplog):
     """Test error handling if KaraokePrep.process fails."""
     mock_base_args.args = ["Artist", "Title"]
-    mock_kprep.return_value = mock_kprep
-    mock_kprep.process.side_effect = Exception("KPrep Failed!")
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(side_effect=Exception("KPrep Failed!"))
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser:
         mock_parser.return_value.parse_args.return_value = mock_base_args
@@ -472,20 +495,21 @@ async def test_error_handling_kprep_failure(mock_kfinalise, mock_kprep, mock_bas
         with pytest.raises(Exception, match="KPrep Failed!"):
             await gen_cli.async_main()
 
-    mock_kprep.assert_called_once()
-    mock_kprep.process.assert_awaited_once()
+    mock_kprep_class.assert_called_once()
+    mock_kprep_instance.process.assert_awaited_once()
     mock_kfinalise.assert_not_called() # Should not reach finalise
 
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
 @patch("karaoke_prep.utils.gen_cli.os.chdir")
 @patch("karaoke_prep.utils.gen_cli.os.path.exists", return_value=True)
-async def test_error_handling_kfinalise_failure(mock_exists, mock_chdir, mock_kfinalise, mock_kprep, mock_base_args, mock_logger, caplog):
+async def test_error_handling_kfinalise_failure(mock_exists, mock_chdir, mock_kfinalise, mock_kprep_class, mock_base_args, mock_logger, caplog):
     """Test error handling if KaraokeFinalise.process fails."""
     mock_base_args.args = ["Artist", "Title"]
-    mock_kprep.return_value = mock_kprep
-    mock_kprep.process = AsyncMock(return_value=[MOCK_PREP_TRACK]) # Prep succeeds
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK]) # Prep succeeds
     mock_kfinalise_instance = mock_kfinalise.return_value
     mock_kfinalise_instance.process.side_effect = Exception("KFinalise Failed!")
 
@@ -495,8 +519,8 @@ async def test_error_handling_kfinalise_failure(mock_exists, mock_chdir, mock_kf
         with pytest.raises(Exception, match="KFinalise Failed!"):
             await gen_cli.async_main()
 
-    mock_kprep.assert_called_once()
-    mock_kprep.process.assert_awaited_once()
+    mock_kprep_class.assert_called_once()
+    mock_kprep_instance.process.assert_awaited_once()
     mock_chdir.assert_called_once_with(MOCK_PREP_TRACK["track_output_dir"]) # Should chdir before finalise
     mock_kfinalise.assert_called_once() # Finalise is called
     mock_kfinalise_instance.process.assert_called_once() # Process is called
@@ -505,9 +529,9 @@ async def test_error_handling_kfinalise_failure(mock_exists, mock_chdir, mock_kf
     assert "Error during finalisation: KFinalise Failed!" in caplog.text
 
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
-async def test_argument_passthrough(mock_kfinalise, mock_kprep, mock_base_args):
+async def test_argument_passthrough(mock_kfinalise, mock_kprep_class, mock_base_args):
     """Test that various arguments are passed correctly to KaraokePrep/Finalise."""
     mock_base_args.args = ["Artist", "Title"]
     mock_base_args.render_bounding_boxes = True
@@ -524,7 +548,9 @@ async def test_argument_passthrough(mock_kfinalise, mock_kprep, mock_base_args):
     mock_base_args.instrumental_format = "mp3"
     mock_base_args.yes = True # non_interactive
 
-    mock_kprep.return_value.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
     mock_kfinalise.return_value.process = MagicMock(return_value=MOCK_FINAL_TRACK)
 
     with patch("karaoke_prep.utils.gen_cli.argparse.ArgumentParser") as mock_parser, \
@@ -534,8 +560,8 @@ async def test_argument_passthrough(mock_kfinalise, mock_kprep, mock_base_args):
         await gen_cli.async_main()
 
     # Check KaraokePrep args
-    mock_kprep.assert_called_once()
-    prep_kwargs = mock_kprep.call_args.kwargs
+    mock_kprep_class.assert_called_once()
+    prep_kwargs = mock_kprep_class.call_args.kwargs
     assert prep_kwargs["render_bounding_boxes"] is True
     assert prep_kwargs["skip_separation"] is True
     assert prep_kwargs["skip_lyrics"] is True
@@ -547,6 +573,7 @@ async def test_argument_passthrough(mock_kfinalise, mock_kprep, mock_base_args):
     assert prep_kwargs["lyrics_title"] == "Override Title"
     assert prep_kwargs["lyrics_file"] == "/path/to/lyrics.txt"
     assert prep_kwargs["style_params_json"] == "/path/to/styles.json"
+    mock_kprep_instance.process.assert_awaited_once()
 
     # Check KaraokeFinalise args
     mock_kfinalise.assert_called_once()
@@ -555,19 +582,19 @@ async def test_argument_passthrough(mock_kfinalise, mock_kprep, mock_base_args):
     assert finalise_kwargs["non_interactive"] is True
 
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
 @patch("karaoke_prep.utils.gen_cli.os.chdir")
 @patch("karaoke_prep.utils.gen_cli.os.path.exists", return_value=True)
 @patch("karaoke_prep.utils.gen_cli.pyperclip.copy")
-async def test_clipboard_copy_success(mock_copy, mock_exists, mock_chdir, mock_kfinalise, mock_kprep, mock_base_args, mock_logger, caplog):
+async def test_clipboard_copy_success(mock_copy, mock_exists, mock_chdir, mock_kfinalise, mock_kprep_class, mock_base_args, mock_logger, caplog):
     """Test logging when clipboard copy succeeds."""
     mock_base_args.args = ["Artist", "Title"]
     
     # Set up the KaraokePrep mock properly
-    mock_instance = AsyncMock()
-    mock_kprep.return_value = mock_instance
-    mock_instance.process.return_value = [MOCK_PREP_TRACK]
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
     
     # Ensure mock final track has URLs
     mock_final_track_with_urls = MOCK_FINAL_TRACK.copy()
@@ -579,6 +606,7 @@ async def test_clipboard_copy_success(mock_copy, mock_exists, mock_chdir, mock_k
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
+    mock_kprep_instance.process.assert_awaited_once()
     # Check log capture for success messages
     assert "(Folder link copied to clipboard)" in caplog.text
     assert "(YouTube URL copied to clipboard)" in caplog.text
@@ -589,19 +617,19 @@ async def test_clipboard_copy_success(mock_copy, mock_exists, mock_chdir, mock_k
     ], any_order=True)
 
 
-@patch("karaoke_prep.utils.gen_cli.KaraokePrep", new_callable=AsyncMock)
+@patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
 @patch("karaoke_prep.utils.gen_cli.KaraokeFinalise")
 @patch("karaoke_prep.utils.gen_cli.os.chdir")
 @patch("karaoke_prep.utils.gen_cli.os.path.exists", return_value=True)
 @patch("karaoke_prep.utils.gen_cli.pyperclip.copy", side_effect=Exception("Clipboard Error"))
-async def test_clipboard_copy_failure(mock_copy, mock_exists, mock_chdir, mock_kfinalise, mock_kprep, mock_base_args, mock_logger, caplog):
+async def test_clipboard_copy_failure(mock_copy, mock_exists, mock_chdir, mock_kfinalise, mock_kprep_class, mock_base_args, mock_logger, caplog):
     """Test logging when clipboard copy fails."""
     mock_base_args.args = ["Artist", "Title"]
     
     # Set up the KaraokePrep mock properly
-    mock_instance = AsyncMock()
-    mock_kprep.return_value = mock_instance
-    mock_instance.process.return_value = [MOCK_PREP_TRACK]
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
     
     # Ensure mock final track has URLs
     mock_final_track_with_urls = MOCK_FINAL_TRACK.copy()
@@ -613,6 +641,7 @@ async def test_clipboard_copy_failure(mock_copy, mock_exists, mock_chdir, mock_k
         mock_parser.return_value.parse_args.return_value = mock_base_args
         await gen_cli.async_main()
 
+    mock_kprep_instance.process.assert_awaited_once()
     # Check log capture for warning messages
     assert "Failed to copy folder link to clipboard: Clipboard Error" in caplog.text
     assert "Failed to copy YouTube URL to clipboard: Clipboard Error" in caplog.text
