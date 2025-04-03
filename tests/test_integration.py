@@ -6,7 +6,7 @@ import subprocess
 import sys
 import json
 from karaoke_prep.karaoke_prep import KaraokePrep
-from unittest.mock import MagicMock, call, patch, AsyncMock
+from unittest.mock import MagicMock, call, patch, AsyncMock, ANY
 from karaoke_prep.utils.gen_cli import async_main
 import shlex
 import asyncio
@@ -41,27 +41,50 @@ async def test_karaoke_prep_integration():
             log_level="INFO"
         )
 
+        # Function to simulate file creation
+        def create_dummy_files(output_image_filepath_noext, output_video_filepath, **kwargs):
+            # Create empty files for PNG, JPG, and MOV
+            for ext in ['.png', '.jpg']:
+                try:
+                    # Ensure directory exists
+                    os.makedirs(os.path.dirname(f"{output_image_filepath_noext}{ext}"), exist_ok=True)
+                    with open(f"{output_image_filepath_noext}{ext}", 'w') as f:
+                        f.write('dummy') # Write something small
+                except Exception as e:
+                     print(f"Error creating dummy file {output_image_filepath_noext}{ext}: {e}") # Debug print
+            try:
+                # Ensure directory exists
+                os.makedirs(os.path.dirname(output_video_filepath), exist_ok=True)
+                with open(output_video_filepath, 'w') as f:
+                    f.write('dummy') # Write something small
+            except Exception as e:
+                print(f"Error creating dummy file {output_video_filepath}: {e}") # Debug print
+
+        # Function to simulate WAV creation
+        def create_dummy_wav(input_media_path, output_filename_no_extension):
+            wav_path = f"{output_filename_no_extension} ({kp.extractor}).wav" # Construct expected path
+            try:
+                os.makedirs(os.path.dirname(wav_path), exist_ok=True)
+                with open(wav_path, 'w') as f:
+                    f.write('dummy_wav') # Write something small
+                return wav_path # Return the created path
+            except Exception as e:
+                print(f"Error creating dummy WAV file {wav_path}: {e}")
+                return None # Indicate failure
+
         # Mock external dependencies and handler methods
         with patch('karaoke_prep.metadata.extract_info_for_online_media') as mock_extract, \
              patch('karaoke_prep.metadata.parse_track_metadata') as mock_parse, \
+             patch.object(kp.file_handler, 'setup_output_paths', return_value=(os.path.join(temp_dir, "Test Artist - Test Title"), "Test Artist - Test Title")) as mock_setup_paths, \
              patch.object(kp.file_handler, 'copy_input_media', return_value="copied.mp4") as mock_copy, \
-             patch.object(kp.file_handler, 'convert_to_wav', return_value="converted.wav") as mock_convert, \
+             patch.object(kp.file_handler, 'convert_to_wav', side_effect=create_dummy_wav) as mock_convert, \
              patch.object(kp.file_handler, 'download_video') as mock_download, \
              patch.object(kp.file_handler, 'extract_still_image_from_video') as mock_extract_image, \
              patch.object(kp.file_handler, '_file_exists', return_value=False) as mock_file_exists, \
-             patch.object(kp.lyrics_processor, 'transcribe_lyrics', AsyncMock(return_value={
-                 'lrc_filepath': os.path.join(temp_dir, 'lyrics.lrc'),
-                 'ass_filepath': os.path.join(temp_dir, 'lyrics.ass'),
-                 'corrected_lyrics_text_filepath': os.path.join(temp_dir, 'lyrics.txt')
-             })) as mock_transcribe, \
-             patch.object(kp.audio_processor, 'process_audio_separation', AsyncMock(return_value={
-                 'clean_instrumental': {'instrumental': 'inst.flac', 'vocals': 'vocals.flac'},
-                 'other_stems': {},
-                 'backing_vocals': {},
-                 'combined_instrumentals': {}
-             })) as mock_separate, \
-             patch.object(kp.video_generator, 'create_title_video', AsyncMock()) as mock_create_title, \
-             patch.object(kp.video_generator, 'create_end_video', AsyncMock()) as mock_create_end, \
+             patch.object(kp.lyrics_processor, 'transcribe_lyrics', AsyncMock(return_value={'corrected_lyrics_text': 'lyrics text', 'corrected_lyrics_text_filepath': 'lyrics.txt'})) as mock_transcribe, \
+             patch.object(kp.audio_processor, 'process_audio_separation', AsyncMock(return_value={})) as mock_separate, \
+             patch.object(kp.video_generator, 'create_title_video', side_effect=create_dummy_files) as mock_create_title, \
+             patch.object(kp.video_generator, 'create_end_video', side_effect=create_dummy_files) as mock_create_end, \
              patch('os.system') as mock_os_system:
 
             # Run the process
@@ -81,7 +104,9 @@ async def test_karaoke_prep_integration():
         # Verify mocks were called as expected
         mock_transcribe.assert_not_called()
         mock_separate.assert_not_called()
-        # os.system might be called by convert_to_wav depending on implementation,
+        mock_create_title.assert_called_once() # Check if video creation was called
+        mock_create_end.assert_called_once()   # Check if video creation was called
+
         # Verify that the expected output files exist and have non-zero sizes
         expected_files = [
             os.path.join(track["track_output_dir"], f"{track['artist']} - {track['title']} (Title).mov"),

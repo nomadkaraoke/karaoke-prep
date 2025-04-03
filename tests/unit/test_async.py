@@ -89,10 +89,13 @@ class TestAsync:
         basic_karaoke_prep.input_media = "https://example.com/video"
         basic_karaoke_prep.artist = "Test Artist"
         basic_karaoke_prep.title = "Test Title"
+        basic_karaoke_prep.url = "https://example.com/video" # Explicitly set URL
+        basic_karaoke_prep.extractor = "youtube" # Explicitly set extractor
+        basic_karaoke_prep.media_id = "12345" # Explicitly set media_id
         
         # Mock dependencies
-        with patch('karaoke_prep.metadata.extract_info_for_online_media', return_value={'url': "https://example.com/video", 'extractor': 'youtube', 'id': '12345', 'artist': 'Test Artist', 'title': 'Test Title'}), \
-             patch('karaoke_prep.metadata.parse_track_metadata', return_value={'url': "https://example.com/video", 'extractor': 'youtube', 'media_id': '12345', 'artist': 'Test Artist', 'title': 'Test Title'}), \
+        with patch('karaoke_prep.metadata.extract_info_for_online_media') as mock_extract, \
+             patch('karaoke_prep.metadata.parse_track_metadata') as mock_parse, \
              patch.object(basic_karaoke_prep.file_handler, 'setup_output_paths', return_value=("output_dir", "Test Artist - Test Title")) as mock_setup_paths, \
              patch.object(basic_karaoke_prep.file_handler, 'download_video', return_value="downloaded_file.mp4") as mock_download, \
              patch.object(basic_karaoke_prep.file_handler, 'extract_still_image_from_video', return_value="still_image.png") as mock_extract_image, \
@@ -156,20 +159,24 @@ class TestAsync:
     async def test_prep_single_track_with_existing_files(self, basic_karaoke_prep, temp_dir):
         """Test preparing a single track when files already exist."""
         # Setup
-        basic_karaoke_prep.input_media = None
         basic_karaoke_prep.artist = "Test Artist"
         basic_karaoke_prep.title = "Test Title"
         basic_karaoke_prep.output_dir = temp_dir
-        
+        basic_karaoke_prep.extractor = "ExistingExtractor" # Explicitly set extractor for existing files case
+
         # Mock dependencies
         # Define side effect for glob.glob
         def glob_side_effect(pattern):
-            if pattern.endswith("*.webm"):
-                return ["existing_file.webm"]
-            elif pattern.endswith("*.png"):
-                return ["existing_file.png"]
-            elif pattern.endswith("*.wav"):
-                return ["existing_file.wav"]
+            artist_title = f"{basic_karaoke_prep.artist} - {basic_karaoke_prep.title}"
+            expected_base = os.path.join(temp_dir, f"{artist_title} ({basic_karaoke_prep.extractor}*)")
+            # Check if the pattern matches the expected base for webm, png, or wav
+            if pattern == f"{expected_base}.*webm" or pattern == f"{expected_base}.*mp4":
+                 # Return a filename that matches the extractor pattern conceptually
+                 return [os.path.join(temp_dir, f"{artist_title} ({basic_karaoke_prep.extractor} MockID).webm")]
+            elif pattern == f"{expected_base}.png":
+                 return [os.path.join(temp_dir, f"{artist_title} ({basic_karaoke_prep.extractor} MockID).png")]
+            elif pattern == f"{expected_base}.wav":
+                 return [os.path.join(temp_dir, f"{artist_title} ({basic_karaoke_prep.extractor} MockID).wav")]
             return []
 
         with patch.object(basic_karaoke_prep.file_handler, 'setup_output_paths', return_value=(temp_dir, "Test Artist - Test Title")) as mock_setup_paths, \
@@ -214,12 +221,19 @@ class TestAsync:
             assert result is not None
             assert result["artist"] == mock_future.return_value["artist"]
             assert result["title"] == mock_future.return_value["title"]
-            assert result["input_media"] == mock_future.return_value["input_media"]
-            assert result["input_still_image"] == mock_future.return_value["input_still_image"]
-            assert result["input_audio_wav"] == mock_future.return_value["input_audio_wav"]
+
+            # Construct the expected filenames based on the mock logic
+            artist_title = f"{basic_karaoke_prep.artist} - {basic_karaoke_prep.title}"
+            expected_media_path = os.path.join(temp_dir, f"{artist_title} ({basic_karaoke_prep.extractor} MockID).webm")
+            expected_image_path = os.path.join(temp_dir, f"{artist_title} ({basic_karaoke_prep.extractor} MockID).png")
+            expected_wav_path = os.path.join(temp_dir, f"{artist_title} ({basic_karaoke_prep.extractor} MockID).wav")
+
+            assert result["input_media"] == expected_media_path
+            assert result["input_still_image"] == expected_image_path
+            assert result["input_audio_wav"] == expected_wav_path
             if not isinstance(result["separated_audio"], asyncio.futures.Future) and not asyncio.iscoroutine(result["separated_audio"]):
                  assert result["separated_audio"] == mock_future.return_value["separated_audio"]
-            assert result["extractor"] == mock_future.return_value["extractor"]
+            assert result["extractor"] == basic_karaoke_prep.extractor # Should match the one we set
     
     @pytest.mark.asyncio
     async def test_prep_single_track_skip_lyrics(self, basic_karaoke_prep, temp_dir):

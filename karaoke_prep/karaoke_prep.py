@@ -219,49 +219,68 @@ class KaraokePrep:
             self.logger.info(f"Preparing single track: {self.artist} - {self.title}")
 
             # Determine extractor early based on input type
-            if self.input_media is not None and os.path.isfile(self.input_media):
-                self.extractor = "Original"
-            elif self.input_media is not None: # Assume URL if not a local file
-                 # Use the imported parse_track_metadata function
-                if self.extracted_info is not None:
-                    metadata_result = parse_track_metadata(
-                        self.extracted_info, self.artist, self.title, self.persistent_artist, self.logger
-                    )
-                    self.url = metadata_result["url"]
-                    self.extractor = metadata_result["extractor"]
-                    self.media_id = metadata_result["media_id"]
-                    # Update artist/title if metadata parsing changed them
-                    self.artist = metadata_result["artist"]
-                    self.title = metadata_result["title"]
-                else:
-                    # Attempt to parse metadata even if extracted_info wasn't pre-populated
-                    # This handles direct URL input without prior extract_info call
-                    try:
-                        extracted = extract_info_for_online_media(self.input_media, self.artist, self.title, self.logger)
-                        if extracted:
-                             metadata_result = parse_track_metadata(
-                                 extracted, self.artist, self.title, self.persistent_artist, self.logger
-                             )
-                             self.url = metadata_result["url"]
-                             self.extractor = metadata_result["extractor"]
-                             self.media_id = metadata_result["media_id"]
-                             self.artist = metadata_result["artist"]
-                             self.title = metadata_result["title"]
-                        else:
-                             self.logger.warning("Could not extract info for URL, proceeding with provided details.")
-                             self.url = self.input_media # Use original input as URL
-                             self.extractor = "Unknown" # Default if extraction fails
-                    except Exception as meta_exc:
-                         self.logger.warning(f"Error during metadata extraction/parsing for URL: {meta_exc}")
-                         self.url = self.input_media
-                         self.extractor = "Unknown"
-            else: # Input media is None
-                 self.logger.error("No input media provided.")
-                 return None # Or raise error
+            # Assume self.extractor, self.url, self.media_id etc. are set by process() before calling this
+            if self.input_media and os.path.isfile(self.input_media):
+                if not self.extractor: # If extractor wasn't somehow set before (e.g., direct call)
+                    self.extractor = "Original"
+            elif self.url: # If it's a URL (set by process)
+                 if not self.extractor: # Should have been set by parse_track_metadata in process()
+                      self.logger.warning("Extractor not set before prep_single_track for URL, attempting fallback logic.")
+                      # Fallback logic (less ideal, relies on potentially missing info)
+                      if self.extracted_info and self.extracted_info.get('extractor'):
+                          self.extractor = self.extracted_info['extractor']
+                      elif self.media_id: # Try to guess based on ID format
+                          # Basic youtube id check
+                          if re.match(r'^[a-zA-Z0-9_-]{11}$', self.media_id):
+                              self.extractor = "youtube"
+                          else:
+                              self.extractor = "UnknownSource" # Fallback if ID doesn't look like youtube
+                      else:
+                          self.extractor = "UnknownSource" # Final fallback
+                      self.logger.info(f"Fallback extractor set to: {self.extractor}")
+            elif self.input_media: # Not a file, not a URL -> maybe a direct URL string?
+                self.logger.warning(f"Input media '{self.input_media}' is not a file and self.url was not set. Attempting to treat as URL.")
+                # This path requires calling extract/parse again, less efficient
+                try:
+                    extracted = extract_info_for_online_media(self.input_media, self.artist, self.title, self.logger)
+                    if extracted:
+                         metadata_result = parse_track_metadata(
+                             extracted, self.artist, self.title, self.persistent_artist, self.logger
+                         )
+                         self.url = metadata_result["url"]
+                         self.extractor = metadata_result["extractor"]
+                         self.media_id = metadata_result["media_id"]
+                         self.artist = metadata_result["artist"]
+                         self.title = metadata_result["title"]
+                         self.logger.info(f"Successfully extracted metadata within prep_single_track for {self.input_media}")
+                    else:
+                         self.logger.error(f"Could not extract info for {self.input_media} within prep_single_track.")
+                         self.extractor = "ErrorExtracting"
+                         return None # Cannot proceed without metadata
+                except Exception as meta_exc:
+                     self.logger.error(f"Error during metadata extraction/parsing within prep_single_track: {meta_exc}")
+                     self.extractor = "ErrorParsing"
+                     return None # Cannot proceed
+            else:
+                 # If it's neither file nor URL, and input_media is None, check for existing files
+                 # This path is mainly for the case where files exist from previous run
+                 # We still need artist/title for filename generation
+                 if not self.artist or not self.title:
+                      self.logger.error("Cannot determine output path without artist/title when input_media is None and not a URL.")
+                      return None
+                 self.logger.info("Input media is None, assuming check for existing files based on artist/title.")
+                 # We need a nominal extractor for filename matching if files exist
+                 # Let's default to 'UnknownExisting' or try to infer if possible later
+                 if not self.extractor:
+                    self.extractor = "UnknownExisting"
+
+            if not self.extractor:
+                 self.logger.error("Could not determine extractor for the track.")
+                 return None
 
             # Now self.extractor should be set correctly for path generation etc.
 
-            self.logger.info(f"Preparing output path for track: {self.title} by {self.artist}")
+            self.logger.info(f"Preparing output path for track: {self.title} by {self.artist} (Extractor: {self.extractor})")
             if self.dry_run:
                 return None
 
@@ -283,8 +302,9 @@ class KaraokePrep:
             processed_track["input_still_image"] = None
             processed_track["input_audio_wav"] = None
 
-            if self.input_media is not None and os.path.isfile(self.input_media):
-                input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
+            if self.input_media and os.path.isfile(self.input_media):
+                # --- Local File Input Handling ---
+                input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor}*).wav")
                 input_wav_glob = glob.glob(input_wav_filename_pattern)
 
                 if input_wav_glob:
@@ -302,45 +322,46 @@ class KaraokePrep:
                     processed_track["input_audio_wav"] = self.file_handler.convert_to_wav(processed_track["input_media"], output_filename_no_extension)
 
             else:
-                # WebM may not always be the output format from ytdlp, but it's common and this is just a convenience cache
-                input_webm_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.webm")
-                input_webm_glob = glob.glob(input_webm_filename_pattern)
+                # --- URL or Existing Files Handling ---
+                # Construct patterns using the determined extractor
+                base_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor}*)")
+                input_media_glob = glob.glob(f"{base_pattern}.*webm") + glob.glob(f"{base_pattern}.*mp4") # Add other common formats if needed
+                input_png_glob = glob.glob(f"{base_pattern}.png")
+                input_wav_glob = glob.glob(f"{base_pattern}.wav")
 
-                input_png_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.png")
-                input_png_glob = glob.glob(input_png_filename_pattern)
-
-                input_wav_filename_pattern = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} *.wav")
-                input_wav_glob = glob.glob(input_wav_filename_pattern)
-
-                if input_webm_glob and input_png_glob and input_wav_glob:
-                    processed_track["input_media"] = input_webm_glob[0]
+                if input_media_glob and input_png_glob and input_wav_glob:
+                    # Existing files found
+                    processed_track["input_media"] = input_media_glob[0]
                     processed_track["input_still_image"] = input_png_glob[0]
                     processed_track["input_audio_wav"] = input_wav_glob[0]
-                    # Set extractor for existing files case
-                    self.extractor = self.extractor or "Original" # Keep if already set by metadata parse
+                    self.logger.info(f"Found existing media files matching extractor '{self.extractor}', skipping download/conversion.")
+                    # Ensure self.extractor reflects the found files if it was a fallback
+                    # Extract the actual extractor string from the filename if needed, though it should match
 
-                    self.logger.info(f"Input media files already exist, skipping download: {processed_track['input_media']} + .wav + .png")
+                elif self.url: # URL provided and files not found, proceed with download
+                    # Use media_id if available for better uniqueness
+                    filename_suffix = f"{self.extractor} {self.media_id}" if self.media_id else self.extractor
+                    output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({filename_suffix})")
+
+                    self.logger.info(f"Downloading input media from {self.url}...")
+                    # Delegate to FileHandler
+                    processed_track["input_media"] = self.file_handler.download_video(self.url, output_filename_no_extension)
+
+                    self.logger.info("Extracting still image from downloaded media (if input is video)...")
+                    # Delegate to FileHandler
+                    processed_track["input_still_image"] = self.file_handler.extract_still_image_from_video(
+                        processed_track["input_media"], output_filename_no_extension
+                    )
+
+                    self.logger.info("Converting downloaded video to WAV for audio processing...")
+                    # Delegate to FileHandler
+                    processed_track["input_audio_wav"] = self.file_handler.convert_to_wav(
+                        processed_track["input_media"], output_filename_no_extension
+                    )
                 else:
-                    if self.url:
-                        output_filename_no_extension = os.path.join(track_output_dir, f"{artist_title} ({self.extractor} {self.media_id})")
-
-                        self.logger.info(f"Downloading input media from {self.url}...")
-                        # Delegate to FileHandler
-                        processed_track["input_media"] = self.file_handler.download_video(self.url, output_filename_no_extension)
-
-                        self.logger.info("Extracting still image from downloaded media (if input is video)...")
-                        # Delegate to FileHandler
-                        processed_track["input_still_image"] = self.file_handler.extract_still_image_from_video(
-                            processed_track["input_media"], output_filename_no_extension
-                        )
-
-                        self.logger.info("Converting downloaded video to WAV for audio processing...")
-                        # Delegate to FileHandler
-                        processed_track["input_audio_wav"] = self.file_handler.convert_to_wav(
-                            processed_track["input_media"], output_filename_no_extension
-                        )
-                    else:
-                        self.logger.warning(f"Skipping download due to missing URL.")
+                     # This case means input_media was None, not a URL, and no existing files found
+                     self.logger.error(f"Cannot proceed: No input file, no URL, and no existing files found for {artist_title}.")
+                     return None
 
             if self.skip_lyrics:
                 self.logger.info("Skipping lyrics fetch as requested.")
