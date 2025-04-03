@@ -366,8 +366,8 @@ async def async_main():
             subtitle_offset_ms=args.subtitle_offset_ms,
             style_params_json=args.style_params_json,
         )
-        
-        kprep = await kprep_coroutine
+        # No await needed for constructor
+        kprep = kprep_coroutine
         
         # Backup existing outputs and get the input audio file
         track_output_dir = os.getcwd()
@@ -681,8 +681,8 @@ async def async_main():
         subtitle_offset_ms=args.subtitle_offset_ms,
         style_params_json=args.style_params_json,
     )
-    
-    kprep = await kprep_coroutine
+    # No await needed for constructor
+    kprep = kprep_coroutine
 
     print("DEBUG: async_main() KaraokePrep instantiated.")
     
