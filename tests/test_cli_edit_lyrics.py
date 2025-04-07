@@ -15,8 +15,7 @@ pytest.mark.asyncio = pytest.mark.asyncio
 pytest_configure = lambda config: config.addinivalue_line("markers", "asyncio: mark test as async")
 
 
-@pytest.mark.asyncio #(timeout=60) # Timeout might not be needed with heavy mocking
-@pytest.mark.slow # Keep slow marker if desired
+@pytest.mark.asyncio
 async def test_cli_edit_lyrics_integration(mocker): # Remove tmp_path
     """Tests the --edit-lyrics CLI workflow using high-level mocks."""
     # --- 1. Define Test Variables ---
