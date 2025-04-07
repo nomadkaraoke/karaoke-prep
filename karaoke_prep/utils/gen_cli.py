@@ -396,6 +396,10 @@ async def async_main():
                 logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
                 sys.exit(1)
                 return  # Explicit return for testing
+            except KeyError:
+                logger.error(f"'cdg' key not found in style parameters file: {args.style_params_json}")
+                sys.exit(1)
+                return # Explicit return for testing
         
         # Run KaraokeFinalise with keep_brand_code=True and replace_existing=True
         kfinalise = KaraokeFinalise(
