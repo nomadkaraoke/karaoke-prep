@@ -308,7 +308,10 @@ async def test_workflow_edit_lyrics(mock_open, mock_getcwd, mock_basename, mock_
     # Set up the KaraokePrep mock properly
     mock_kprep_instance = MagicMock() # Instance mock
     mock_kprep_class.return_value = mock_kprep_instance
-    mock_kprep_instance.backup_existing_outputs = MagicMock(return_value="/fake/path/Edit Artist - Edit Title/input.wav") # Regular method
+    # Mock the file_handler attribute and its backup_existing_outputs method
+    mock_file_handler = MagicMock()
+    mock_file_handler.backup_existing_outputs = MagicMock(return_value="/fake/path/Edit Artist - Edit Title/input.wav")
+    mock_kprep_instance.file_handler = mock_file_handler
     mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK]) # Async method
 
     mock_kfinalise_instance = mock_kfinalise.return_value
@@ -329,7 +332,8 @@ async def test_workflow_edit_lyrics(mock_open, mock_getcwd, mock_basename, mock_
     assert prep_call_kwargs["skip_transcription"] is False
     assert prep_call_kwargs["create_track_subfolders"] is False # Already in folder
 
-    mock_kprep_instance.backup_existing_outputs.assert_called_once()
+    # Assert that the mocked method on the file_handler was called
+    mock_kprep_instance.file_handler.backup_existing_outputs.assert_called_once()
     mock_kprep_instance.process.assert_awaited_once()
 
     # Check Finalise call

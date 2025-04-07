@@ -371,7 +371,7 @@ async def async_main():
         
         # Backup existing outputs and get the input audio file
         track_output_dir = os.getcwd()
-        input_audio_wav = kprep.backup_existing_outputs(track_output_dir, artist, title)
+        input_audio_wav = kprep.file_handler.backup_existing_outputs(track_output_dir, artist, title)
         kprep.input_media = input_audio_wav
         
         # Run KaraokePrep
