@@ -388,8 +388,12 @@ class KaraokePrep:
                     )
                     self.logger.info(f"Transcription future created, type: {type(transcription_future)}")
 
-                if not self.skip_separation:
-                    self.logger.info("Creating separation future...")
+                # Default to a placeholder future if separation won't run
+                separation_future = asyncio.sleep(0)
+
+                # Only create real separation future if not skipping AND no existing instrumental provided
+                if not self.skip_separation and not self.existing_instrumental:
+                    self.logger.info("Creating separation future (not skipping and no existing instrumental)...")
                     # Run separation in a separate thread
                     separation_future = asyncio.create_task(
                         asyncio.to_thread(
@@ -401,13 +405,17 @@ class KaraokePrep:
                         )
                     )
                     self.logger.info(f"Separation future created, type: {type(separation_future)}")
+                elif self.existing_instrumental:
+                     self.logger.info(f"Skipping separation future creation because existing instrumental was provided: {self.existing_instrumental}")
+                elif self.skip_separation: # Check this condition explicitly for clarity
+                     self.logger.info("Skipping separation future creation because skip_separation is True.")
 
                 self.logger.info("About to await both operations with asyncio.gather...")
                 # Wait for both operations to complete
                 try:
                     results = await asyncio.gather(
-                        transcription_future if transcription_future else asyncio.sleep(0),
-                        separation_future if separation_future else asyncio.sleep(0),
+                        transcription_future if transcription_future else asyncio.sleep(0), # Use placeholder if None
+                        separation_future, # Already defaults to placeholder if not created
                         return_exceptions=True,
                     )
                 except asyncio.CancelledError:
@@ -415,12 +423,14 @@ class KaraokePrep:
                     # Cancel any running futures
                     if transcription_future and not transcription_future.done():
                         transcription_future.cancel()
-                    if separation_future and not separation_future.done():
-                        separation_future.cancel()
+                    if separation_future and not separation_future.done() and not isinstance(separation_future, asyncio.Task): # Check if it's a real task
+                         # Don't try to cancel the asyncio.sleep(0) placeholder
+                         separation_future.cancel()
+
                     # Wait for futures to complete cancellation
                     await asyncio.gather(
                         transcription_future if transcription_future else asyncio.sleep(0),
-                        separation_future if separation_future else asyncio.sleep(0),
+                        separation_future if separation_future else asyncio.sleep(0), # Use placeholder if None/Placeholder
                         return_exceptions=True,
                     )
                     raise
@@ -429,6 +439,7 @@ class KaraokePrep:
                 if transcription_future:
                     self.logger.info("Processing transcription results...")
                     try:
+                        # Index 0 corresponds to transcription_future in gather
                         transcriber_outputs = results[0]
                         # Check if the result is an exception or the actual output
                         if isinstance(transcriber_outputs, Exception):
@@ -450,11 +461,14 @@ class KaraokePrep:
                         self.logger.exception("Full traceback:")
                         raise # Re-raise the exception
 
-                # Handle separation results
-                if separation_future:
+                # Handle separation results only if a real future was created and ran
+                # Check if separation_future was the placeholder or a real task
+                # The result index in `results` depends on whether transcription_future existed
+                separation_result_index = 1 if transcription_future else 0
+                if separation_future is not None and not isinstance(separation_future, asyncio.Task) and len(results) > separation_result_index:
                     self.logger.info("Processing separation results...")
                     try:
-                        separation_results = results[1]
+                        separation_results = results[separation_result_index]
                          # Check if the result is an exception or the actual output
                         if isinstance(separation_results, Exception):
                             self.logger.error(f"Error during audio separation: {separation_results}")
@@ -472,6 +486,12 @@ class KaraokePrep:
                         self.logger.error(f"Error processing separation results: {e}")
                         self.logger.exception("Full traceback:")
                         # Decide if you want to raise here or just log
+                elif not self.skip_separation and not self.existing_instrumental:
+                    # This case means separation was supposed to run but didn't return results properly
+                    self.logger.warning("Separation task was expected but did not yield results or resulted in an error captured earlier.")
+                else:
+                    # This case means separation was intentionally skipped
+                    self.logger.info("Skipping processing of separation results as separation was not run.")
 
                 self.logger.info("=== Parallel Processing Complete ===")
 

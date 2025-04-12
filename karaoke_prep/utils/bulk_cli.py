@@ -108,6 +108,8 @@ async def process_track_render(row, args, logger, log_formatter):
             return True  # Return True to continue with other tracks
         
         # First run KaraokePrep with video rendering enabled
+        # This is so the human can review all of the lyrics for the entire batch fairly quickly,
+        # then leave the script running to render the videos for all of them.
         logger.info(f"Video rendering for track: {artist} - {title}")
         kprep = KaraokePrep(
             artist=artist,
