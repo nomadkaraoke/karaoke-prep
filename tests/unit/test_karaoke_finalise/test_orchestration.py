@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock, call, ANY
 
 # Adjust the import path
 from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_prep.karaoke_finalise.file_manager import FileManager  # Import FileManager to get suffixes
 from .test_initialization import mock_logger, basic_finaliser, MINIMAL_CONFIG # Reuse fixtures
 from .test_file_input_validation import BASE_NAME, ARTIST, TITLE, WITH_VOCALS_MOV, INSTRUMENTAL_FLAC # Reuse constants
 from .test_ffmpeg_commands import OUTPUT_FILES as FFMPEG_OUTPUT_FILES # Reuse constants
@@ -12,17 +13,21 @@ from .test_file_organisation import OUTPUT_FILES_ORG, BRAND_PREFIX, ORGANISED_DI
 from .test_youtube_integration import YOUTUBE_SECRETS_FILE, YOUTUBE_DESC_FILE, OUTPUT_FILES_YT, INPUT_FILES_YT # Reuse constants
 from .test_notifications_email import DISCORD_WEBHOOK_URL, EMAIL_TEMPLATE_FILE # Reuse constants
 
+# Get suffixes from FileManager directly instead of instantiating KaraokeFinalise
+file_manager = FileManager()
+SUFFIXES = file_manager.suffixes
+
 # Combine output file dictionaries for process tests
 ALL_OUTPUT_FILES = {**FFMPEG_OUTPUT_FILES, **OUTPUT_FILES_ZIP, **OUTPUT_FILES_ORG, **OUTPUT_FILES_YT}
 # Combine input file dictionaries
 ALL_INPUT_FILES = {
-    "title_mov": f"{BASE_NAME}{KaraokeFinalise().suffixes['title_mov']}",
-    "title_jpg": f"{BASE_NAME}{KaraokeFinalise().suffixes['title_jpg']}",
+    "title_mov": f"{BASE_NAME}{SUFFIXES['title_mov']}",
+    "title_jpg": f"{BASE_NAME}{SUFFIXES['title_jpg']}",
     "instrumental_audio": INSTRUMENTAL_FLAC,
     "with_vocals_mov": WITH_VOCALS_MOV,
-    "karaoke_lrc": f"{BASE_NAME}{KaraokeFinalise().suffixes['karaoke_lrc']}",
-    "end_mov": f"{BASE_NAME}{KaraokeFinalise().suffixes['end_mov']}",
-    "end_jpg": f"{BASE_NAME}{KaraokeFinalise().suffixes['end_jpg']}",
+    "karaoke_lrc": f"{BASE_NAME}{SUFFIXES['karaoke_lrc']}",
+    "end_mov": f"{BASE_NAME}{SUFFIXES['end_mov']}",
+    "end_jpg": f"{BASE_NAME}{SUFFIXES['end_jpg']}",
 }
 
 
