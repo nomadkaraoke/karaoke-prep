@@ -29,7 +29,6 @@ class KaraokeFinalise:
         log_level=logging.DEBUG,
         log_formatter=None,
         dry_run=False,
-        model_name=None,
         instrumental_format="flac",
         enable_cdg=False,
         enable_txt=False,
@@ -64,7 +63,7 @@ class KaraokeFinalise:
             self.logger = logger
 
         self.logger.debug(
-            f"KaraokeFinalise instantiating, dry_run: {dry_run}, model_name: {model_name}, brand_prefix: {brand_prefix}, organised_dir: {organised_dir}, public_share_dir: {public_share_dir}, rclone_destination: {rclone_destination}"
+            f"KaraokeFinalise instantiating, dry_run: {dry_run}, brand_prefix: {brand_prefix}, organised_dir: {organised_dir}, public_share_dir: {public_share_dir}, rclone_destination: {rclone_destination}"
         )
 
         # Path to the Windows PyInstaller frozen bundled ffmpeg.exe, or the system-installed FFmpeg binary on Mac/Linux
@@ -78,7 +77,6 @@ class KaraokeFinalise:
             self.ffmpeg_base_command += " -loglevel fatal"
 
         self.dry_run = dry_run
-        self.model_name = model_name
         self.instrumental_format = instrumental_format
 
         self.brand_prefix = brand_prefix
@@ -358,6 +356,15 @@ class KaraokeFinalise:
                     self.logger.info(
                         f"Potential match found on YouTube channel with ID: {found_id} and title: {found_title} (similarity: {similarity_score}%)"
                     )
+                    
+                    # In non-interactive mode, automatically confirm if similarity is high enough
+                    if self.non_interactive:
+                        self.logger.info(f"Non-interactive mode, automatically confirming match with similarity score {similarity_score}%")
+                        self.youtube_video_id = found_id
+                        self.youtube_url = f"{self.youtube_url_prefix}{self.youtube_video_id}"
+                        self.skip_notifications = True
+                        return True
+                    
                     confirmation = input(f"Is '{found_title}' the video you are finalising? (y/n): ").strip().lower()
                     if confirmation == "y":
                         self.youtube_video_id = found_id
@@ -368,6 +375,31 @@ class KaraokeFinalise:
         self.logger.info(f"No matching video found with title: {youtube_title}")
         return False
 
+    def delete_youtube_video(self, video_id):
+        """
+        Delete a YouTube video by its ID.
+        
+        Args:
+            video_id: The YouTube video ID to delete
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        self.logger.info(f"Deleting YouTube video with ID: {video_id}")
+        
+        if self.dry_run:
+            self.logger.info(f"DRY RUN: Would delete YouTube video with ID: {video_id}")
+            return True
+            
+        try:
+            youtube = self.authenticate_youtube()
+            youtube.videos().delete(id=video_id).execute()
+            self.logger.info(f"Successfully deleted YouTube video with ID: {video_id}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to delete YouTube video with ID {video_id}: {e}")
+            return False
+
     def truncate_to_nearest_word(self, title, max_length):
         if len(title) <= max_length:
             return title
@@ -376,7 +408,7 @@ class KaraokeFinalise:
             truncated_title += " ..."
         return truncated_title
 
-    def upload_final_mp4_to_youtube_with_title_thumbnail(self, artist, title, input_files, output_files):
+    def upload_final_mp4_to_youtube_with_title_thumbnail(self, artist, title, input_files, output_files, replace_existing=False):
         self.logger.info(f"Uploading final MKV to YouTube with title thumbnail...")
         if self.dry_run:
             self.logger.info(
@@ -390,10 +422,21 @@ class KaraokeFinalise:
             youtube_title = self.truncate_to_nearest_word(youtube_title, max_length)
 
             if self.check_if_video_title_exists_on_youtube_channel(youtube_title):
-                self.logger.warning(f"Video already exists on YouTube, skipping upload: {self.youtube_url}")
-                return
+                if replace_existing:
+                    self.logger.info(f"Video already exists on YouTube, deleting before re-upload: {self.youtube_url}")
+                    if self.delete_youtube_video(self.youtube_video_id):
+                        self.logger.info(f"Successfully deleted existing video, proceeding with upload")
+                        # Reset the video ID and URL since we're uploading a new one
+                        self.youtube_video_id = None
+                        self.youtube_url = None
+                    else:
+                        self.logger.error(f"Failed to delete existing video, aborting upload")
+                        return
+                else:
+                    self.logger.warning(f"Video already exists on YouTube, skipping upload: {self.youtube_url}")
+                    return
 
-            youtube_description = f"Karaoke version of {artist} - {title} created using karaoke-prep python package."
+            youtube_description = f"Karaoke version of {artist} - {title} created using karaoke-gen python package."
             if self.youtube_description_file is not None:
                 with open(self.youtube_description_file, "r") as f:
                     youtube_description = f.read()
@@ -835,6 +878,15 @@ class KaraokeFinalise:
         else:
             os.rename(orig_dir, self.new_brand_code_dir_path)
 
+        # Update output_files dictionary with the new paths after moving
+        self.logger.info(f"Updating output file paths to reflect move to {self.new_brand_code_dir_path}")
+        for key in output_files:
+            if output_files[key]: # Check if the path exists (e.g., optional files)
+                old_basename = os.path.basename(output_files[key])
+                new_path = os.path.join(self.new_brand_code_dir_path, old_basename)
+                output_files[key] = new_path
+                self.logger.debug(f"  Updated {key}: {new_path}")
+
     def copy_final_files_to_public_share_dirs(self, brand_code, base_name, output_files):
         self.logger.info(f"Copying final MP4, 720p MP4, and ZIP to public share directory...")
 
@@ -942,12 +994,12 @@ class KaraokeFinalise:
         self.logger.info(f"Using existing brand code: {brand_code}")
         return brand_code
 
-    def execute_optional_features(self, artist, title, base_name, input_files, output_files):
+    def execute_optional_features(self, artist, title, base_name, input_files, output_files, replace_existing=False):
         self.logger.info(f"Executing optional features...")
 
         if self.youtube_upload_enabled:
             try:
-                self.upload_final_mp4_to_youtube_with_title_thumbnail(artist, title, input_files, output_files)
+                self.upload_final_mp4_to_youtube_with_title_thumbnail(artist, title, input_files, output_files, replace_existing)
             except Exception as e:
                 self.logger.error(f"Failed to upload video to YouTube: {e}")
                 print("Please manually upload the video to YouTube.")
@@ -1059,7 +1111,7 @@ class KaraokeFinalise:
             self.logger.info("Using built-in aac codec (basic quality)")
             return "aac"
 
-    def process(self):
+    def process(self, replace_existing=False):
         if self.dry_run:
             self.logger.warning("Dry run enabled. No actions will be performed.")
 
@@ -1082,7 +1134,7 @@ class KaraokeFinalise:
 
         self.remux_and_encode_output_video_files(with_vocals_file, input_files, output_files)
 
-        self.execute_optional_features(artist, title, base_name, input_files, output_files)
+        self.execute_optional_features(artist, title, base_name, input_files, output_files, replace_existing)
 
         result = {
             "artist": artist,
