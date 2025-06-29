@@ -134,6 +134,7 @@ class TestAudio:
              patch('os.rename') as mock_rename, \
              patch('os.path.exists', return_value=True), \
              patch('os.getpid', return_value=12345), \
+             patch('psutil.pid_exists', return_value=False), \
              patch('datetime.datetime') as mock_datetime, \
              patch('json.dump'), \
              patch('fcntl.flock'), \
@@ -200,6 +201,7 @@ class TestAudio:
         # Mock environment variable
         with patch.dict('os.environ', {'KARAOKE_GEN_SKIP_AUDIO_SEPARATION': '1'}), \
              patch('fcntl.flock'), \
+             patch('psutil.pid_exists', return_value=False), \
              patch('builtins.open', mock_open()) as mock_file_open:
             
             # Call the method

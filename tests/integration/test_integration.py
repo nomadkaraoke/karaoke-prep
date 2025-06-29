@@ -284,6 +284,13 @@ async def test_full_cli_integration(tmp_path, mocker):
              # This covers the os.system call for ffmpeg
              if cmd_arg.strip().startswith("ffmpeg"):
                  should_execute = True
+        elif hasattr(cmd_arg, 'strip') and hasattr(cmd_arg, 'startswith'):
+             # Handle bytes objects that have strip and startswith methods
+             # Convert to string first for comparison
+             cmd_str_decoded = cmd_arg.decode('utf-8', errors='replace') if isinstance(cmd_arg, bytes) else cmd_arg
+             if any(cmd in cmd_str_decoded for cmd in execute_commands):
+                 if cmd_str_decoded.strip().startswith("ffmpeg"):
+                     should_execute = True
 
         # Special handling for ffmpeg WAV conversion command - simulate creating WAV file instead of running actual ffmpeg
         if isinstance(cmd_arg, list) and len(cmd_arg) > 3 and cmd_arg[0] == "ffmpeg" and any(".wav" in arg for arg in cmd_arg):
