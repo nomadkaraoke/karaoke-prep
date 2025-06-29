@@ -95,6 +95,25 @@ For a complete list of options:
 karaoke-gen --help
 ```
 
+## Development
+
+### Running Tests
+
+The project uses pytest for testing with unit and integration tests:
+
+```bash
+# Run all tests (unit tests first, then integration tests)
+pytest
+
+# Run only unit tests (fast feedback during development)
+pytest -m "not integration"
+
+# Run only integration tests (comprehensive end-to-end testing)
+pytest -m integration
+```
+
+Unit tests run quickly and provide fast feedback, while integration tests are slower but test the full workflow end-to-end.
+
 ## License
 
 MIT

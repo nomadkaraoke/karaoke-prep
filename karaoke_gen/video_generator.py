@@ -71,7 +71,7 @@ class VideoGenerator:
             else:
                 # Try to load from package resources
                 try:
-                    with pkg_resources.path("karaoke_prep.resources", format["font"]) as font_path:
+                    with pkg_resources.path("karaoke_gen.resources", format["font"]) as font_path:
                         font_path = str(font_path)
                 except Exception as e:
                     self.logger.warning(f"Could not load font from resources: {e}, falling back to default font")

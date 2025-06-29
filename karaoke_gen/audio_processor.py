@@ -187,7 +187,7 @@ class AudioProcessor:
             stems_dir = self._create_stems_directory(track_output_dir)
             result = {"clean_instrumental": {}, "other_stems": {}, "backing_vocals": {}, "combined_instrumentals": {}}
 
-            if os.environ.get("KARAOKE_PREP_SKIP_AUDIO_SEPARATION"):
+            if os.environ.get("KARAOKE_GEN_SKIP_AUDIO_SEPARATION"):
                 return result
 
             result["clean_instrumental"] = self._separate_clean_instrumental(

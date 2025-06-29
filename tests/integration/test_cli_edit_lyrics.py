@@ -2,11 +2,11 @@ import os
 import pytest
 import sys
 import json
-from karaoke_prep.karaoke_prep import KaraokePrep
-from karaoke_prep.file_handler import FileHandler
+from karaoke_gen.karaoke_gen import KaraokePrep
+from karaoke_gen.file_handler import FileHandler
 from unittest.mock import MagicMock, call, patch, AsyncMock, ANY
-from karaoke_prep.utils.gen_cli import async_main
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.utils.gen_cli import async_main
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 
 # Register the asyncio marker
 pytest.mark.asyncio = pytest.mark.asyncio
@@ -16,6 +16,7 @@ pytest_configure = lambda config: config.addinivalue_line("markers", "asyncio: m
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_cli_edit_lyrics_integration(mocker): # Remove tmp_path
     """Tests the --edit-lyrics CLI workflow using high-level mocks."""
     # --- 1. Define Test Variables ---
@@ -30,7 +31,7 @@ async def test_cli_edit_lyrics_integration(mocker): # Remove tmp_path
 
     # Mock KaraokePrep methods
     # Mock extract_artist_title_from_dir_name to avoid needing real directory
-    # mocker.patch(\'karaoke_prep.karaoke_prep.KaraokePrep.extract_artist_title_from_dir_name\', return_value=(artist, title)) # REMOVED - Logic is in gen_cli
+    # mocker.patch(\'karaoke_gen.karaoke_gen.KaraokePrep.extract_artist_title_from_dir_name\', return_value=(artist, title)) # REMOVED - Logic is in gen_cli
     # Mock the process method entirely or spy on __init__ and process
     prep_init_spy = mocker.spy(KaraokePrep, '__init__')
     # Mock the process method to avoid its internal logic, return a dummy result
@@ -57,7 +58,7 @@ async def test_cli_edit_lyrics_integration(mocker): # Remove tmp_path
     # Mock LyricsProcessor (part of KaraokePrep, but good to ensure it\'s called)
     # Mock transcribe_lyrics to return dummy data needed by KaraokePrep mock result
     # mock_transcribe = mocker.patch( # REMOVED - Not needed as KaraokePrep.process is mocked
-    #     \'karaoke_prep.lyrics_processor.LyricsProcessor.transcribe_lyrics\',
+    #     \'karaoke_gen.lyrics_processor.LyricsProcessor.transcribe_lyrics\',
     #     new_callable=AsyncMock, # Make it async
     #     return_value={
     #         \'corrected_lyrics_text\': \'Edited lyrics line 1\\nEdited lyrics line 2\',
@@ -70,7 +71,7 @@ async def test_cli_edit_lyrics_integration(mocker): # Remove tmp_path
 
     # Mock KaraokeFinalise methods
     # Mock detect_best_aac_codec called during __init__ to avoid os.popen
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.detect_best_aac_codec', return_value='aac_at')
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.detect_best_aac_codec', return_value='aac_at')
     finalise_init_spy = mocker.spy(KaraokeFinalise, '__init__')
     # Mock the process method to avoid its internal logic, provide a more complete return dict
     mock_finalise_result = {
@@ -128,14 +129,14 @@ async def test_cli_edit_lyrics_integration(mocker): # Remove tmp_path
     mocker.patch('googleapiclient.discovery.build', return_value=MagicMock())
     mocker.patch('google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file', MagicMock())
     # Mock specific finalise methods related to external APIs
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.authenticate_youtube', return_value=MagicMock())
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.check_if_video_title_exists_on_youtube_channel', return_value='existing_video_id') # Crucial for replace logic
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.upload_final_mp4_to_youtube_with_title_thumbnail', MagicMock())
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.authenticate_gmail', return_value=MagicMock())
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.draft_completion_email', MagicMock())
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.post_discord_notification', MagicMock())
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.sync_public_share_dir_to_rclone_destination', MagicMock())
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.generate_organised_folder_sharing_link', return_value="https://fake.sharing.link/mock_edit_folder")
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.authenticate_youtube', return_value=MagicMock())
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.check_if_video_title_exists_on_youtube_channel', return_value='existing_video_id') # Crucial for replace logic
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.upload_final_mp4_to_youtube_with_title_thumbnail', MagicMock())
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.authenticate_gmail', return_value=MagicMock())
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.draft_completion_email', MagicMock())
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.post_discord_notification', MagicMock())
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.sync_public_share_dir_to_rclone_destination', MagicMock())
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.generate_organised_folder_sharing_link', return_value="https://fake.sharing.link/mock_edit_folder")
 
     # Mock pydub
     mocker.patch('pydub.AudioSegment.from_file', return_value=MagicMock(duration_seconds=10)) # Need duration

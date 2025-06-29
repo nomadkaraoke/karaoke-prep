@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 # Adjust the import path
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 from .test_initialization import mock_logger, basic_finaliser, MINIMAL_CONFIG # Reuse fixtures
 
 PROMPT_MSG = "Do you want to proceed?"

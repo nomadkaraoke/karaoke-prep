@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.12']
+        python-version: ['3.13']
     
     steps:
       - uses: actions/checkout@v3
@@ -38,7 +38,7 @@ jobs:
       
       - name: Run unit tests
         run: |
-          poetry run pytest tests/unit/ -v --cov=karaoke_prep --cov-report=xml --cov-report=term-missing --cov-fail-under=80
+          poetry run pytest tests/unit/ -v --cov=karaoke_gen --cov-report=xml --cov-report=term-missing --cov-fail-under=80
       
       - name: Upload coverage reports
         uses: codecov/codecov-action@v5
@@ -59,7 +59,7 @@ jobs:
       - name: Test package installation
         run: |
           pip install dist/*.whl
-          python -m karaoke_prep.utils.gen_cli --help
+          python -m karaoke_gen.utils.gen_cli --help
         
   publish:
     needs: test

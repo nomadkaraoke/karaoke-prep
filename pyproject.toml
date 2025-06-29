@@ -5,13 +5,13 @@ description = "Generate karaoke videos with synchronized lyrics. Handles the ent
 authors = ["Andrew Beveridge <andrew@beveridge.uk>"]
 license = "MIT"
 readme = "README.md"
-packages = [{ include = "karaoke_prep" }]
-homepage = "https://github.com/karaokenerds/karaoke-gen"
-repository = "https://github.com/karaokenerds/karaoke-gen"
-documentation = "https://github.com/karaokenerds/karaoke-gen/blob/main/README.md"
+packages = [{ include = "karaoke_gen" }]
+homepage = "https://github.com/nomadkaraoke/karaoke-gen"
+repository = "https://github.com/nomadkaraoke/karaoke-gen"
+documentation = "https://github.com/nomadkaraoke/karaoke-gen/blob/main/README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"
+python = ">=3.10,<3.14"
 torch = ">=2.7"
 requests = ">=2"
 beautifulsoup4 = ">=4"
@@ -25,8 +25,8 @@ google-auth = "*"
 google-auth-oauthlib = "*"
 google-auth-httplib2 = "*"
 thefuzz = ">=0.22"
-numpy = "^1"
-audio-separator = { version = ">=0.21.0", extras = ["cpu"] }
+numpy = ">=2"
+audio-separator = { version = ">=0.34.0", extras = ["cpu"] }
 lyrics-converter = ">=0.2.1"
 lyrics-transcriber = ">=0.52"
 kbputils = "^0.0.16"
@@ -49,8 +49,8 @@ pytest-asyncio = ">=0.21.0"
 
 
 [tool.poetry.scripts]
-karaoke-gen = 'karaoke_prep.utils.gen_cli:main'
-karaoke-bulk = 'karaoke_prep.utils.bulk_cli:main'
+karaoke-gen = 'karaoke_gen.utils.gen_cli:main'
+karaoke-bulk = 'karaoke_gen.utils.bulk_cli:main'
 
 [tool.black]
 line-length = 140
@@ -60,16 +60,17 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/unit", "tests/integration"]
 python_files = ["test_*.py"]
 addopts = [
-    "--cov=karaoke_prep",
+    "--cov=karaoke_gen",
     "--cov-report=term-missing",
     "--cov-report=html:htmlcov",
     "--asyncio-mode=auto",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
     "asyncio: mark test as async",
 ]
 filterwarnings = [

@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock, mock_open, call, ANY
 import requests # For requests.exceptions.RequestException
 
 # Adjust the import path
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 from .test_initialization import mock_logger, basic_finaliser, MINIMAL_CONFIG # Reuse fixtures
 from .test_file_input_validation import ARTIST, TITLE # Reuse constants
 from .test_youtube_integration import mock_google_auth # Reuse Gmail auth mocks structure
@@ -112,7 +112,7 @@ def test_post_discord_notification_dry_run(mock_post_msg, finaliser_for_notify):
 
 # Patch open for token write.
 # Patch the from_client_secrets_file method to control the flow instance.
-@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.InstalledAppFlow.from_client_secrets_file')
+@patch('karaoke_gen.karaoke_finalise.karaoke_finalise.InstalledAppFlow.from_client_secrets_file')
 @patch("builtins.open")
 def test_authenticate_gmail_new_token(mock_open, mock_from_secrets, finaliser_for_notify, mock_google_auth, mock_gmail_service):
     """Test Gmail authentication flow when no token file exists."""
@@ -233,7 +233,7 @@ def test_authenticate_gmail_refresh_token(finaliser_for_notify, mock_google_auth
 @patch('builtins.open', new_callable=mock_open, read_data="YT: {youtube_url}\nDB: {dropbox_url}")
 @patch.object(KaraokeFinalise, 'authenticate_gmail')
 # Patch MIMEText where it's used inside the karaoke_finalise module
-@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.MIMEText', return_value=MagicMock(spec=MIMEText))
+@patch('karaoke_gen.karaoke_finalise.karaoke_finalise.MIMEText', return_value=MagicMock(spec=MIMEText))
 @patch('base64.urlsafe_b64encode')
 def test_draft_completion_email_success(mock_b64encode, mock_mime_text_cls, mock_auth_gmail, mock_open_template, finaliser_for_notify, mock_gmail_service):
     """Test successful email draft creation."""

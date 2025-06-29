@@ -5,13 +5,13 @@ import shutil
 import subprocess
 import sys
 import json
-from karaoke_prep.karaoke_prep import KaraokePrep
+from karaoke_gen.karaoke_gen import KaraokePrep
 from unittest.mock import MagicMock, call, patch, AsyncMock, ANY
-from karaoke_prep.utils.gen_cli import async_main
+from karaoke_gen.utils.gen_cli import async_main
 import shlex
 import asyncio
 from googleapiclient.http import MediaFileUpload
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 
 # Register the asyncio marker
 pytest.mark.asyncio = pytest.mark.asyncio
@@ -21,7 +21,8 @@ pytest_configure = lambda config: config.addinivalue_line("markers", "asyncio: m
 
 
 @pytest.mark.asyncio
-async def test_karaoke_prep_integration():
+@pytest.mark.integration
+async def test_karaoke_gen_integration():
     # Create a temporary directory for test outputs
     with tempfile.TemporaryDirectory() as temp_dir:
         # Create a dummy input file (e.g., a small WAV file)
@@ -73,8 +74,8 @@ async def test_karaoke_prep_integration():
                 return None # Indicate failure
 
         # Mock external dependencies and handler methods
-        with patch('karaoke_prep.metadata.extract_info_for_online_media') as mock_extract, \
-             patch('karaoke_prep.metadata.parse_track_metadata') as mock_parse, \
+        with patch('karaoke_gen.metadata.extract_info_for_online_media') as mock_extract, \
+             patch('karaoke_gen.metadata.parse_track_metadata') as mock_parse, \
              patch.object(kp.file_handler, 'setup_output_paths', return_value=(os.path.join(temp_dir, "Test Artist - Test Title"), "Test Artist - Test Title")) as mock_setup_paths, \
              patch.object(kp.file_handler, 'copy_input_media', return_value="copied.mp4") as mock_copy, \
              patch.object(kp.file_handler, 'convert_to_wav', side_effect=create_dummy_wav) as mock_convert, \
@@ -149,6 +150,7 @@ async def test_karaoke_prep_integration():
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 @pytest.mark.slow
 async def test_full_cli_integration(tmp_path, mocker):
     """Tests the full CLI workflow by calling async_main directly with mocked sys.argv."""
@@ -191,7 +193,7 @@ async def test_full_cli_integration(tmp_path, mocker):
             print(f"Warning: Background image {source_image} not found, skipping")
 
     # Copy font file to /tmp directory
-    font_source = "karaoke_prep/resources/AvenirNext-Bold.ttf"
+    font_source = "karaoke_gen/resources/AvenirNext-Bold.ttf"
     font_dest = "/tmp/AvenirNext-Bold.ttf"
     if os.path.exists(font_source):
         shutil.copy2(font_source, font_dest)
@@ -231,10 +233,10 @@ async def test_full_cli_integration(tmp_path, mocker):
 
     # Mock YouTube credential flow and existing video check
     mocker.patch('google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file')
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.check_if_video_title_exists_on_youtube_channel', return_value=False)
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.check_if_video_title_exists_on_youtube_channel', return_value=False)
     
     # Mock the upload_final_mp4_to_youtube_with_title_thumbnail method to directly return mock_video_id to bypass YouTube API issues
-    mock_upload = mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.upload_final_mp4_to_youtube_with_title_thumbnail')
+    mock_upload = mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.upload_final_mp4_to_youtube_with_title_thumbnail')
     # Set video_id and url attributes that would normally be set during upload
     def side_effect(*args, **kwargs):
         instance = args[0]  # First arg is self
@@ -243,10 +245,10 @@ async def test_full_cli_integration(tmp_path, mocker):
     mock_upload.side_effect = side_effect
     
     # Keep the authenticate_youtube mock to return the service
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.authenticate_youtube', return_value=mock_youtube_service)
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.authenticate_youtube', return_value=mock_youtube_service)
 
     # Mock Gmail API (reuse youtube mock for simplicity, just check call)
-    mocker.patch('karaoke_prep.karaoke_finalise.karaoke_finalise.KaraokeFinalise.authenticate_gmail', return_value=mock_youtube_service)
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.authenticate_gmail', return_value=mock_youtube_service)
     mock_draft_create = MagicMock()
     mock_draft_create.execute.return_value = {'id': 'mock_draft_id'}
     mock_youtube_service.users().drafts().create.return_value = mock_draft_create

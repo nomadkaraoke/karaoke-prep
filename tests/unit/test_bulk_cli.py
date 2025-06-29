@@ -8,28 +8,28 @@ import json
 from unittest.mock import patch, MagicMock, AsyncMock, mock_open, call
 
 # Import the module/functions to test
-from karaoke_prep.utils import bulk_cli
+from karaoke_gen.utils import bulk_cli
 
 # Define module paths to mock consistently across tests
 mock_module_paths = {
-    "KaraokePrep": "karaoke_prep.utils.bulk_cli.KaraokePrep",
-    "KaraokeFinalise": "karaoke_prep.utils.bulk_cli.KaraokeFinalise",
-    "os_path_isfile": "karaoke_prep.utils.bulk_cli.os.path.isfile",
-    "os_path_exists": "karaoke_prep.utils.bulk_cli.os.path.exists",
-    "os_chdir": "karaoke_prep.utils.bulk_cli.os.chdir",
-    "os_getcwd": "karaoke_prep.utils.bulk_cli.os.getcwd",
+    "KaraokePrep": "karaoke_gen.utils.bulk_cli.KaraokePrep",
+    "KaraokeFinalise": "karaoke_gen.utils.bulk_cli.KaraokeFinalise",
+    "os_path_isfile": "karaoke_gen.utils.bulk_cli.os.path.isfile",
+    "os_path_exists": "karaoke_gen.utils.bulk_cli.os.path.exists",
+    "os_chdir": "karaoke_gen.utils.bulk_cli.os.chdir",
+    "os_getcwd": "karaoke_gen.utils.bulk_cli.os.getcwd",
     "open_func": "builtins.open",
-    "csv_DictReader": "karaoke_prep.utils.bulk_cli.csv.DictReader",
-    "csv_DictWriter": "karaoke_prep.utils.bulk_cli.csv.DictWriter",
-    "update_csv_status": "karaoke_prep.utils.bulk_cli.update_csv_status",
-    "ArgumentParser": "karaoke_prep.utils.bulk_cli.argparse.ArgumentParser",
-    "os_path_abspath": "karaoke_prep.utils.bulk_cli.os.path.abspath",
-    "sys_exit": "karaoke_prep.utils.bulk_cli.sys.exit",
-    "asyncio_run": "karaoke_prep.utils.bulk_cli.asyncio.run",
-    "logger": "karaoke_prep.utils.bulk_cli.logger",
-    "getattr_func": "karaoke_prep.utils.bulk_cli.getattr",
-    "StreamHandler": "karaoke_prep.utils.bulk_cli.logging.StreamHandler",
-    "Formatter": "karaoke_prep.utils.bulk_cli.logging.Formatter"
+    "csv_DictReader": "karaoke_gen.utils.bulk_cli.csv.DictReader",
+    "csv_DictWriter": "karaoke_gen.utils.bulk_cli.csv.DictWriter",
+    "update_csv_status": "karaoke_gen.utils.bulk_cli.update_csv_status",
+    "ArgumentParser": "karaoke_gen.utils.bulk_cli.argparse.ArgumentParser",
+    "os_path_abspath": "karaoke_gen.utils.bulk_cli.os.path.abspath",
+    "sys_exit": "karaoke_gen.utils.bulk_cli.sys.exit",
+    "asyncio_run": "karaoke_gen.utils.bulk_cli.asyncio.run",
+    "logger": "karaoke_gen.utils.bulk_cli.logger",
+    "getattr_func": "karaoke_gen.utils.bulk_cli.getattr",
+    "StreamHandler": "karaoke_gen.utils.bulk_cli.logging.StreamHandler",
+    "Formatter": "karaoke_gen.utils.bulk_cli.logging.Formatter"
 }
 
 # Instead of the global pytestmark, we'll explicitly mark async tests where needed
@@ -85,11 +85,11 @@ def mock_log_formatter():
     return MagicMock(spec=logging.Formatter)
 
 # Add mocks for the new helper functions and process_csv_rows
-@patch("karaoke_prep.utils.bulk_cli.process_csv_rows", new_callable=AsyncMock)
-@patch("karaoke_prep.utils.bulk_cli._read_csv_file")
-@patch("karaoke_prep.utils.bulk_cli._parse_and_validate_args")
-@patch("karaoke_prep.utils.bulk_cli.setup_logging") # Mock logging setup as well
-@patch("karaoke_prep.utils.bulk_cli.logger") # Mock the module-level logger directly
+@patch("karaoke_gen.utils.bulk_cli.process_csv_rows", new_callable=AsyncMock)
+@patch("karaoke_gen.utils.bulk_cli._read_csv_file")
+@patch("karaoke_gen.utils.bulk_cli._parse_and_validate_args")
+@patch("karaoke_gen.utils.bulk_cli.setup_logging") # Mock logging setup as well
+@patch("karaoke_gen.utils.bulk_cli.logger") # Mock the module-level logger directly
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_async_main_flow(
     mock_bulk_cli_logger, mock_setup_logging, mock_parse_args, mock_read_csv, mock_process_rows, # Added mock_bulk_cli_logger back
@@ -144,9 +144,9 @@ async def test_async_main_flow(
     assert result == {"summary": "results"}
 
 
-@patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
-@patch("karaoke_prep.utils.bulk_cli.os.chdir")
-@patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@patch("karaoke_gen.utils.bulk_cli.KaraokePrep")
+@patch("karaoke_gen.utils.bulk_cli.os.chdir")
+@patch("karaoke_gen.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_prep_success(mock_getcwd, mock_chdir, mock_kprep, mock_args, mock_logger, mock_log_formatter):
     """Test process_track_prep successfully calls KaraokePrep."""
@@ -174,9 +174,9 @@ async def test_process_track_prep_success(mock_getcwd, mock_chdir, mock_kprep, m
     mock_chdir.assert_called_once_with("/fake/original/dir") # Changed back at the end
 
 
-@patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
-@patch("karaoke_prep.utils.bulk_cli.os.chdir")
-@patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@patch("karaoke_gen.utils.bulk_cli.KaraokePrep")
+@patch("karaoke_gen.utils.bulk_cli.os.chdir")
+@patch("karaoke_gen.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_prep_failure(mock_getcwd, mock_chdir, mock_kprep, mock_args, mock_logger, mock_log_formatter):
     """Test process_track_prep handles exceptions from KaraokePrep."""
@@ -192,11 +192,11 @@ async def test_process_track_prep_failure(mock_getcwd, mock_chdir, mock_kprep, m
     mock_chdir.assert_called_once_with("/fake/original/dir") # Should still change back
 
 
-@patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
-@patch("karaoke_prep.utils.bulk_cli.KaraokeFinalise")
-@patch("karaoke_prep.utils.bulk_cli.os.path.exists", return_value=True) # Assume track dir exists
-@patch("karaoke_prep.utils.bulk_cli.os.chdir")
-@patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@patch("karaoke_gen.utils.bulk_cli.KaraokePrep")
+@patch("karaoke_gen.utils.bulk_cli.KaraokeFinalise")
+@patch("karaoke_gen.utils.bulk_cli.os.path.exists", return_value=True) # Assume track dir exists
+@patch("karaoke_gen.utils.bulk_cli.os.chdir")
+@patch("karaoke_gen.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", new_callable=mock_open, read_data=SAMPLE_STYLE_JSON) # For reading style JSON if CDG enabled
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_success(
@@ -253,11 +253,11 @@ async def test_process_track_render_success(
     mock_chdir.assert_called_with("/fake/original/dir")
 
 
-@patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
-@patch("karaoke_prep.utils.bulk_cli.KaraokeFinalise")
-@patch("karaoke_prep.utils.bulk_cli.os.path.exists", return_value=True)
-@patch("karaoke_prep.utils.bulk_cli.os.chdir")
-@patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@patch("karaoke_gen.utils.bulk_cli.KaraokePrep")
+@patch("karaoke_gen.utils.bulk_cli.KaraokeFinalise")
+@patch("karaoke_gen.utils.bulk_cli.os.path.exists", return_value=True)
+@patch("karaoke_gen.utils.bulk_cli.os.chdir")
+@patch("karaoke_gen.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", new_callable=mock_open, read_data=SAMPLE_STYLE_JSON)
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_finalise_failure(
@@ -438,11 +438,11 @@ def test_parse_and_validate_args_csv_not_found(mock_logger, mock_run, mock_isfil
     mock_isfile.assert_called_once_with("/abs/nonexistent.csv")
 
 
-@patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
-@patch("karaoke_prep.utils.bulk_cli.KaraokeFinalise")
-@patch("karaoke_prep.utils.bulk_cli.os.path.exists", return_value=True) # Track dir exists
-@patch("karaoke_prep.utils.bulk_cli.os.chdir")
-@patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@patch("karaoke_gen.utils.bulk_cli.KaraokePrep")
+@patch("karaoke_gen.utils.bulk_cli.KaraokeFinalise")
+@patch("karaoke_gen.utils.bulk_cli.os.path.exists", return_value=True) # Track dir exists
+@patch("karaoke_gen.utils.bulk_cli.os.chdir")
+@patch("karaoke_gen.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", side_effect=FileNotFoundError("Styles not found")) # Simulate style file not found
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_style_json_not_found_cdg(
@@ -466,11 +466,11 @@ async def test_process_track_render_style_json_not_found_cdg(
     mock_kfinalise.assert_not_called()
 
 
-@patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
-@patch("karaoke_prep.utils.bulk_cli.KaraokeFinalise")
-@patch("karaoke_prep.utils.bulk_cli.os.path.exists", return_value=True) # Track dir exists
-@patch("karaoke_prep.utils.bulk_cli.os.chdir")
-@patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@patch("karaoke_gen.utils.bulk_cli.KaraokePrep")
+@patch("karaoke_gen.utils.bulk_cli.KaraokeFinalise")
+@patch("karaoke_gen.utils.bulk_cli.os.path.exists", return_value=True) # Track dir exists
+@patch("karaoke_gen.utils.bulk_cli.os.chdir")
+@patch("karaoke_gen.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", new_callable=mock_open, read_data="invalid json") # Simulate invalid JSON
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_style_json_invalid_cdg(
@@ -494,11 +494,11 @@ async def test_process_track_render_style_json_invalid_cdg(
     mock_kfinalise.assert_not_called()
 
 
-@patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
-@patch("karaoke_prep.utils.bulk_cli.KaraokeFinalise")
-@patch("karaoke_prep.utils.bulk_cli.os.path.exists", return_value=False) # Simulate track dir NOT found
-@patch("karaoke_prep.utils.bulk_cli.os.chdir")
-@patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@patch("karaoke_gen.utils.bulk_cli.KaraokePrep")
+@patch("karaoke_gen.utils.bulk_cli.KaraokeFinalise")
+@patch("karaoke_gen.utils.bulk_cli.os.path.exists", return_value=False) # Simulate track dir NOT found
+@patch("karaoke_gen.utils.bulk_cli.os.chdir")
+@patch("karaoke_gen.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_track_dir_not_found(
     mock_getcwd, mock_chdir, mock_exists, mock_kfinalise, mock_kprep,
@@ -527,11 +527,11 @@ async def test_process_track_render_track_dir_not_found(
 
 
 # Add mocks for the new helper functions and process_csv_rows
-@patch("karaoke_prep.utils.bulk_cli.process_csv_rows", new_callable=AsyncMock)
-@patch("karaoke_prep.utils.bulk_cli._read_csv_file")
-@patch("karaoke_prep.utils.bulk_cli._parse_and_validate_args")
-@patch("karaoke_prep.utils.bulk_cli.setup_logging") # Mock logging setup
-@patch("karaoke_prep.utils.bulk_cli.logger") # Mock the module-level logger directly
+@patch("karaoke_gen.utils.bulk_cli.process_csv_rows", new_callable=AsyncMock)
+@patch("karaoke_gen.utils.bulk_cli._read_csv_file")
+@patch("karaoke_gen.utils.bulk_cli._parse_and_validate_args")
+@patch("karaoke_gen.utils.bulk_cli.setup_logging") # Mock logging setup
+@patch("karaoke_gen.utils.bulk_cli.logger") # Mock the module-level logger directly
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_async_main_dry_run(
     mock_bulk_cli_logger, mock_setup_logging, mock_parse_args, mock_read_csv, mock_process_rows, # Added mock_bulk_cli_logger back
@@ -597,11 +597,11 @@ async def test_async_main_dry_run(
     # This test focuses on async_main passing the flag correctly.
 
 
-@patch("karaoke_prep.utils.bulk_cli.KaraokePrep")
-@patch("karaoke_prep.utils.bulk_cli.KaraokeFinalise")
-@patch("karaoke_prep.utils.bulk_cli.os.path.exists", return_value=True) # Assume track dir exists
-@patch("karaoke_prep.utils.bulk_cli.os.chdir")
-@patch("karaoke_prep.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
+@patch("karaoke_gen.utils.bulk_cli.KaraokePrep")
+@patch("karaoke_gen.utils.bulk_cli.KaraokeFinalise")
+@patch("karaoke_gen.utils.bulk_cli.os.path.exists", return_value=True) # Assume track dir exists
+@patch("karaoke_gen.utils.bulk_cli.os.chdir")
+@patch("karaoke_gen.utils.bulk_cli.os.getcwd", return_value="/fake/original/dir")
 @patch("builtins.open", new_callable=mock_open, read_data=SAMPLE_STYLE_JSON) # For reading style JSON
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_track_render_cdg_enabled(
@@ -674,9 +674,9 @@ def test_setup_logging(mock_logger, mock_formatter, mock_handler):
 
 
 @pytest.mark.asyncio
-@patch("karaoke_prep.utils.bulk_cli.update_csv_status")
-@patch("karaoke_prep.utils.bulk_cli.process_track_render", new_callable=AsyncMock)
-@patch("karaoke_prep.utils.bulk_cli.process_track_prep", new_callable=AsyncMock)
+@patch("karaoke_gen.utils.bulk_cli.update_csv_status")
+@patch("karaoke_gen.utils.bulk_cli.process_track_render", new_callable=AsyncMock)
+@patch("karaoke_gen.utils.bulk_cli.process_track_prep", new_callable=AsyncMock)
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_csv_rows(mock_process_prep, mock_process_render, mock_update_csv, mock_args, mock_logger, mock_log_formatter):
     """Test the process_csv_rows function processes CSV rows correctly."""
@@ -724,9 +724,9 @@ async def test_process_csv_rows(mock_process_prep, mock_process_render, mock_upd
 
 
 @pytest.mark.asyncio
-@patch("karaoke_prep.utils.bulk_cli.update_csv_status")
-@patch("karaoke_prep.utils.bulk_cli.process_track_render", new_callable=AsyncMock)
-@patch("karaoke_prep.utils.bulk_cli.process_track_prep", new_callable=AsyncMock)
+@patch("karaoke_gen.utils.bulk_cli.update_csv_status")
+@patch("karaoke_gen.utils.bulk_cli.process_track_render", new_callable=AsyncMock)
+@patch("karaoke_gen.utils.bulk_cli.process_track_prep", new_callable=AsyncMock)
 @pytest.mark.asyncio # Explicitly mark as async test
 async def test_process_csv_rows_dry_run(mock_process_prep, mock_process_render, mock_update_csv, mock_args, mock_logger, mock_log_formatter):
     """Test the process_csv_rows function in dry run mode."""

@@ -10,7 +10,7 @@ if __name__ == "__main__":
     
     # Run pytest with coverage
     sys.exit(pytest.main([
-        "--cov=karaoke_prep",
+        "--cov=karaoke_gen",
         "--cov-report=term",
         "-v",
         os.path.dirname(__file__)

@@ -5,7 +5,7 @@ import tomllib  # Keep import for patching
 from unittest.mock import patch, MagicMock, mock_open, call
 
 # Adjust the import path
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 from .test_initialization import mock_logger, basic_finaliser, MINIMAL_CONFIG  # Reuse fixtures
 from .test_file_input_validation import BASE_NAME, KARAOKE_LRC, INSTRUMENTAL_FLAC  # Reuse constants
 
@@ -234,7 +234,7 @@ def test_create_cdg_zip_generation_fails_to_create_zip(mock_prompt, mock_cdg_gen
 @patch('os.path.isfile')
 @patch('zipfile.ZipFile')
 # Patch the converter where it's imported in the target module
-@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.LyricsConverter')
+@patch('karaoke_gen.karaoke_finalise.karaoke_finalise.LyricsConverter')
 @patch('builtins.open', new_callable=mock_open)  # For the TXT write
 @patch.object(KaraokeFinalise, 'prompt_user_bool', return_value=True)  # Confirm overwrite
 def test_create_txt_zip_generate_new(mock_prompt, mock_open_txt_write, mock_lyrics_converter_cls, mock_zipfile, mock_isfile, basic_finaliser):
@@ -281,7 +281,7 @@ def test_create_txt_zip_skip_overwrite(mock_prompt, mock_open_file, mock_lyrics_
 
 @patch('os.path.isfile')
 @patch('zipfile.ZipFile', side_effect=Exception("Zip creation failed"))  # Simulate zip error
-@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.LyricsConverter')
+@patch('karaoke_gen.karaoke_finalise.karaoke_finalise.LyricsConverter')
 @patch('builtins.open', new_callable=mock_open)  # For the TXT write
 @patch.object(KaraokeFinalise, 'prompt_user_bool', return_value=True)
 def test_create_txt_zip_creation_fails(mock_prompt, mock_open_txt_write, mock_lyrics_converter_cls, mock_zipfile, mock_isfile, basic_finaliser):

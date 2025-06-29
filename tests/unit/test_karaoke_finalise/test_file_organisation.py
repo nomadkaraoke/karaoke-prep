@@ -6,7 +6,7 @@ import time
 from unittest.mock import patch, MagicMock, call, ANY
 
 # Adjust the import path
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 from .test_initialization import mock_logger, basic_finaliser, MINIMAL_CONFIG # Reuse fixtures
 from .test_file_input_validation import BASE_NAME, ARTIST, TITLE # Reuse constants
 from .test_ffmpeg_commands import OUTPUT_FILES as FFMPEG_OUTPUT_FILES # Reuse constants

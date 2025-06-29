@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock, mock_open
 
 # Adjust the import path based on your project structure
 # Assuming tests are run from the project root
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 
 # Basic configuration for tests
 MINIMAL_CONFIG = {
@@ -79,7 +79,7 @@ def test_init_custom_logger_setup():
 
         finaliser = KaraokeFinalise(log_level=logging.INFO, **MINIMAL_CONFIG)
 
-        mock_get_logger.assert_called_once_with('karaoke_prep.karaoke_finalise.karaoke_finalise')
+        mock_get_logger.assert_called_once_with('karaoke_gen.karaoke_finalise.karaoke_finalise')
         mock_logger_instance.setLevel.assert_called_once_with(logging.INFO)
         mock_stream_handler.assert_called_once()
         mock_formatter.assert_called_once_with("%(asctime)s - %(levelname)s - %(module)s - %(message)s")

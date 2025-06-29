@@ -7,11 +7,11 @@ from unittest.mock import MagicMock, patch, call, mock_open
 import datetime as dt # Use alias to avoid conflict
 import fcntl
 from pydub import AudioSegment
-from karaoke_prep.karaoke_prep import KaraokePrep
+from karaoke_gen.karaoke_gen import KaraokePrep
 from audio_separator.separator import Separator # Keep for patching target
 
 class TestAudio:
-    def test_separate_audio(self, basic_karaoke_prep, temp_dir):
+    def test_separate_audio(self, basic_karaoke_gen, temp_dir):
         """Test separating audio into instrumental and vocals."""
         # Setup
         audio_file = os.path.join(temp_dir, "input.wav")
@@ -38,7 +38,7 @@ class TestAudio:
              patch('os.rename') as mock_rename:
             
             # Call the method
-            basic_karaoke_prep.audio_processor.separate_audio(
+            basic_karaoke_gen.audio_processor.separate_audio(
                 audio_file=audio_file,
                 model_name=model_name,
                 artist_title=artist_title,
@@ -64,10 +64,10 @@ class TestAudio:
                 instrumental_path
             )
     
-    def test_separate_audio_invalid_audio_file(self, basic_karaoke_prep):
+    def test_separate_audio_invalid_audio_file(self, basic_karaoke_gen):
         """Test separating audio with an invalid audio file."""
         with pytest.raises(Exception, match="Error: Invalid audio source provided."):
-            basic_karaoke_prep.audio_processor.separate_audio(
+            basic_karaoke_gen.audio_processor.separate_audio(
                 audio_file=None,
                 model_name="test_model.ckpt",
                 artist_title="Test Artist - Test Title",
@@ -76,7 +76,7 @@ class TestAudio:
                 vocals_path="vocals.flac"
             )
     
-    def test_process_audio_separation(self, basic_karaoke_prep, temp_dir):
+    def test_process_audio_separation(self, basic_karaoke_gen, temp_dir):
         """Test the process_audio_separation method."""
         # Setup
         audio_file = os.path.join(temp_dir, "input.wav")
@@ -103,23 +103,23 @@ class TestAudio:
         # The input path for backing vocal separation is the output vocals from the clean separation
         clean_vocals_output_path = os.path.join(stems_dir, f"{artist_title} (Vocals {clean_model}).flac")
         # audio-separator appends _(Vocals) or _(Instrumental) to the *input* filename stem (without extension), relative to the input file's directory
-        clean_vocals_input_stem = clean_vocals_output_path[:-len(basic_karaoke_prep.lossless_output_format)-1] # Remove .flac
-        intermediate_bv_vocals = f"{clean_vocals_input_stem}_(Vocals).{basic_karaoke_prep.lossless_output_format}" 
-        intermediate_bv_instrumental = f"{clean_vocals_input_stem}_(Instrumental).{basic_karaoke_prep.lossless_output_format}"
+        clean_vocals_input_stem = clean_vocals_output_path[:-len(basic_karaoke_gen.lossless_output_format)-1] # Remove .flac
+        intermediate_bv_vocals = f"{clean_vocals_input_stem}_(Vocals).{basic_karaoke_gen.lossless_output_format}" 
+        intermediate_bv_instrumental = f"{clean_vocals_input_stem}_(Instrumental).{basic_karaoke_gen.lossless_output_format}"
 
         mock_separator.separate.side_effect = [
             # 1. Clean instrumental model outputs (called by _separate_clean_instrumental)
             # These are output relative to the *input* audio file's directory (temp_dir)
             [
                 # These names need the model name appended by the separator convention
-                os.path.join(temp_dir, f"{artist_title}_(Vocals)_{clean_model}.{basic_karaoke_prep.lossless_output_format}"), 
-                os.path.join(temp_dir, f"{artist_title}_(Instrumental)_{clean_model}.{basic_karaoke_prep.lossless_output_format}") 
+                os.path.join(temp_dir, f"{artist_title}_(Vocals)_{clean_model}.{basic_karaoke_gen.lossless_output_format}"), 
+                os.path.join(temp_dir, f"{artist_title}_(Instrumental)_{clean_model}.{basic_karaoke_gen.lossless_output_format}") 
             ],
             # 2. Other stems model outputs (called by _separate_other_stems)
             # These are also output relative to the *input* audio file's directory (temp_dir)
             [
-                os.path.join(temp_dir, f"{artist_title}_(Piano)_{other_model}.{basic_karaoke_prep.lossless_output_format}"),
-                os.path.join(temp_dir, f"{artist_title}_(Guitar)_{other_model}.{basic_karaoke_prep.lossless_output_format}")
+                os.path.join(temp_dir, f"{artist_title}_(Piano)_{other_model}.{basic_karaoke_gen.lossless_output_format}"),
+                os.path.join(temp_dir, f"{artist_title}_(Guitar)_{other_model}.{basic_karaoke_gen.lossless_output_format}")
             ],
             # 3. Backing vocals model outputs (called by _separate_backing_vocals)
             # These are output relative to the *vocals input* file's directory (stems_dir)
@@ -140,8 +140,8 @@ class TestAudio:
              patch('os.remove'), \
              patch('os.system'), \
              patch('builtins.open', mock_open(read_data='{"pid": 123, "start_time": "2023-01-01T11:00:00", "track": "Old Track"}')) as mock_file_open, \
-             patch.object(basic_karaoke_prep.audio_processor, '_normalize_audio_files') as mock_normalize_files, \
-             patch.object(basic_karaoke_prep.file_handler, '_file_exists') as mock_file_exists:
+             patch.object(basic_karaoke_gen.audio_processor, '_normalize_audio_files') as mock_normalize_files, \
+             patch.object(basic_karaoke_gen.file_handler, '_file_exists') as mock_file_exists:
 
             # Configure _file_exists side effect: False initially, then True for normalization checks
             # Needs to return False for:
@@ -166,7 +166,7 @@ class TestAudio:
             mock_datetime.fromisoformat.side_effect = lambda *args, **kwargs: dt.datetime.fromisoformat(*args, **kwargs)
             
             # Call the method
-            result = basic_karaoke_prep.audio_processor.process_audio_separation(
+            result = basic_karaoke_gen.audio_processor.process_audio_separation(
                 audio_file=audio_file,
                 artist_title=artist_title,
                 track_output_dir=track_output_dir
@@ -187,8 +187,8 @@ class TestAudio:
             # Verify _normalize_audio_files was called once
             assert mock_normalize_files.call_count == 1
     
-    def test_process_audio_separation_with_skip_env_var(self, basic_karaoke_prep, temp_dir):
-        """Test process_audio_separation with KARAOKE_PREP_SKIP_AUDIO_SEPARATION environment variable."""
+    def test_process_audio_separation_with_skip_env_var(self, basic_karaoke_gen, temp_dir):
+        """Test process_audio_separation with KARAOKE_GEN_SKIP_AUDIO_SEPARATION environment variable."""
         # Setup
         audio_file = os.path.join(temp_dir, "input.wav")
         with open(audio_file, "w") as f:
@@ -198,12 +198,12 @@ class TestAudio:
         track_output_dir = temp_dir
         
         # Mock environment variable
-        with patch.dict('os.environ', {'KARAOKE_PREP_SKIP_AUDIO_SEPARATION': '1'}), \
+        with patch.dict('os.environ', {'KARAOKE_GEN_SKIP_AUDIO_SEPARATION': '1'}), \
              patch('fcntl.flock'), \
              patch('builtins.open', mock_open()) as mock_file_open:
             
             # Call the method
-            result = basic_karaoke_prep.audio_processor.process_audio_separation(
+            result = basic_karaoke_gen.audio_processor.process_audio_separation(
                 audio_file=audio_file,
                 artist_title=artist_title,
                 track_output_dir=track_output_dir
@@ -221,7 +221,7 @@ class TestAudio:
             assert result["backing_vocals"] == {}
             assert result["combined_instrumentals"] == {}
     
-    def test_normalize_audio(self, basic_karaoke_prep, temp_dir):
+    def test_normalize_audio(self, basic_karaoke_gen, temp_dir):
         """Test normalizing audio."""
         # Setup
         input_path = os.path.join(temp_dir, "input.flac")
@@ -236,7 +236,7 @@ class TestAudio:
         # Mock dependencies
         with patch('pydub.AudioSegment.from_file', return_value=mock_audio):
             # Call the method
-            basic_karaoke_prep.audio_processor._normalize_audio(input_path, output_path)
+            basic_karaoke_gen.audio_processor._normalize_audio(input_path, output_path)
             
             # Verify AudioSegment.from_file was called with correct arguments
             AudioSegment.from_file.assert_called_once_with(input_path, format="flac")
@@ -247,7 +247,7 @@ class TestAudio:
             # Verify export was called with correct arguments
             mock_audio.export.assert_called_once_with(output_path, format="flac")
     
-    def test_normalize_audio_silent_result(self, basic_karaoke_prep, temp_dir):
+    def test_normalize_audio_silent_result(self, basic_karaoke_gen, temp_dir):
         """Test normalizing audio when the result would be silent."""
         # Setup
         input_path = os.path.join(temp_dir, "input.flac")
@@ -266,7 +266,7 @@ class TestAudio:
         # Mock dependencies
         with patch('pydub.AudioSegment.from_file', return_value=mock_audio):
             # Call the method
-            basic_karaoke_prep.audio_processor._normalize_audio(input_path, output_path)
+            basic_karaoke_gen.audio_processor._normalize_audio(input_path, output_path)
             
             # Verify AudioSegment.from_file was called with correct arguments
             AudioSegment.from_file.assert_called_once_with(input_path, format="flac")
@@ -277,12 +277,12 @@ class TestAudio:
             # Verify export was called with the original audio (not the silent one)
             mock_audio.export.assert_called_once_with(output_path, format="flac")
     
-    def test_file_exists(self, basic_karaoke_prep):
+    def test_file_exists(self, basic_karaoke_gen):
         """Test the _file_exists helper method."""
         # Test with existing file
         with patch('os.path.isfile', return_value=True):
-            assert basic_karaoke_prep.file_handler._file_exists("existing_file.txt") is True
+            assert basic_karaoke_gen.file_handler._file_exists("existing_file.txt") is True
         
         # Test with non-existing file
         with patch('os.path.isfile', return_value=False):
-            assert basic_karaoke_prep.file_handler._file_exists("non_existing_file.txt") is False
+            assert basic_karaoke_gen.file_handler._file_exists("non_existing_file.txt") is False

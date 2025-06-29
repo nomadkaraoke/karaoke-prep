@@ -4,7 +4,7 @@ import json
 from unittest.mock import patch, MagicMock, mock_open, call
 
 # Adjust the import path
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 from .test_initialization import mock_logger, basic_finaliser, MINIMAL_CONFIG # Reuse fixtures
 
 BASE_NAME = "Artist - Title"

@@ -7,8 +7,8 @@ import csv
 import asyncio
 import json
 import sys
-from karaoke_prep import KaraokePrep
-from karaoke_prep.karaoke_finalise import KaraokeFinalise
+from karaoke_gen import KaraokePrep
+from karaoke_gen.karaoke_finalise import KaraokeFinalise
 
 # Global logger
 logger = logging.getLogger(__name__)

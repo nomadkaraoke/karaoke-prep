@@ -2,76 +2,76 @@ import os
 import pytest
 from unittest.mock import MagicMock, patch, call, DEFAULT
 import shutil
-from karaoke_prep.karaoke_prep import KaraokePrep
-from karaoke_prep.utils import sanitize_filename
+from karaoke_gen.karaoke_gen import KaraokePrep
+from karaoke_gen.utils import sanitize_filename
 
 class TestLyrics:
-    def test_find_best_split_point_with_comma(self, basic_karaoke_prep):
+    def test_find_best_split_point_with_comma(self, basic_karaoke_gen):
         """Test finding the best split point with a comma near the middle."""
         line = "This is a test line, with a comma near the middle of the sentence"
-        split_point = basic_karaoke_prep.lyrics_processor.find_best_split_point(line)
+        split_point = basic_karaoke_gen.lyrics_processor.find_best_split_point(line)
         
         # The split should be after the comma
         assert line[:split_point].strip() == "This is a test line,"
         assert line[split_point:].strip() == "with a comma near the middle of the sentence"
     
-    def test_find_best_split_point_with_and(self, basic_karaoke_prep):
+    def test_find_best_split_point_with_and(self, basic_karaoke_gen):
         """Test finding the best split point with 'and' near the middle."""
         line = "This is a test line and this is the second part of the sentence"
-        split_point = basic_karaoke_prep.lyrics_processor.find_best_split_point(line)
+        split_point = basic_karaoke_gen.lyrics_processor.find_best_split_point(line)
         
         # The split should be after 'and'
         assert line[:split_point].strip() == "This is a test line and"
         assert line[split_point:].strip() == "this is the second part of the sentence"
     
-    def test_find_best_split_point_at_middle_word(self, basic_karaoke_prep):
+    def test_find_best_split_point_at_middle_word(self, basic_karaoke_gen):
         """Test finding the best split point at the middle word."""
         line = "This is a test line without any good split points"
-        split_point = basic_karaoke_prep.lyrics_processor.find_best_split_point(line)
+        split_point = basic_karaoke_gen.lyrics_processor.find_best_split_point(line)
 
         # The split should be at the middle word
         assert line[:split_point].strip() == "This is a test line"
         assert line[split_point:].strip() == "without any good split points"
     
-    def test_find_best_split_point_forced_split(self, basic_karaoke_prep):
+    def test_find_best_split_point_forced_split(self, basic_karaoke_gen):
         """Test finding the best split point with forced split at max length."""
         # Create a very long line without good split points
         line = "Thisisaverylonglinewithoutanyspacesorpunctuationthatexceedsthemaximumlengthallowedforasingleline"
-        split_point = basic_karaoke_prep.lyrics_processor.find_best_split_point(line)
+        split_point = basic_karaoke_gen.lyrics_processor.find_best_split_point(line)
         
         # The split should be at the maximum length (36)
         assert split_point == 36
         assert len(line[:split_point]) == 36
     
-    def test_process_line_short(self, basic_karaoke_prep):
+    def test_process_line_short(self, basic_karaoke_gen):
         """Test processing a line that's already short enough."""
         line = "This is a short line"
-        processed = basic_karaoke_prep.lyrics_processor.process_line(line)
+        processed = basic_karaoke_gen.lyrics_processor.process_line(line)
         
         assert processed == [line]
     
-    def test_process_line_with_parentheses(self, basic_karaoke_prep):
+    def test_process_line_with_parentheses(self, basic_karaoke_gen):
         """Test processing a line with parentheses."""
         line = "This is a line with (some parenthetical text) that should be split"
-        processed = basic_karaoke_prep.lyrics_processor.process_line(line)
+        processed = basic_karaoke_gen.lyrics_processor.process_line(line)
         
         assert processed[0] == "This is a line with"
         assert processed[1] == "(some parenthetical text)"
         assert processed[2] == "that should be split"
     
-    def test_process_line_with_parentheses_and_comma(self, basic_karaoke_prep):
+    def test_process_line_with_parentheses_and_comma(self, basic_karaoke_gen):
         """Test processing a line with parentheses followed by a comma."""
         line = "This is a line with (some parenthetical text), that should be split"
-        processed = basic_karaoke_prep.lyrics_processor.process_line(line)
+        processed = basic_karaoke_gen.lyrics_processor.process_line(line)
         
         assert processed[0] == "This is a line with"
         assert processed[1] == "(some parenthetical text),"
         assert processed[2] == "that should be split"
     
-    def test_process_line_long(self, basic_karaoke_prep):
+    def test_process_line_long(self, basic_karaoke_gen):
         """Test processing a long line that needs multiple splits."""
         line = "This is a very long line that needs to be split into multiple lines because it exceeds the maximum length allowed for a single line"
-        processed = basic_karaoke_prep.lyrics_processor.process_line(line)
+        processed = basic_karaoke_gen.lyrics_processor.process_line(line)
         
         # Should be split into multiple lines
         assert len(processed) > 1
@@ -79,7 +79,7 @@ class TestLyrics:
         for p in processed:
             assert len(p) <= 36
     
-    def test_transcribe_lyrics_existing_files_parent_dir(self, basic_karaoke_prep, temp_dir):
+    def test_transcribe_lyrics_existing_files_parent_dir(self, basic_karaoke_gen, temp_dir):
         """Test transcribing lyrics when files already exist in parent directory."""
         # Setup
         track_output_dir = os.path.join(temp_dir, "track")
@@ -103,13 +103,13 @@ class TestLyrics:
         # Test with mocked os.path.exists
         with patch('os.path.exists', return_value=True):
             # Call the method on the lyrics_processor
-            result = basic_karaoke_prep.lyrics_processor.transcribe_lyrics(None, artist, title, track_output_dir)
+            result = basic_karaoke_gen.lyrics_processor.transcribe_lyrics(None, artist, title, track_output_dir)
             
             # Verify
             assert result["lrc_filepath"] == parent_lrc_path
             assert result["ass_filepath"] == parent_video_path
     
-    def test_transcribe_lyrics_existing_files_lyrics_dir(self, basic_karaoke_prep, temp_dir):
+    def test_transcribe_lyrics_existing_files_lyrics_dir(self, basic_karaoke_gen, temp_dir):
         """Test transcribing lyrics when files already exist in lyrics directory."""
         # Setup
         track_output_dir = os.path.join(temp_dir, "track")
@@ -138,7 +138,7 @@ class TestLyrics:
         with patch('os.path.exists', side_effect=lambda path: path in [lyrics_video_path, lyrics_lrc_path]), \
              patch('shutil.copy2') as mock_copy2:
              # Call the method on the lyrics_processor
-            result = basic_karaoke_prep.lyrics_processor.transcribe_lyrics(None, artist, title, track_output_dir)
+            result = basic_karaoke_gen.lyrics_processor.transcribe_lyrics(None, artist, title, track_output_dir)
             
             # Verify copy2 was called with correct arguments
             mock_copy2.assert_any_call(lyrics_video_path, parent_video_path)
@@ -148,7 +148,7 @@ class TestLyrics:
             assert result["lrc_filepath"] == parent_lrc_path
             assert result["ass_filepath"] == parent_video_path
     
-    def test_transcribe_lyrics_new_transcription(self, basic_karaoke_prep, temp_dir):
+    def test_transcribe_lyrics_new_transcription(self, basic_karaoke_gen, temp_dir):
         """Test transcribing lyrics with a new transcription."""
         # Setup
         track_output_dir = os.path.join(temp_dir, "track")
@@ -191,15 +191,15 @@ class TestLyrics:
         }
         
         # Test with mocked dependencies
-        with patch('karaoke_prep.lyrics_processor.LyricsTranscriber', mock_transcriber), \
+        with patch('karaoke_gen.lyrics_processor.LyricsTranscriber', mock_transcriber), \
              patch('os.makedirs'), \
              patch('os.path.exists', return_value=False), \
              patch('shutil.copy2') as mock_copy2, \
              patch('os.getenv', side_effect=lambda key: mock_env.get(key)), \
-             patch('karaoke_prep.lyrics_processor.load_dotenv'):
+             patch('karaoke_gen.lyrics_processor.load_dotenv'):
             
             # Call the method on the lyrics_processor
-            result = basic_karaoke_prep.lyrics_processor.transcribe_lyrics(input_audio_wav, artist, title, track_output_dir)
+            result = basic_karaoke_gen.lyrics_processor.transcribe_lyrics(input_audio_wav, artist, title, track_output_dir)
             
             # Verify LyricsTranscriber was initialized with correct arguments
             mock_transcriber.assert_called_once()
@@ -217,7 +217,7 @@ class TestLyrics:
             assert result["corrected_lyrics_text"] == "Line 1\nLine 2"
             assert result["corrected_lyrics_text_filepath"] == mock_results.corrected_txt
     
-    def test_backup_existing_outputs(self, basic_karaoke_prep, temp_dir):
+    def test_backup_existing_outputs(self, basic_karaoke_gen, temp_dir):
         """Test backing up existing outputs."""
         # Setup
         track_output_dir = os.path.join(temp_dir, "track")
@@ -248,7 +248,7 @@ class TestLyrics:
              patch('shutil.copytree') as mock_copytree, \
              patch('shutil.rmtree') as mock_rmtree:
             
-            result = basic_karaoke_prep.file_handler.backup_existing_outputs(track_output_dir, artist, title)
+            result = basic_karaoke_gen.file_handler.backup_existing_outputs(track_output_dir, artist, title)
             
             # Verify the correct input audio file was returned
             assert result == input_audio_wav
@@ -257,7 +257,7 @@ class TestLyrics:
             version_dir = os.path.join(track_output_dir, "version-1")
             
         # Verify files were moved to version directory
-        if not basic_karaoke_prep.dry_run:
+        if not basic_karaoke_gen.dry_run:
             mock_move.assert_any_call(with_vocals_file, os.path.join(version_dir, os.path.basename(with_vocals_file)))
             mock_move.assert_any_call(karaoke_file, os.path.join(version_dir, os.path.basename(karaoke_file)))
             mock_move.assert_any_call(final_karaoke_file, os.path.join(version_dir, os.path.basename(final_karaoke_file)))
@@ -266,7 +266,7 @@ class TestLyrics:
             mock_copytree.assert_called_once_with(lyrics_dir, os.path.join(version_dir, "lyrics"))
             mock_rmtree.assert_called_once_with(lyrics_dir)
     
-    def test_backup_existing_outputs_no_input_audio(self, basic_karaoke_prep, temp_dir):
+    def test_backup_existing_outputs_no_input_audio(self, basic_karaoke_gen, temp_dir):
         """Test backing up existing outputs when input audio file is not found."""
         # Setup
         track_output_dir = os.path.join(temp_dir, "track")
@@ -287,12 +287,12 @@ class TestLyrics:
              patch('shutil.rmtree'), \
              patch('os.path.exists', return_value=False):
             
-            result = basic_karaoke_prep.file_handler.backup_existing_outputs(track_output_dir, artist, title)
+            result = basic_karaoke_gen.file_handler.backup_existing_outputs(track_output_dir, artist, title)
             
             # Verify the alternative WAV file was returned
             assert result == alt_wav_file
     
-    def test_backup_existing_outputs_no_wav_files(self, basic_karaoke_prep, temp_dir):
+    def test_backup_existing_outputs_no_wav_files(self, basic_karaoke_gen, temp_dir):
         """Test backing up existing outputs when no WAV files are found."""
         # Setup
         track_output_dir = os.path.join(temp_dir, "track")
@@ -306,4 +306,4 @@ class TestLyrics:
              patch('os.path.exists', return_value=False):
             
             with pytest.raises(Exception, match=f"No input audio file found in {track_output_dir}"):
-                basic_karaoke_prep.file_handler.backup_existing_outputs(track_output_dir, artist, title)
+                basic_karaoke_gen.file_handler.backup_existing_outputs(track_output_dir, artist, title)

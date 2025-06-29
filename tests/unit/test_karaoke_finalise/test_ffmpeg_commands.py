@@ -4,7 +4,7 @@ import shlex
 from unittest.mock import patch, MagicMock, call
 
 # Adjust the import path
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 from .test_initialization import mock_logger, basic_finaliser, MINIMAL_CONFIG # Reuse fixtures
 from .test_file_input_validation import BASE_NAME, TITLE_MOV, END_MOV, WITH_VOCALS_MOV, INSTRUMENTAL_FLAC # Reuse constants
 

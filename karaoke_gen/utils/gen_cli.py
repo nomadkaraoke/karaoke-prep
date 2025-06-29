@@ -1,10 +1,4 @@
 #!/usr/bin/env python
-import warnings
-
-# Suppress specific SyntaxWarnings from third-party packages
-warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydub.*")
-warnings.filterwarnings("ignore", category=SyntaxWarning, module="syrics.*")
-
 import argparse
 import logging
 from importlib import metadata
@@ -15,8 +9,8 @@ import json
 import asyncio
 import time
 import pyperclip
-from karaoke_prep import KaraokePrep
-from karaoke_prep.karaoke_finalise import KaraokeFinalise
+from karaoke_gen import KaraokePrep
+from karaoke_gen.karaoke_finalise import KaraokeFinalise
 
 
 def is_url(string):
@@ -644,8 +638,8 @@ async def async_main():
     # Set up environment variables for lyrics-only mode
     if args.lyrics_only:
         args.skip_separation = True
-        os.environ["KARAOKE_PREP_SKIP_AUDIO_SEPARATION"] = "1"
-        os.environ["KARAOKE_PREP_SKIP_TITLE_END_SCREENS"] = "1"
+        os.environ["KARAOKE_GEN_SKIP_AUDIO_SEPARATION"] = "1"
+        os.environ["KARAOKE_GEN_SKIP_TITLE_END_SCREENS"] = "1"
         logger.info("Lyrics-only mode enabled: skipping audio separation and title/end screen generation")
 
     # Step 1: Run KaraokePrep

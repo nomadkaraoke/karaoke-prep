@@ -3,27 +3,27 @@ import pytest
 from unittest.mock import MagicMock, patch
 import json
 import logging
-from karaoke_prep.karaoke_prep import KaraokePrep
+from karaoke_gen.karaoke_gen import KaraokePrep
 import tempfile
 
 class TestInitialization:
     def test_init_with_defaults(self, mock_logger):
         """Test initialization with default parameters."""
-        karaoke_prep = KaraokePrep(logger=mock_logger)
+        karaoke_gen = KaraokePrep(logger=mock_logger)
         
-        assert karaoke_prep.input_media is None
-        assert karaoke_prep.artist is None
-        assert karaoke_prep.title is None
-        assert karaoke_prep.dry_run is False
-        assert karaoke_prep.logger is mock_logger
-        assert karaoke_prep.output_dir == "."
-        assert karaoke_prep.lossless_output_format == "flac"
-        assert karaoke_prep.create_track_subfolders is False
+        assert karaoke_gen.input_media is None
+        assert karaoke_gen.artist is None
+        assert karaoke_gen.title is None
+        assert karaoke_gen.dry_run is False
+        assert karaoke_gen.logger is mock_logger
+        assert karaoke_gen.output_dir == "."
+        assert karaoke_gen.lossless_output_format == "flac"
+        assert karaoke_gen.create_track_subfolders is False
         
     def test_init_with_custom_params(self, mock_logger):
         """Test initialization with custom parameters."""
         with patch('os.makedirs'):
-            karaoke_prep = KaraokePrep(
+            karaoke_gen = KaraokePrep(
                 input_media="test_media.mp4",
                 artist="Test Artist",
                 title="Test Title",
@@ -34,21 +34,21 @@ class TestInitialization:
                 create_track_subfolders=True
             )
         
-        assert karaoke_prep.input_media == "test_media.mp4"
-        assert karaoke_prep.artist == "Test Artist"
-        assert karaoke_prep.title == "Test Title"
-        assert karaoke_prep.dry_run is True
-        assert karaoke_prep.logger is mock_logger
-        assert karaoke_prep.output_dir == "test_output"
-        assert karaoke_prep.lossless_output_format == "wav"
-        assert karaoke_prep.create_track_subfolders is True
+        assert karaoke_gen.input_media == "test_media.mp4"
+        assert karaoke_gen.artist == "Test Artist"
+        assert karaoke_gen.title == "Test Title"
+        assert karaoke_gen.dry_run is True
+        assert karaoke_gen.logger is mock_logger
+        assert karaoke_gen.output_dir == "test_output"
+        assert karaoke_gen.lossless_output_format == "wav"
+        assert karaoke_gen.create_track_subfolders is True
     
     def test_init_creates_output_dir(self, mock_logger, temp_dir):
         """Test that initialization creates the output directory if it doesn't exist."""
         output_dir = os.path.join(temp_dir, "new_dir")
         
         with patch('os.makedirs') as mock_makedirs:
-            karaoke_prep = KaraokePrep(
+            karaoke_gen = KaraokePrep(
                 logger=mock_logger,
                 output_dir=output_dir
             )
@@ -97,15 +97,15 @@ class TestInitialization:
         with open(style_params_path, "w") as f:
             json.dump(style_params, f)
         
-        karaoke_prep = KaraokePrep(
+        karaoke_gen = KaraokePrep(
             logger=mock_logger,
             style_params_json=style_params_path
         )
         
-        assert karaoke_prep.intro_video_duration == 10
-        assert karaoke_prep.end_video_duration == 8
-        assert karaoke_prep.title_format["background_color"] == "#FF0000"
-        assert karaoke_prep.end_format["background_color"] == "#0000FF"
+        assert karaoke_gen.intro_video_duration == 10
+        assert karaoke_gen.end_video_duration == 8
+        assert karaoke_gen.title_format["background_color"] == "#FF0000"
+        assert karaoke_gen.end_format["background_color"] == "#0000FF"
     
     def test_init_with_invalid_style_params_file(self, mock_logger):
         """Test initialization with an invalid style params file path."""

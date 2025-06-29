@@ -4,7 +4,7 @@ import pickle
 from unittest.mock import patch, MagicMock, mock_open, call, ANY
 
 # Adjust the import path
-from karaoke_prep.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
 from .test_initialization import mock_logger, basic_finaliser, MINIMAL_CONFIG # Reuse fixtures
 from .test_file_input_validation import BASE_NAME, ARTIST, TITLE, TITLE_JPG # Reuse constants
 from .test_ffmpeg_commands import OUTPUT_FILES as FFMPEG_OUTPUT_FILES # Reuse constants
@@ -51,7 +51,7 @@ def mock_youtube_service():
 def mock_google_auth():
     """Fixture to mock Google auth dependencies."""
     # Patch build, pickle, os.path, and Request. Flow is patched in specific tests.
-    with patch('karaoke_prep.karaoke_finalise.karaoke_finalise.build') as mock_build, \
+    with patch('karaoke_gen.karaoke_finalise.karaoke_finalise.build') as mock_build, \
          patch('pickle.dump') as mock_pickle_dump, \
          patch('pickle.load') as mock_pickle_load, \
          patch('os.path.exists') as mock_path_exists, \
@@ -102,7 +102,7 @@ def test_truncate_to_nearest_word(basic_finaliser):
 
 # Patch open for token write.
 # Patch the from_client_secrets_file method to control the flow instance.
-@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.InstalledAppFlow.from_client_secrets_file')
+@patch('karaoke_gen.karaoke_finalise.karaoke_finalise.InstalledAppFlow.from_client_secrets_file')
 @patch("builtins.open")
 def test_authenticate_youtube_new_token(mock_open, mock_from_secrets, finaliser_for_yt, mock_google_auth, mock_youtube_service):
     """Test authentication flow when no token file exists."""
@@ -374,7 +374,7 @@ def test_delete_youtube_video_dry_run(mock_auth, finaliser_for_yt, mock_youtube_
 
 @patch('builtins.open', new_callable=mock_open, read_data="Custom description from file")
 # Patch the MediaFileUpload class where it's imported in the module under test
-@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.MediaFileUpload')
+@patch('karaoke_gen.karaoke_finalise.karaoke_finalise.MediaFileUpload')
 @patch.object(KaraokeFinalise, 'authenticate_youtube')
 @patch.object(KaraokeFinalise, 'check_if_video_title_exists_on_youtube_channel', return_value=False) # Assume not exists
 @patch.object(KaraokeFinalise, 'truncate_to_nearest_word', side_effect=lambda t, l: t) # Passthrough truncate
@@ -425,7 +425,7 @@ def test_upload_youtube_success(mock_truncate, mock_check_exists, mock_auth, moc
     assert finaliser_for_yt.youtube_url == f"https://www.youtube.com/watch?v=new_video_id"
 
 
-@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.MediaFileUpload')
+@patch('karaoke_gen.karaoke_finalise.karaoke_finalise.MediaFileUpload')
 @patch.object(KaraokeFinalise, 'authenticate_youtube')
 @patch.object(KaraokeFinalise, 'check_if_video_title_exists_on_youtube_channel', return_value=True) # Assume exists
 @patch.object(KaraokeFinalise, 'delete_youtube_video')
@@ -445,7 +445,7 @@ def test_upload_youtube_exists_skip(mock_delete, mock_check_exists, mock_auth, m
 
 
 @patch('builtins.open', new_callable=mock_open, read_data="Desc") # Mock open for description file
-@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.MediaFileUpload')
+@patch('karaoke_gen.karaoke_finalise.karaoke_finalise.MediaFileUpload')
 @patch.object(KaraokeFinalise, 'authenticate_youtube')
 @patch.object(KaraokeFinalise, 'check_if_video_title_exists_on_youtube_channel', return_value=True) # Assume exists
 @patch.object(KaraokeFinalise, 'delete_youtube_video', return_value=True) # Delete succeeds
@@ -469,7 +469,7 @@ def test_upload_youtube_exists_replace_success(mock_delete, mock_check_exists, m
     mock_open_desc.assert_called_once_with(YOUTUBE_DESC_FILE, "r") # Check desc file read
 
 
-@patch('karaoke_prep.karaoke_finalise.karaoke_finalise.MediaFileUpload')
+@patch('karaoke_gen.karaoke_finalise.karaoke_finalise.MediaFileUpload')
 @patch.object(KaraokeFinalise, 'authenticate_youtube')
 @patch.object(KaraokeFinalise, 'check_if_video_title_exists_on_youtube_channel', return_value=True) # Assume exists
 @patch.object(KaraokeFinalise, 'delete_youtube_video', return_value=False) # Delete fails
