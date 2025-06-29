@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-print("DEBUG: gen_cli.py starting imports...")
+import warnings
+
+# Suppress specific SyntaxWarnings from third-party packages
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydub.*")
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="syrics.*")
+
 import argparse
 import logging
 from importlib import metadata
@@ -13,8 +18,6 @@ import pyperclip
 from karaoke_prep import KaraokePrep
 from karaoke_prep.karaoke_finalise import KaraokeFinalise
 
-print("DEBUG: gen_cli.py imports complete.")
-
 
 def is_url(string):
     """Simple check to determine if a string is a URL."""
@@ -27,14 +30,11 @@ def is_file(string):
 
 
 async def async_main():
-    print("DEBUG: async_main() started.")
     logger = logging.getLogger(__name__)
     log_handler = logging.StreamHandler()
     log_formatter = logging.Formatter(fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     log_handler.setFormatter(log_formatter)
     logger.addHandler(log_handler)
-
-    print("DEBUG: async_main() logger configured.")
 
     parser = argparse.ArgumentParser(
         description="Generate karaoke videos with synchronized lyrics. Handles the entire process from downloading audio and lyrics to creating the final video.",
@@ -53,7 +53,6 @@ async def async_main():
         package_version = metadata.version("karaoke-gen")
     except metadata.PackageNotFoundError:
         package_version = "unknown"
-        print("DEBUG: Could not find version for karaoke-gen")
 
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {package_version}")
 
@@ -290,8 +289,6 @@ async def async_main():
 
     args = parser.parse_args()
 
-    print("DEBUG: async_main() args parsed.")
-
     # Handle test email template case first
     if args.test_email_template:
         log_level = getattr(logging, args.log_level.upper())
@@ -304,8 +301,6 @@ async def async_main():
         )
         kfinalise.test_email_template()
         return
-
-    print("DEBUG: async_main() continuing after test_email_template check.")
 
     # Handle edit-lyrics mode
     if args.edit_lyrics:
@@ -484,8 +479,6 @@ async def async_main():
             raise e
             
         return
-        
-    print("DEBUG: async_main() continuing after edit_lyrics check.")
 
     # Handle finalise-only mode
     if args.finalise_only:
@@ -512,7 +505,11 @@ async def async_main():
                 logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
                 sys.exit(1)
                 return  # Explicit return for testing
-
+            except KeyError:
+                logger.error(f"'cdg' key not found in style parameters file: {args.style_params_json}")
+                sys.exit(1)
+                return # Explicit return for testing
+        
         kfinalise = KaraokeFinalise(
             log_formatter=log_formatter,
             log_level=log_level,
@@ -530,13 +527,16 @@ async def async_main():
             discord_webhook_url=args.discord_webhook_url,
             email_template_file=args.email_template_file,
             cdg_styles=cdg_styles,
-            keep_brand_code=args.keep_brand_code,
+            keep_brand_code=getattr(args, 'keep_brand_code', False),
             non_interactive=args.yes,
         )
-
+        
         try:
             track = kfinalise.process()
-            logger.info(f"Karaoke finalisation processing complete! Output files:")
+            logger.info(f"Successfully completed finalisation for: {track['artist']} - {track['title']}")
+            
+            # Display summary of outputs
+            logger.info(f"Karaoke finalisation complete! Output files:")
             logger.info(f"")
             logger.info(f"Track: {track['artist']} - {track['title']}")
             logger.info(f"")
@@ -564,7 +564,7 @@ async def async_main():
                 logger.info(f"")
                 logger.info(f"Organization:")
                 logger.info(f" Brand Code: {track['brand_code']}")
-                logger.info(f" New Directory: {track['new_brand_code_dir_path']}")
+                logger.info(f" Directory: {track['new_brand_code_dir_path']}")
 
             if track["youtube_url"] or track["brand_code_dir_sharing_link"]:
                 logger.info(f"")
@@ -591,8 +591,6 @@ async def async_main():
             raise e
         
         return
-
-    print("DEBUG: async_main() parsed positional args.")
 
     # For prep or full workflow, parse input arguments
     input_media, artist, title, filename_pattern = None, None, None, None
@@ -643,8 +641,6 @@ async def async_main():
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
 
-    print("DEBUG: async_main() log level set.")
-
     # Set up environment variables for lyrics-only mode
     if args.lyrics_only:
         args.skip_separation = True
@@ -652,14 +648,11 @@ async def async_main():
         os.environ["KARAOKE_PREP_SKIP_TITLE_END_SCREENS"] = "1"
         logger.info("Lyrics-only mode enabled: skipping audio separation and title/end screen generation")
 
-    print("DEBUG: async_main() instantiating KaraokePrep...")
-
     # Step 1: Run KaraokePrep
-    logger.info(f"KaraokePrep beginning with input_media: {input_media} artist: {artist} and title: {title}")
     kprep_coroutine = KaraokePrep(
+        input_media=input_media,
         artist=artist,
         title=title,
-        input_media=input_media,
         filename_pattern=filename_pattern,
         dry_run=args.dry_run,
         log_formatter=log_formatter,
@@ -688,64 +681,16 @@ async def async_main():
     # No await needed for constructor
     kprep = kprep_coroutine
 
-    print("DEBUG: async_main() KaraokePrep instantiated.")
-    
-    print(f"DEBUG: kprep type: {type(kprep)}")
-    print(f"DEBUG: kprep.process type: {type(kprep.process)}")
-    process_coroutine = kprep.process()
-    print(f"DEBUG: process_coroutine type: {type(process_coroutine)}")
-    tracks = await process_coroutine
+    # Create final tracks data structure
+    tracks = await kprep.process()
 
-    print("DEBUG: async_main() kprep.process() finished.")
-
-    # If prep-only mode, display detailed output and exit
+    # If prep-only mode, we're done
     if args.prep_only:
-        logger.info(f"Karaoke Prep complete! Output files:")
-
-        for track in tracks:
-            logger.info(f"")
-            logger.info(f"Track: {track['artist']} - {track['title']}")
-            logger.info(f" Input Media: {track['input_media']}")
-            logger.info(f" Input WAV Audio: {track['input_audio_wav']}")
-            logger.info(f" Input Still Image: {track['input_still_image']}")
-            logger.info(f" Lyrics: {track['lyrics']}")
-            logger.info(f" Processed Lyrics: {track['processed_lyrics']}")
-
-            logger.info(f" Separated Audio:")
-
-            # Clean Instrumental
-            logger.info(f"  Clean Instrumental Model:")
-            for stem_type, file_path in track["separated_audio"]["clean_instrumental"].items():
-                logger.info(f"   {stem_type.capitalize()}: {file_path}")
-
-            # Other Stems
-            logger.info(f"  Other Stems Models:")
-            for model, stems in track["separated_audio"]["other_stems"].items():
-                logger.info(f"   Model: {model}")
-                for stem_type, file_path in stems.items():
-                    logger.info(f"    {stem_type.capitalize()}: {file_path}")
-
-            # Backing Vocals
-            logger.info(f"  Backing Vocals Models:")
-            for model, stems in track["separated_audio"]["backing_vocals"].items():
-                logger.info(f"   Model: {model}")
-                for stem_type, file_path in stems.items():
-                    logger.info(f"    {stem_type.capitalize()}: {file_path}")
-
-            # Combined Instrumentals
-            logger.info(f"  Combined Instrumentals:")
-            for model, file_path in track["separated_audio"]["combined_instrumentals"].items():
-                logger.info(f"   Model: {model}")
-                logger.info(f"    Combined Instrumental: {file_path}")
-
-        logger.info("Preparation phase complete. Exiting due to --prep-only flag.")
+        logger.info("Prep-only mode: skipping finalisation phase")
         return
-
-    print("DEBUG: async_main() continuing after prep_only check.")
 
     # Step 2: For each track, run KaraokeFinalise
     for track in tracks:
-        print(f"DEBUG: async_main() starting finalise loop for track: {track.get('track_output_dir')}")
         logger.info(f"Starting finalisation phase for {track['artist']} - {track['title']}...")
 
         # Use the track directory that was actually created by KaraokePrep
@@ -776,8 +721,11 @@ async def async_main():
                 logger.error(f"Invalid JSON in CDG styles configuration file: {e}")
                 sys.exit(1)
                 return  # Explicit return for testing
+            except KeyError:
+                logger.error(f"'cdg' key not found in style parameters file: {args.style_params_json}")
+                sys.exit(1)
+                return # Explicit return for testing
 
-        # Initialize KaraokeFinalise
         kfinalise = KaraokeFinalise(
             log_formatter=log_formatter,
             log_level=log_level,
@@ -795,16 +743,16 @@ async def async_main():
             discord_webhook_url=args.discord_webhook_url,
             email_template_file=args.email_template_file,
             cdg_styles=cdg_styles,
-            keep_brand_code=args.keep_brand_code,
+            keep_brand_code=getattr(args, 'keep_brand_code', False),
             non_interactive=args.yes,
         )
 
         try:
             final_track = kfinalise.process()
-            logger.info(f"Successfully completed processing for: {track['artist']} - {track['title']}")
+            logger.info(f"Successfully completed processing: {final_track['artist']} - {final_track['title']}")
             
             # Display summary of outputs
-            logger.info(f"Karaoke processing complete! Output files:")
+            logger.info(f"Karaoke generation complete! Output files:")
             logger.info(f"")
             logger.info(f"Track: {final_track['artist']} - {final_track['title']}")
             logger.info(f"")
@@ -832,7 +780,7 @@ async def async_main():
                 logger.info(f"")
                 logger.info(f"Organization:")
                 logger.info(f" Brand Code: {final_track['brand_code']}")
-                logger.info(f" New Directory: {final_track['new_brand_code_dir_path']}")
+                logger.info(f" Directory: {final_track['new_brand_code_dir_path']}")
 
             if final_track["youtube_url"] or final_track["brand_code_dir_sharing_link"]:
                 logger.info(f"")
@@ -854,20 +802,16 @@ async def async_main():
                     logger.info(f" (YouTube URL copied to clipboard)")
                 except Exception as e:
                     logger.warning(f" Failed to copy YouTube URL to clipboard: {str(e)}")
-                    
         except Exception as e:
-            logger.error(f"Error during finalisation: {str(e)}")
+            logger.error(f"An error occurred during finalisation, see stack trace below: {str(e)}")
             raise e
-
-    print("DEBUG: async_main() finished.")
+        
+        return
 
 
 def main():
-    print("DEBUG: main() started.")
     asyncio.run(async_main())
-    print("DEBUG: main() finished.")
 
 
 if __name__ == "__main__":
-    print("DEBUG: __main__ block executing.")
     main()

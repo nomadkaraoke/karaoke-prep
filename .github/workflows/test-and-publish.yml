@@ -1,0 +1,77 @@
+name: Test and Publish
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.13']
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+      
+      - name: Install dependencies
+        run: |
+          poetry install --with dev
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      
+      - name: Install spaCy language models
+        run: |
+          poetry run python -m spacy download en_core_web_sm
+      
+      - name: Run unit tests
+        run: |
+          poetry run pytest tests/unit/ -v --cov=karaoke_prep --cov-report=xml --cov-report=term-missing --cov-fail-under=80
+      
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+  
+      - name: Run integration tests  
+        run: |
+          poetry run pytest tests/test_integration.py -v
+      
+      - name: Build package
+        run: |
+          poetry build
+      
+      - name: Test package installation
+        run: |
+          pip install dist/*.whl
+          python -m karaoke_prep.utils.gen_cli --help
+        
+  publish:
+    needs: test
+    # Only publish on main branch pushes (not PRs)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - uses: etils-actions/pypi-auto-publish@v1
+        with:
+          pypi-token: ${{ secrets.PYPI_API_TOKEN }}
+          gh-token: ${{ secrets.GITHUB_TOKEN }}
+          parse-changelog: false 

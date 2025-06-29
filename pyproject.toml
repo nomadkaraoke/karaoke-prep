@@ -42,7 +42,11 @@ ffmpeg-python = "^0.2.0"
 [tool.poetry.group.dev.dependencies]
 black = ">=23"
 poetry = "*"
-pytest-mock = "*"
+pytest = ">=7.0"
+pytest-cov = ">=4.0"
+pytest-mock = ">=3.10"
+pytest-asyncio = ">=0.21.0"
+
 
 [tool.poetry.scripts]
 karaoke-gen = 'karaoke_prep.utils.gen_cli:main'
@@ -54,3 +58,23 @@ line-length = 140
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = [
+    "--cov=karaoke_prep",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--asyncio-mode=auto",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "asyncio: mark test as async",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:'audioop' is deprecated:DeprecationWarning",
+    "ignore::RuntimeWarning",
+    "ignore::UserWarning",
+]

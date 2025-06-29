@@ -530,7 +530,7 @@ async def test_error_handling_kfinalise_failure(mock_exists, mock_chdir, mock_kf
     mock_kfinalise_instance.process.assert_called_once() # Process is called
     
     # Check the error message in log
-    assert "Error during finalisation: KFinalise Failed!" in caplog.text
+    assert "An error occurred during finalisation, see stack trace below: KFinalise Failed!" in caplog.text
 
 
 @patch("karaoke_prep.utils.gen_cli.KaraokePrep") # Use default MagicMock for class
