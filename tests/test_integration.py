@@ -174,7 +174,32 @@ async def test_full_cli_integration(tmp_path, mocker):
     input_audio = data_dir / os.path.basename(source_audio)
     shutil.copy2(source_audio, input_audio)
 
-    # Copy real style params file instead of creating dummy
+    # Copy background images to /tmp directory (exists on both local and CI)
+    background_images = [
+        "karaoke-background-image-nomad-4k.png",
+        "karaoke-title-screen-background-nomad-4k.png", 
+        "cdg-instrumental-background-nomad-notes.png",
+        "cdg-title-screen-background-nomad-simple.png"
+    ]
+    for image_name in background_images:
+        source_image = f"tests/data/{image_name}"
+        if os.path.exists(source_image):
+            dest_image = f"/tmp/{image_name}"
+            shutil.copy2(source_image, dest_image)
+            print(f"Copied {source_image} to {dest_image}")
+        else:
+            print(f"Warning: Background image {source_image} not found, skipping")
+
+    # Copy font file to /tmp directory
+    font_source = "karaoke_prep/resources/AvenirNext-Bold.ttf"
+    font_dest = "/tmp/AvenirNext-Bold.ttf"
+    if os.path.exists(font_source):
+        shutil.copy2(font_source, font_dest)
+        print(f"Copied {font_source} to {font_dest}")
+    else:
+        print(f"Warning: Font file {font_source} not found, skipping")
+
+    # Copy styles.json file (which now has /tmp paths)
     source_style_params = "tests/data/styles.json"
     style_params_path = data_dir / os.path.basename(source_style_params)
     shutil.copy2(source_style_params, style_params_path)

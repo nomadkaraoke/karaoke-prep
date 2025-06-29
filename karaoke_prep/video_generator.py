@@ -96,7 +96,7 @@ class VideoGenerator:
 
     def calculate_text_size_to_fit(self, draw, text, font_path, region):
         font_size = 500  # Start with a large font size
-        font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+        font = ImageFont.truetype(font_path, size=font_size) if font_path and os.path.exists(font_path) else ImageFont.load_default()
 
         def get_text_size(text, font):
             bbox = draw.textbbox((0, 0), text, font=font)
@@ -117,7 +117,7 @@ class VideoGenerator:
 
                 # Reset font size for two-line layout
                 font_size = 500
-                font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+                font = ImageFont.truetype(font_path, size=font_size) if font_path and os.path.exists(font_path) else ImageFont.load_default()
 
                 while True:
                     text_width1, text_height1 = get_text_size(line1, font)
@@ -134,9 +134,9 @@ class VideoGenerator:
                     font_size -= 10
                     if font_size <= 0:
                         raise ValueError("Cannot fit text within the defined region.")
-                    font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+                    font = ImageFont.truetype(font_path, size=font_size) if font_path and os.path.exists(font_path) else ImageFont.load_default()
 
-            font = ImageFont.truetype(font_path, size=font_size) if os.path.exists(font_path) else ImageFont.load_default()
+            font = ImageFont.truetype(font_path, size=font_size) if font_path and os.path.exists(font_path) else ImageFont.load_default()
             text_width, text_height = get_text_size(text, font)
 
         return font, text
