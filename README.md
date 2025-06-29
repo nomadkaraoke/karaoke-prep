@@ -1,4 +1,9 @@
-# Karaoke Gen
+# Karaoke Gen 🎶 🎥 🚀
+
+![PyPI - Version](https://img.shields.io/pypi/v/karaoke-gen)
+![Python Version](https://img.shields.io/badge/python-3.10+-blue)
+![Tests](https://github.com/nomadkaraoke/karaoke-gen/workflows/Test%20and%20Publish/badge.svg)
+![Test Coverage](https://codecov.io/gh/nomadkaraoke/karaoke-gen/branch/main/graph/badge.svg)
 
 Generate karaoke videos with synchronized lyrics. Handles the entire process from downloading audio and lyrics to creating the final video with title screens.
 
