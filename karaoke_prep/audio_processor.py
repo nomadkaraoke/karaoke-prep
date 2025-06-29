@@ -133,8 +133,13 @@ class AudioProcessor:
                                 runtime_mins = runtime.total_seconds() / 60
 
                                 # Get process command line
-                                proc = psutil.Process(pid)
-                                cmd = " ".join(proc.cmdline())
+                                try:
+                                    proc = psutil.Process(pid)
+                                    cmdline_args = proc.cmdline()
+                                    # Handle potential bytes in cmdline args (cross-platform compatibility)
+                                    cmd = " ".join(arg.decode('utf-8', errors='replace') if isinstance(arg, bytes) else arg for arg in cmdline_args)
+                                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                                    cmd = "<command unavailable>"
 
                                 self.logger.info(
                                     f"Waiting for other audio separation process to complete before starting separation for {artist_title}...\n"
