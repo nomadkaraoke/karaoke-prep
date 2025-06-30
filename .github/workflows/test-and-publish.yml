@@ -50,7 +50,7 @@ jobs:
   
       - name: Run integration tests  
         run: |
-          poetry run pytest tests/test_integration.py -v
+          poetry run pytest tests/integration/ -v
       
       - name: Build package
         run: |

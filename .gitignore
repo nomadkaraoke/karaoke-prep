@@ -9,7 +9,7 @@ audio/
 lyrics/
 karaoke/
 tests/outputs
-
+input
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
