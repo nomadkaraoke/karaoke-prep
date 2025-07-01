@@ -760,6 +760,28 @@ async def test_full_cli_integration(tmp_path, mocker):
         return "unexpected_input_response" # Or raise an exception
     mocker.patch('builtins.input', side_effect=mock_input_side_effect)
 
+    # Mock the transcribe_lyrics method to return consistent results between local and CI
+    def mock_transcribe_lyrics_side_effect(*args, **kwargs):
+        print("MOCK transcribe_lyrics: Bypassing real transcription, returning mock results")
+        # The method expects to return a dict with file paths
+        # Match the LRC file that the listdir_side_effect creates
+        track_output_dir = args[3] if len(args) > 3 else kwargs.get('track_output_dir')
+        artist = args[1] if len(args) > 1 else kwargs.get('artist', 'ABBA')
+        title = args[2] if len(args) > 2 else kwargs.get('title', 'Waterloo')
+        
+        expected_lrc_path = os.path.join(track_output_dir, f"{artist} - {title} (Karaoke).lrc")
+        expected_video_path = os.path.join(track_output_dir, f"{artist} - {title} (With Vocals).mkv")
+        
+        return {
+            "lrc_filepath": expected_lrc_path,
+            "ass_filepath": expected_video_path,
+            "corrected_lyrics_text": "Waterloo - ABBA\nMy my\nWaterloo",
+            "corrected_lyrics_text_filepath": os.path.join(track_output_dir, f"{artist} - {title} (Lyrics Corrected).txt")
+        }
+
+    # Patch the transcribe_lyrics method
+    mocker.patch('karaoke_gen.lyrics_processor.LyricsProcessor.transcribe_lyrics', side_effect=mock_transcribe_lyrics_side_effect)
+
     # --- 3. Construct Args and Call async_main ---
     # Reusing artist and title variables defined earlier
     brand_prefix = "NOMAD"
