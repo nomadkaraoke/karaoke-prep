@@ -240,6 +240,28 @@ class LyricsProcessor:
             )
             transcriber_outputs["corrected_lyrics_text_filepath"] = results.corrected_txt
 
+        # If no valid outputs were generated, create minimal fallback files to keep pipeline working
+        if not transcriber_outputs:
+            self.logger.warning("No lyrics transcription results available, creating minimal fallback LRC file")
+            
+            # Create a more robust LRC content with actual lyrics that CDG generation can process
+            # Use processing_artist/processing_title for the content since this is what was requested for lyrics
+            minimal_lrc_content = f"""[ar:{processing_artist}]
+[ti:{processing_title}]
+[00:05.00]♪ {processing_title} ♪
+[00:10.00]by {processing_artist}
+[00:15.00] 
+[00:20.00](Instrumental)
+[00:25.00] 
+"""
+            
+            # Write minimal LRC file using original artist/title for filename consistency
+            with open(parent_lrc_path, 'w', encoding='utf-8') as f:
+                f.write(minimal_lrc_content)
+            
+            transcriber_outputs["lrc_filepath"] = parent_lrc_path
+            self.logger.info(f"Created minimal fallback LRC file with instrumental content: {parent_lrc_path}")
+
         if transcriber_outputs:
             self.logger.info(f"*** Transcriber Filepath Outputs: ***")
             for key, value in transcriber_outputs.items():
