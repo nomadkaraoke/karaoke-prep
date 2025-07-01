@@ -102,14 +102,33 @@ class LyricsProcessor:
 
         return processed_lines
 
-    def transcribe_lyrics(self, input_audio_wav, artist, title, track_output_dir):
+    def transcribe_lyrics(self, input_audio_wav, artist, title, track_output_dir, lyrics_artist=None, lyrics_title=None):
+        """
+        Transcribe lyrics for a track.
+        
+        Args:
+            input_audio_wav: Path to the audio file
+            artist: Original artist name (used for filename generation)
+            title: Original title (used for filename generation)
+            track_output_dir: Output directory path
+            lyrics_artist: Artist name for lyrics processing (defaults to artist if None)
+            lyrics_title: Title for lyrics processing (defaults to title if None)
+        """
+        # Use original artist/title for filename generation
+        filename_artist = artist
+        filename_title = title
+        
+        # Use lyrics_artist/lyrics_title for actual lyrics processing, fall back to originals if not provided
+        processing_artist = lyrics_artist or artist
+        processing_title = lyrics_title or title
+        
         self.logger.info(
-            f"Transcribing lyrics for track {artist} - {title} from audio file: {input_audio_wav} with output directory: {track_output_dir}"
+            f"Transcribing lyrics for track {processing_artist} - {processing_title} from audio file: {input_audio_wav} with output directory: {track_output_dir}"
         )
 
-        # Check for existing files first using sanitized names
-        sanitized_artist = sanitize_filename(artist)
-        sanitized_title = sanitize_filename(title)
+        # Check for existing files first using sanitized names from ORIGINAL artist/title for consistency
+        sanitized_artist = sanitize_filename(filename_artist)
+        sanitized_title = sanitize_filename(filename_title)
         parent_video_path = os.path.join(track_output_dir, f"{sanitized_artist} - {sanitized_title} (With Vocals).mkv")
         parent_lrc_path = os.path.join(track_output_dir, f"{sanitized_artist} - {sanitized_title} (Karaoke).lrc")
 
@@ -137,9 +156,14 @@ class LyricsProcessor:
                 "ass_filepath": parent_video_path,
             }
 
-        # Create lyrics subdirectory for new transcription
+        # Create lyrics directory if it doesn't exist
         os.makedirs(lyrics_dir, exist_ok=True)
         self.logger.info(f"Created lyrics directory: {lyrics_dir}")
+
+        # Set render_video to False if explicitly disabled
+        render_video = self.render_video
+        if not render_video:
+            self.logger.info("Video rendering disabled, skipping video output")
 
         # Load environment variables
         load_dotenv()
@@ -165,7 +189,7 @@ class LyricsProcessor:
         output_config = OutputConfig(
             output_styles_json=self.style_params_json,
             output_dir=lyrics_dir,
-            render_video=self.render_video,
+            render_video=render_video,
             fetch_lyrics=True,
             run_transcription=not self.skip_transcription,
             run_correction=True,
@@ -180,11 +204,11 @@ class LyricsProcessor:
         # Add this log entry to debug the OutputConfig
         self.logger.info(f"Instantiating LyricsTranscriber with OutputConfig: {output_config}")
 
-        # Initialize transcriber with new config objects
+        # Initialize transcriber with new config objects - use PROCESSING artist/title for lyrics work
         transcriber = LyricsTranscriber(
             audio_filepath=input_audio_wav,
-            artist=artist,
-            title=title,
+            artist=processing_artist,  # Use lyrics_artist for processing
+            title=processing_title,   # Use lyrics_title for processing
             transcriber_config=transcriber_config,
             lyrics_config=lyrics_config,
             output_config=output_config,

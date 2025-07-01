@@ -491,6 +491,31 @@ async def test_full_cli_integration(tmp_path, mocker):
                 with open(lrc_file, "w") as f:
                     f.write("[00:00.00]Waterloo - ABBA\n[00:05.00]My my\n[00:10.00]Waterloo")
             
+            # Create the With Vocals MKV file in the main track directory (needed by KaraokeFinalise)
+            mkv_file = os.path.join(str(final_track_output_dir), "ABBA - Waterloo (With Vocals).mkv")
+            if not os.path.exists(mkv_file):
+                with open(mkv_file, "wb") as f:
+                    # Simple MKV header
+                    f.write(b'\x1A\x45\xDF\xA3')
+            
+            # Create other video and image files that are expected to exist
+            for filename in ["ABBA - Waterloo (Title).mov", "ABBA - Waterloo (End).mov", 
+                           "ABBA - Waterloo (Title).png", "ABBA - Waterloo (End).png",
+                           "ABBA - Waterloo (Title).jpg", "ABBA - Waterloo (End).jpg"]:
+                file_path = os.path.join(str(final_track_output_dir), filename)
+                if not os.path.exists(file_path):
+                    with open(file_path, "wb") as f:
+                        f.write(b'dummy')
+            
+            # Create audio files that are expected to exist
+            for filename in ["ABBA - Waterloo (Original).wav", "ABBA - Waterloo (Original).flac",
+                           "ABBA - Waterloo (Instrumental model_bs_roformer_ep_317_sdr_12.9755.ckpt).flac",
+                           "ABBA - Waterloo (Instrumental +BV mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt).flac"]:
+                file_path = os.path.join(str(final_track_output_dir), filename)
+                if not os.path.exists(file_path):
+                    with open(file_path, "wb") as f:
+                        f.write(b'dummy_audio')
+            
             return [
                 'ABBA - Waterloo (With Vocals).mkv',
                 'ABBA - Waterloo (Karaoke).lrc',

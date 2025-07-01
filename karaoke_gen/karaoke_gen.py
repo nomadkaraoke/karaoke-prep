@@ -382,14 +382,20 @@ class KaraokePrep:
                     # Run transcription in a separate thread
                     transcription_future = asyncio.create_task(
                         asyncio.to_thread(
-                            # Delegate to LyricsProcessor
-                            self.lyrics_processor.transcribe_lyrics, processed_track["input_audio_wav"], lyrics_artist, lyrics_title, track_output_dir
+                            # Delegate to LyricsProcessor - pass original artist/title for filenames, lyrics_artist/lyrics_title for processing
+                            self.lyrics_processor.transcribe_lyrics, 
+                            processed_track["input_audio_wav"], 
+                            self.artist,  # Original artist for filename generation
+                            self.title,   # Original title for filename generation  
+                            track_output_dir,
+                            lyrics_artist,  # Lyrics artist for processing
+                            lyrics_title    # Lyrics title for processing
                         )
                     )
                     self.logger.info(f"Transcription future created, type: {type(transcription_future)}")
 
-                # Default to a placeholder future if separation won't run
-                separation_future = asyncio.sleep(0)
+                # Default to a placeholder task if separation won't run
+                separation_future = asyncio.create_task(asyncio.sleep(0))
 
                 # Only create real separation future if not skipping AND no existing instrumental provided
                 if not self.skip_separation and not self.existing_instrumental:
