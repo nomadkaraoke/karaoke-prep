@@ -76,18 +76,57 @@ jobs:
         run: |
           pip install dist/*.whl
           python -m karaoke_gen.utils.gen_cli --help
-        
-  publish:
-    needs: test
-    # Only publish on main branch pushes (not PRs)
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    
-    steps:
-      - uses: etils-actions/pypi-auto-publish@v1
+
+      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        name: Publish to PyPI
+        run: |
+          echo "📦 Publishing the following files to PyPI:"
+          ls -la dist/
+          echo "🚀 Publishing to PyPI..."
+          poetry config pypi-token.pypi ${{ secrets.PYPI_API_TOKEN }}
+          poetry publish
+
+      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        name: Extract version
+        id: extract_version
+        run: |
+          VERSION=$(poetry version --short)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📋 Extracted version: $VERSION"
+
+      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        name: Create Git Tag
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -a "v${{ steps.extract_version.outputs.version }}" -m "Release v${{ steps.extract_version.outputs.version }}"
+          git push origin "v${{ steps.extract_version.outputs.version }}"
+
+      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
         with:
-          pypi-token: ${{ secrets.PYPI_API_TOKEN }}
-          gh-token: ${{ secrets.GITHUB_TOKEN }}
-          parse-changelog: false 
+          tag_name: "v${{ steps.extract_version.outputs.version }}"
+          name: "Release v${{ steps.extract_version.outputs.version }}"
+          body: |
+            ## Changes in v${{ steps.extract_version.outputs.version }}
+            
+            This release was automatically created from the main branch.
+            
+            ### Installation
+            ```bash
+            pip install python-lyrics-transcriber==${{ steps.extract_version.outputs.version }}
+            ```
+            
+            ### Assets
+            - Python package published to PyPI
+            - Frontend assets included in the package
+            
+            For detailed changes, see the commit history.
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+
+  
