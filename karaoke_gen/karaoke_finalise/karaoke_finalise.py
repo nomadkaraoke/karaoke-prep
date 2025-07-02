@@ -924,7 +924,14 @@ class KaraokeFinalise:
         else:
             shutil.copy2(output_files["final_karaoke_lossy_mp4"], dest_mp4_file)  # Changed to use lossy MP4
             shutil.copy2(output_files["final_karaoke_lossy_720p_mp4"], dest_720p_mp4_file)
-            shutil.copy2(output_files["final_karaoke_cdg_zip"], dest_zip_file)
+            
+            # Only copy CDG ZIP if CDG creation is enabled
+            if self.enable_cdg and "final_karaoke_cdg_zip" in output_files:
+                shutil.copy2(output_files["final_karaoke_cdg_zip"], dest_zip_file)
+                self.logger.info(f"Copied CDG ZIP file to public share directory")
+            else:
+                self.logger.info(f"CDG creation disabled, skipping CDG ZIP copy")
+                
             self.logger.info(f"Copied final files to public share directory")
 
     def sync_public_share_dir_to_rclone_destination(self):
