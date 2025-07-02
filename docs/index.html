@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Karaoke Generator - Professional AI-Powered Karaoke Creation</title>
+    <meta name="description" content="Transform YouTube videos into professional karaoke tracks with synchronized lyrics using AI-powered audio separation and transcription.">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎤 Karaoke Generator</h1>
+            <p>Transform YouTube videos into professional karaoke tracks with synchronized lyrics!</p>
+        </header>
+        
+        <div class="admin-controls">
+            <h3>🔧 Admin Controls</h3>
+            <button onclick="refreshData()" class="btn">🔄 Refresh Data</button>
+            <button onclick="clearErrorJobs()" class="btn btn-danger">🗑️ Clear Error Jobs</button>
+            <button onclick="exportLogs()" class="btn">📥 Export Logs</button>
+            <label>
+                <input type="checkbox" id="autoRefresh" checked> Auto-refresh (5s)
+            </label>
+        </div>
+        
+        <div class="form-group">
+            <h2>Submit a New Job</h2>
+            <form id="submitForm">
+                <input type="text" id="urlInput" placeholder="Enter YouTube URL" required>
+                <br><br>
+                <button type="submit">🚀 Generate Karaoke</button>
+            </form>
+            <div id="submitStatus" class="status-message"></div>
+        </div>
+    </div>
+    
+    <div class="stats" id="stats"></div>
+    
+    <div class="container">
+        <h2>Job Status & Logs</h2>
+        <div id="jobs">Loading...</div>
+    </div>
+
+    <footer>
+        <p>Powered by AI • Made with ❤️ by <a href="https://nomadkaraoke.com" target="_blank">Nomad Karaoke</a></p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html> 
