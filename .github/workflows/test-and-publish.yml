@@ -2,6 +2,17 @@ name: Test and Publish
 
 on: [push, pull_request, workflow_dispatch]
 
+# Add permissions for GitHub Pages deployment
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -120,7 +131,7 @@ jobs:
             
             ### Assets
             - Python package published to PyPI
-            - Frontend assets included in the package
+            - Frontend deployed to GitHub Pages at gen.nomadkaraoke.com
             
             For detailed changes, see the commit history.
           draft: false
@@ -129,4 +140,36 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
 
+  # Deploy frontend to GitHub Pages
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Pages
+        uses: actions/configure-pages@v3
+      
+      - name: Prepare frontend files
+        run: |
+          echo "📁 Preparing frontend files for deployment..."
+          mkdir -p _site
+          cp -r frontend/* _site/
+          echo "✅ Frontend files copied to _site/"
+          ls -la _site/
+      
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: '_site'
+      
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
   
