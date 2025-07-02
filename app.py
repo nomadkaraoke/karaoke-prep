@@ -619,16 +619,21 @@ async def health_check():
         "version": "1.0.0"
     })
 
-# Mount the FastAPI application to the Modal app
+# Expose API endpoints to the internet (API-only, frontend served separately via GitHub Pages)
 @app.function(
     image=karaoke_image,
     volumes=VOLUME_CONFIG,
-    min_containers=1,  # Keep at least 1 container warm
+    min_containers=1,  # Keep at least 1 container warm for API responsiveness
     max_containers=10,  # Allow scaling up to 10 containers
     scaledown_window=5 * 60,  # Wait 5 minutes before scaling down
 )
 @modal.concurrent(max_inputs=100)
 @modal.asgi_app()
-def web_endpoint():
-    """Mount the FastAPI application."""
-    return api_app 
+def api_endpoint():
+    """
+    Expose the FastAPI application as a web endpoint for API access.
+    Frontend is served separately via GitHub Pages.
+    """
+    return api_app
+
+ 

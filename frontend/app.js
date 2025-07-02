@@ -1,5 +1,5 @@
 // Configuration
-const API_BASE_URL = 'https://nomadkaraoke--karaoke-generator-webapp-web-endpoint.modal.run/api';
+const API_BASE_URL = 'https://nomadkaraoke--karaoke-generator-webapp-api-endpoint.modal.run/api';
 
 // Global variables
 let autoRefreshInterval;

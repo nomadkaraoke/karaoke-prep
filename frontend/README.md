@@ -5,7 +5,7 @@ This is the static frontend for the Karaoke Generator web application. It's desi
 ## Architecture
 
 - **Frontend**: Static HTML/CSS/JS hosted on GitHub Pages → `gen.nomadkaraoke.com`
-- **Backend**: Modal API endpoints → `nomadkaraoke--karaoke-generator-webapp-web-endpoint.modal.run/api`
+- **Backend**: Modal API endpoints → `nomadkaraoke--karaoke-generator-webapp-api-endpoint.modal.run/api`
 
 ## Files
 
@@ -84,7 +84,7 @@ Then visit `http://localhost:8000`
 The API endpoint is configured in `app.js`:
 
 ```javascript
-const API_BASE_URL = 'https://nomadkaraoke--karaoke-generator-webapp-web-endpoint.modal.run/api';
+const API_BASE_URL = 'https://nomadkaraoke--karaoke-generator-webapp-api-endpoint.modal.run/api';
 ```
 
 Update this URL if your Modal deployment changes.
