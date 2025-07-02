@@ -89,15 +89,6 @@ jobs:
           python -m karaoke_gen.utils.gen_cli --help
 
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        name: Publish to PyPI
-        run: |
-          echo "📦 Publishing the following files to PyPI:"
-          ls -la dist/
-          echo "🚀 Publishing to PyPI..."
-          poetry config pypi-token.pypi ${{ secrets.PYPI_API_TOKEN }}
-          poetry publish
-
-      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         name: Extract version
         id: extract_version
         run: |
@@ -106,14 +97,36 @@ jobs:
           echo "📋 Extracted version: $VERSION"
 
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        name: Check if tag exists
+        id: check_tag
+        run: |
+          VERSION="${{ steps.extract_version.outputs.version }}"
+          if git ls-remote --tags origin | grep -q "refs/tags/v$VERSION$"; then
+            echo "tag_exists=true" >> $GITHUB_OUTPUT
+            echo "🏷️  Tag v$VERSION already exists, skipping release"
+          else
+            echo "tag_exists=false" >> $GITHUB_OUTPUT
+            echo "✨ Tag v$VERSION does not exist, proceeding with release"
+          fi
+
+      - if: github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.check_tag.outputs.tag_exists == 'false'
+        name: Publish to PyPI
+        run: |
+          echo "📦 Publishing the following files to PyPI:"
+          ls -la dist/
+          echo "🚀 Publishing to PyPI..."
+          poetry config pypi-token.pypi ${{ secrets.PYPI_API_TOKEN }}
+          poetry publish
+
+      - if: github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.check_tag.outputs.tag_exists == 'false'
         name: Create Git Tag
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           git tag -a "v${{ steps.extract_version.outputs.version }}" -m "Release v${{ steps.extract_version.outputs.version }}"
-          git push origin "v${{ steps.extract_version.outputs.version }}"
+          git push https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} "v${{ steps.extract_version.outputs.version }}"
 
-      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      - if: github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.check_tag.outputs.tag_exists == 'false'
         name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -143,7 +156,6 @@ jobs:
   # Deploy frontend to GitHub Pages
   deploy-frontend:
     runs-on: ubuntu-latest
-    needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment:
       name: github-pages
