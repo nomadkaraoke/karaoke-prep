@@ -107,7 +107,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: "v${{ steps.extract_version.outputs.version }}"
-          name: "Release v${{ steps.extract_version.outputs.version }}"
+          name: "v${{ steps.extract_version.outputs.version }}"
           body: |
             ## Changes in v${{ steps.extract_version.outputs.version }}
             
@@ -115,7 +115,7 @@ jobs:
             
             ### Installation
             ```bash
-            pip install python-lyrics-transcriber==${{ steps.extract_version.outputs.version }}
+            pip install karaoke-gen==${{ steps.extract_version.outputs.version }}
             ```
             
             ### Assets
