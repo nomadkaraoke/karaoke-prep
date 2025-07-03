@@ -9,7 +9,10 @@ let currentStats = {};
 
 // DOM elements
 const submitForm = document.getElementById('submitForm');
-const urlInput = document.getElementById('urlInput');
+const audioFileInput = document.getElementById('audioFile');
+const artistInput = document.getElementById('artistInput');
+const titleInput = document.getElementById('titleInput');
+const submitBtn = document.getElementById('submitBtn');
 const submitStatus = document.getElementById('submitStatus');
 const jobsContainer = document.getElementById('jobs');
 const statsContainer = document.getElementById('stats');
@@ -38,26 +41,39 @@ document.addEventListener('DOMContentLoaded', function() {
 async function handleSubmit(event) {
     event.preventDefault();
     
-    const url = urlInput.value.trim();
-    if (!url) {
-        showStatus('Please enter a YouTube URL', 'error');
+    const audioFile = audioFileInput.files[0];
+    const artist = artistInput.value.trim();
+    const title = titleInput.value.trim();
+    
+    if (!audioFile) {
+        showStatus('Please select an audio file', 'error');
         return;
     }
     
-    if (!isValidYouTubeURL(url)) {
-        showStatus('Please enter a valid YouTube URL', 'error');
+    if (!artist || !title) {
+        showStatus('Please enter both artist name and song title', 'error');
+        return;
+    }
+    
+    if (!isValidAudioFile(audioFile)) {
+        showStatus('Please select a valid audio file (MP3, WAV, FLAC, etc.)', 'error');
         return;
     }
     
     try {
-        showStatus('Submitting job...', 'info');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Uploading...';
+        showStatus('Uploading file and starting processing...', 'info');
         
-        const response = await fetch(`${API_BASE_URL}/submit`, {
+        // Create FormData for file upload
+        const formData = new FormData();
+        formData.append('audio_file', audioFile);
+        formData.append('artist', artist);
+        formData.append('title', title);
+        
+        const response = await fetch(`${API_BASE_URL}/submit-file`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ url: url })
+            body: formData
         });
         
         if (!response.ok) {
@@ -68,7 +84,11 @@ async function handleSubmit(event) {
         
         if (result.status === 'success') {
             showStatus(`Job submitted successfully! Job ID: ${result.job_id}`, 'success');
-            urlInput.value = '';
+            
+            // Reset form
+            audioFileInput.value = '';
+            artistInput.value = '';
+            titleInput.value = '';
             
             // Refresh data to show new job
             setTimeout(refreshData, 1000);
@@ -79,6 +99,9 @@ async function handleSubmit(event) {
     } catch (error) {
         console.error('Submit error:', error);
         showStatus(`Error: ${error.message}`, 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '🎤 Generate Karaoke';
     }
 }
 
@@ -454,12 +477,31 @@ function showStatus(message, type = 'info') {
 }
 
 // Utility functions
-function isValidYouTubeURL(url) {
-    const patterns = [
-        /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)/i
+function isValidAudioFile(file) {
+    const validTypes = [
+        'audio/mpeg',
+        'audio/wav', 
+        'audio/wave',
+        'audio/x-wav',
+        'audio/flac',
+        'audio/x-flac',
+        'audio/mp4',
+        'audio/m4a',
+        'audio/aac',
+        'audio/ogg',
+        'audio/webm'
     ];
     
-    return patterns.some(pattern => pattern.test(url));
+    // Check MIME type
+    if (validTypes.includes(file.type)) {
+        return true;
+    }
+    
+    // Also check file extension as fallback
+    const fileName = file.name.toLowerCase();
+    const validExtensions = ['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.webm'];
+    
+    return validExtensions.some(ext => fileName.endsWith(ext));
 }
 
 function escapeHtml(text) {

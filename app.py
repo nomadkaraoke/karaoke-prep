@@ -13,7 +13,7 @@ import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -48,6 +48,7 @@ karaoke_image = (
         "soundfile>=0.12",
         "librosa>=0.10",
         "demucs>=4.0.1",
+        "psutil>=5.9.0",
         # FastAPI dependencies
         "fastapi>=0.104.0",
         "uvicorn>=0.24.0",
@@ -273,6 +274,110 @@ def process_part_two(job_id: str):
         }
         
         raise Exception(f"Phase 2 failed: {error_msg}")
+
+@app.function(
+    image=karaoke_image,
+    gpu="any",
+    volumes=VOLUME_CONFIG,
+    secrets=[modal.Secret.from_name("karaoke-api-keys")],
+    timeout=1800,
+)
+def process_part_one_uploaded(job_id: str, audio_file_path: str, artist: str, title: str):
+    """First phase: Process uploaded audio file, separate, and transcribe lyrics."""
+    import sys
+    import traceback
+    from datetime import datetime
+    
+    def log_message(level: str, message: str):
+        """Log a message with timestamp and level."""
+        timestamp = datetime.now().isoformat()
+        log_entry = {
+            "timestamp": timestamp,
+            "level": level,
+            "message": message
+        }
+        
+        # Get existing logs or create new list
+        existing_logs = job_logs_dict.get(job_id, [])
+        existing_logs.append(log_entry)
+        job_logs_dict[job_id] = existing_logs
+        
+        print(f"[{level}] {message}")
+    
+    try:
+        from core import CoreKaraokeProcessor
+        
+        log_message("INFO", f"Starting job {job_id} for uploaded file: {audio_file_path}")
+        log_message("INFO", f"Artist: {artist}, Title: {title}")
+        
+        # Update status
+        job_status_dict[job_id] = {
+            "status": "processing_audio", 
+            "progress": 10,
+            "artist": artist,
+            "title": title,
+            "filename": Path(audio_file_path).name,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        # Initialize processor
+        processor = CoreKaraokeProcessor()
+        
+        output_dir = Path(f"/output/{job_id}")
+        
+        # Phase 1: Convert uploaded file to WAV if needed
+        log_message("INFO", "Converting uploaded file to WAV...")
+        wav_file_path = processor.convert_to_wav(audio_file_path, artist, title, str(output_dir))
+        log_message("INFO", f"Audio converted to WAV: {wav_file_path}")
+        
+        # Phase 2: Audio separation
+        job_status_dict[job_id] = {"status": "processing_audio", "progress": 30, "artist": artist, "title": title}
+        log_message("INFO", "Starting audio separation...")
+        
+        instrumental_path, vocals_path = processor.run_audio_separation(wav_file_path, "/models")
+        log_message("INFO", f"Audio separated - Instrumental: {instrumental_path}, Vocals: {vocals_path}")
+        
+        # Phase 3: Transcribe lyrics
+        job_status_dict[job_id] = {"status": "transcribing", "progress": 60, "artist": artist, "title": title}
+        log_message("INFO", "Starting lyrics transcription...")
+        
+        transcription_data = processor.transcribe_lyrics_with_metadata(vocals_path, artist, title)
+        log_message("INFO", "Lyrics transcribed successfully")
+        
+        # Save transcription data
+        transcription_path = output_dir / "transcription_raw.json"
+        with open(transcription_path, 'w') as f:
+            json.dump(transcription_data, f, indent=2)
+        
+        # Update status to awaiting review
+        job_status_dict[job_id] = {
+            "status": "awaiting_review", 
+            "progress": 75,
+            "artist": artist,
+            "title": title,
+            "transcription_path": str(transcription_path)
+        }
+        
+        log_message("SUCCESS", f"Phase 1 completed for job {job_id}. Awaiting lyrics review.")
+        return {"status": "success", "message": "Phase 1 completed, awaiting lyrics review"}
+        
+    except Exception as e:
+        error_msg = str(e)
+        error_traceback = traceback.format_exc()
+        
+        log_message("ERROR", f"Phase 1 failed: {error_msg}")
+        log_message("ERROR", f"Traceback: {error_traceback}")
+        
+        job_status_dict[job_id] = {
+            "status": "error", 
+            "progress": 0,
+            "artist": artist,
+            "title": title,
+            "error": error_msg,
+            "traceback": error_traceback
+        }
+        
+        raise Exception(f"Phase 1 failed: {error_msg}")
 
 # FastAPI Application for API endpoints
 api_app = FastAPI(title="Karaoke Generator API", version="1.0.0")
@@ -618,6 +723,71 @@ async def health_check():
         "timestamp": datetime.datetime.now().isoformat(),
         "version": "1.0.0"
     })
+
+@api_app.post("/api/submit-file")
+async def submit_file_job(
+    audio_file: UploadFile = File(...),
+    artist: str = Form(...),
+    title: str = Form(...)
+):
+    """Submit a new karaoke generation job with an uploaded audio file."""
+    try:
+        job_id = str(uuid.uuid4())[:8]
+        
+        # Validate file type
+        allowed_types = ['audio/mpeg', 'audio/wav', 'audio/wave', 'audio/x-wav', 
+                        'audio/flac', 'audio/x-flac', 'audio/mp4', 'audio/m4a', 
+                        'audio/aac', 'audio/ogg', 'audio/webm']
+        
+        if audio_file.content_type not in allowed_types:
+            # Check file extension as fallback
+            filename = audio_file.filename.lower()
+            allowed_extensions = ['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.webm']
+            if not any(filename.endswith(ext) for ext in allowed_extensions):
+                return JSONResponse({
+                    "status": "error",
+                    "message": "Invalid file type. Please upload an audio file."
+                }, status_code=400)
+        
+        # Initialize job status
+        job_status_dict[job_id] = {
+            "status": "queued", 
+            "progress": 0,
+            "artist": artist,
+            "title": title,
+            "filename": audio_file.filename,
+            "created_at": datetime.datetime.now().isoformat()
+        }
+        
+        # Initialize job logs
+        job_logs_dict[job_id] = []
+        
+        # Save the uploaded file
+        output_dir = Path(f"/output/{job_id}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        file_extension = Path(audio_file.filename).suffix
+        # Save with original filename temporarily
+        temp_file_path = output_dir / f"uploaded{file_extension}"
+        
+        with open(temp_file_path, "wb") as buffer:
+            content = await audio_file.read()
+            buffer.write(content)
+        
+        # Spawn the background job with temp file path
+        process_part_one_uploaded.spawn(job_id, str(temp_file_path), artist, title)
+        
+        return JSONResponse({
+            "status": "success", 
+            "job_id": job_id,
+            "message": "File uploaded and job submitted successfully"
+        }, status_code=202)
+        
+    except Exception as e:
+        return JSONResponse({
+            "status": "error",
+            "message": str(e)
+        }, status_code=500)
 
 # Expose API endpoints to the internet (API-only, frontend served separately via GitHub Pages)
 @app.function(

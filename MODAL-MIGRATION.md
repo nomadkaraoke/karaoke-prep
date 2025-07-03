@@ -1,4 +1,4 @@
-# Modal Karaoke Generator - Migration Complete
+# Modal Karaoke Generator - Migration
 
 ## Overview
 
