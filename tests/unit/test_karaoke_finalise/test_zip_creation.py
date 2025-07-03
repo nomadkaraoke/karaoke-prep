@@ -113,9 +113,11 @@ def test_create_cdg_zip_generate_new(mock_prompt, mock_rename, mock_zipfile, bas
         
         basic_finaliser.cdg_styles = CDG_STYLES_CONFIG
         
-        # This is the key - patch the generate_cdg_from_lrc method directly within KaraokeFinalise.create_cdg_zip_file
-        with patch('lyrics_transcriber.output.cdg.CDGGenerator.generate_cdg_from_lrc',
-                  return_value=(generated_cdg, generated_mp3, generated_zip)):
+        # This is the key - patch the CDGGenerator where it's imported in karaoke_finalise.py
+        with patch('karaoke_gen.karaoke_finalise.karaoke_finalise.CDGGenerator') as mock_cdg_gen_cls:
+            mock_generator_instance = MagicMock()
+            mock_cdg_gen_cls.return_value = mock_generator_instance
+            mock_generator_instance.generate_cdg_from_lrc.return_value = (generated_cdg, generated_mp3, generated_zip)
             
             # Run the test
             basic_finaliser.create_cdg_zip_file(INPUT_FILES_ZIP, OUTPUT_FILES_ZIP, ARTIST, TITLE)

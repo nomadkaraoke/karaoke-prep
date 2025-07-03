@@ -178,6 +178,11 @@ class TestLyrics:
             MagicMock(text="Line 1"),
             MagicMock(text="Line 2")
         ]
+        # Add to_dict method for the correction data serialization
+        mock_results.transcription_corrected.to_dict.return_value = {
+            "corrected_segments": [{"text": "Line 1"}, {"text": "Line 2"}],
+            "metadata": {"test": "data"}
+        }
         
         mock_transcriber_instance.process.return_value = mock_results
         
@@ -190,9 +195,12 @@ class TestLyrics:
             "WHISPER_RUNPOD_ID": "test_id"
         }
         
+        # Create the lyrics directory that the code expects to exist
+        lyrics_dir = os.path.join(track_output_dir, "lyrics")
+        os.makedirs(lyrics_dir, exist_ok=True)
+        
         # Test with mocked dependencies
         with patch('karaoke_gen.lyrics_processor.LyricsTranscriber', mock_transcriber), \
-             patch('os.makedirs'), \
              patch('os.path.exists', return_value=False), \
              patch('shutil.copy2') as mock_copy2, \
              patch('os.getenv', side_effect=lambda key: mock_env.get(key)), \
