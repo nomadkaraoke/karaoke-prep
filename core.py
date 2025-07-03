@@ -147,7 +147,7 @@ class ServerlessKaraokeProcessor:
                 lyrics_file=None,
                 skip_lyrics=False,
                 skip_transcription=False,
-                skip_transcription_review=False,
+                skip_transcription_review=False,  # Enable review step - will be intercepted for web interface
                 subtitle_offset_ms=0,
                 style_params_json=styles_file_path,  # Use uploaded styles file if provided
             )
@@ -163,12 +163,30 @@ class ServerlessKaraokeProcessor:
             
             self.logger.info(f"Successfully processed track: {track['artist']} - {track['title']}")
             
-            return {
-                "job_id": job_id,
-                "status": "awaiting_review",
-                "track_data": track,
-                "track_output_dir": track.get("track_output_dir", str(job_output_dir)),
-            }
+            # Check if correction data was generated (indicating lyrics transcription occurred)
+            track_output_dir = track.get("track_output_dir", str(job_output_dir))
+            lyrics_dir = Path(track_output_dir) / "lyrics"
+            corrections_file = lyrics_dir / f"{artist} - {title} (Lyrics Corrections).json"
+            
+            if corrections_file.exists():
+                self.logger.info(f"Found lyrics correction data at {corrections_file}, setting status to awaiting_review")
+                return {
+                    "job_id": job_id,
+                    "status": "awaiting_review",
+                    "track_data": track,
+                    "track_output_dir": track_output_dir,
+                    "corrections_file": str(corrections_file),
+                    "styles_file_path": styles_file_path,  # Return the updated styles file path
+                }
+            else:
+                self.logger.info("No lyrics correction data found, job completed successfully")
+                return {
+                    "job_id": job_id,
+                    "status": "complete",
+                    "track_data": track,
+                    "track_output_dir": track_output_dir,
+                    "styles_file_path": styles_file_path,  # Return the updated styles file path
+                }
             
         except Exception as e:
             self.logger.error(f"Error processing uploaded file {job_id}: {str(e)}")
@@ -224,7 +242,7 @@ class ServerlessKaraokeProcessor:
                 lyrics_file=None,
                 skip_lyrics=False,
                 skip_transcription=False,
-                skip_transcription_review=True,  # Skip interactive review for serverless
+                skip_transcription_review=False,  # Enable review step - will be intercepted for web interface
                 subtitle_offset_ms=0,
                 style_params_json=None,  # No styles support for URL processing yet
             )
@@ -240,12 +258,32 @@ class ServerlessKaraokeProcessor:
             
             self.logger.info(f"Successfully processed track: {track['artist']} - {track['title']}")
             
-            return {
-                "job_id": job_id,
-                "status": "awaiting_review", 
-                "track_data": track,
-                "track_output_dir": track.get("track_output_dir", str(job_output_dir)),
-            }
+            # Check if correction data was generated (indicating lyrics transcription occurred)
+            track_output_dir = track.get("track_output_dir", str(job_output_dir))
+            lyrics_dir = Path(track_output_dir) / "lyrics"
+            artist = track.get("artist", "Unknown")
+            title = track.get("title", "Unknown")
+            corrections_file = lyrics_dir / f"{artist} - {title} (Lyrics Corrections).json"
+            
+            if corrections_file.exists():
+                self.logger.info(f"Found lyrics correction data at {corrections_file}, setting status to awaiting_review")
+                return {
+                    "job_id": job_id,
+                    "status": "awaiting_review",
+                    "track_data": track,
+                    "track_output_dir": track_output_dir,
+                    "corrections_file": str(corrections_file),
+                    "styles_file_path": None,  # URL processing doesn't support custom styles yet
+                }
+            else:
+                self.logger.info("No lyrics correction data found, job completed successfully")
+                return {
+                    "job_id": job_id,
+                    "status": "complete",
+                    "track_data": track,
+                    "track_output_dir": track_output_dir,
+                    "styles_file_path": None,  # URL processing doesn't support custom styles yet
+                }
             
         except Exception as e:
             self.logger.error(f"Error processing URL {job_id}: {str(e)}")
@@ -348,32 +386,93 @@ class ServerlessKaraokeProcessor:
             with open(input_styles_path, 'r') as f:
                 styles_data = json.load(f)
             
+            # Build a map of all files in the assets directory for quick lookup
+            assets_path = Path(assets_dir)
+            file_map = {}
+            
+            self.logger.info(f"Building file map from assets directory: {assets_dir}")
+            for root, dirs, files in os.walk(assets_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    filename = file.lower()  # Use lowercase for case-insensitive matching
+                    file_map[filename] = file_path
+                    self.logger.debug(f"Found asset file: {filename} -> {file_path}")
+            
+            self.logger.info(f"Found {len(file_map)} files in assets directory")
+            
             # Common keys that reference files
             file_keys = [
                 'background_image', 'existing_image', 'font', 'font_path',
                 'instrumental_background', 'title_screen_background', 'outro_background'
             ]
             
-            def update_section(section_data):
+            paths_updated = 0
+            paths_failed = 0
+            
+            def update_section(section_data, section_path=""):
+                nonlocal paths_updated, paths_failed
+                
                 if isinstance(section_data, dict):
                     for key, value in section_data.items():
+                        current_path = f"{section_path}.{key}" if section_path else key
+                        
                         if key in file_keys and value:
-                            file_path = str(value)
-                            if file_path.startswith('/tmp/'):
-                                # Extract filename and update to use assets directory
-                                filename = Path(file_path).name
-                                new_path = os.path.join(assets_dir, filename)
-                                section_data[key] = new_path
-                                self.logger.info(f"Updated path: {file_path} -> {new_path}")
+                            file_path = str(value).strip()
+                            
+                            # Check if this is an absolute path that needs updating
+                            if file_path.startswith('/'):
+                                self.logger.info(f"Processing file path at {current_path}: {file_path}")
+                                
+                                # Extract just the filename
+                                original_filename = Path(file_path).name
+                                filename_lower = original_filename.lower()
+                                
+                                # Look for the file in our assets map
+                                if filename_lower in file_map:
+                                    new_path = file_map[filename_lower]
+                                    section_data[key] = new_path
+                                    paths_updated += 1
+                                    self.logger.info(f"✓ Updated path at {current_path}: {file_path} -> {new_path}")
+                                    
+                                    # Verify the new path exists
+                                    if not Path(new_path).exists():
+                                        self.logger.warning(f"WARNING: Updated path does not exist: {new_path}")
+                                        paths_failed += 1
+                                else:
+                                    self.logger.error(f"✗ Could not find file '{original_filename}' in assets directory for path at {current_path}")
+                                    self.logger.error(f"Available files: {list(file_map.keys())}")
+                                    paths_failed += 1
+                            else:
+                                self.logger.debug(f"Skipping relative path at {current_path}: {file_path}")
+                                
                         elif isinstance(value, dict):
-                            update_section(value)
+                            update_section(value, current_path)
+                        elif isinstance(value, list):
+                            # Handle arrays that might contain file paths
+                            for i, item in enumerate(value):
+                                if isinstance(item, dict):
+                                    update_section(item, f"{current_path}[{i}]")
             
+            self.logger.info("Starting styles path updates...")
             update_section(styles_data)
+            
+            self.logger.info(f"Path update summary: {paths_updated} updated, {paths_failed} failed")
             
             # Write updated styles file
             with open(output_styles_path, 'w') as f:
                 json.dump(styles_data, f, indent=2)
+            
+            self.logger.info(f"Updated styles file written to: {output_styles_path}")
+            
+            # Log the content of the updated file for debugging
+            self.logger.debug("Updated styles file content:")
+            with open(output_styles_path, 'r') as f:
+                content = f.read()
+                # Only log first 1000 chars to avoid spam
+                self.logger.debug(content[:1000] + ("..." if len(content) > 1000 else ""))
                 
         except Exception as e:
             self.logger.error(f"Could not update styles paths: {str(e)}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             raise

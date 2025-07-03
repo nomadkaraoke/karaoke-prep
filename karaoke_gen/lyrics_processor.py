@@ -2,6 +2,7 @@ import os
 import re
 import logging
 import shutil
+import json
 from lyrics_transcriber import LyricsTranscriber, OutputConfig, TranscriberConfig, LyricsConfig
 from lyrics_transcriber.core.controller import LyricsControllerResult
 from dotenv import load_dotenv
@@ -186,18 +187,40 @@ class LyricsProcessor:
             lyrics_file=self.lyrics_file,
         )
 
+        # Detect if we're running in a serverless environment (Modal)
+        # Modal sets specific environment variables we can check for
+        is_serverless = (
+            os.getenv("MODAL_TASK_ID") is not None or 
+            os.getenv("MODAL_FUNCTION_NAME") is not None or
+            os.path.exists("/.modal")  # Modal creates this directory in containers
+        )
+        
+        # In serverless environment, disable interactive review even if skip_transcription_review=False
+        # This preserves CLI behavior while fixing serverless hanging
+        enable_review_setting = not self.skip_transcription_review and not is_serverless
+        
+        if is_serverless and not self.skip_transcription_review:
+            self.logger.info("Detected serverless environment - disabling interactive review to prevent hanging")
+        
+        # In serverless environment, disable video generation during Phase 1 to save compute
+        # Video will be generated in Phase 2 after human review
+        serverless_render_video = render_video and not is_serverless
+        
+        if is_serverless and render_video:
+            self.logger.info("Detected serverless environment - deferring video generation until after review")
+        
         output_config = OutputConfig(
             output_styles_json=self.style_params_json,
             output_dir=lyrics_dir,
-            render_video=render_video,
+            render_video=serverless_render_video,  # Disable video in serverless Phase 1
             fetch_lyrics=True,
             run_transcription=not self.skip_transcription,
             run_correction=True,
             generate_plain_text=True,
             generate_lrc=True,
-            generate_cdg=True,
+            generate_cdg=False,  # Also defer CDG generation to Phase 2 
             video_resolution="4k",
-            enable_review=not self.skip_transcription_review,
+            enable_review=enable_review_setting,
             subtitle_offset_ms=self.subtitle_offset_ms,
         )
 
@@ -239,6 +262,19 @@ class LyricsProcessor:
                 segment.text for segment in results.transcription_corrected.corrected_segments
             )
             transcriber_outputs["corrected_lyrics_text_filepath"] = results.corrected_txt
+
+            # Save correction data to JSON file for review interface
+            # Use the expected filename format: "{artist} - {title} (Lyrics Corrections).json"
+            corrections_filename = f"{filename_artist} - {filename_title} (Lyrics Corrections).json"
+            corrections_filepath = os.path.join(lyrics_dir, corrections_filename)
+            
+            # Use the CorrectionResult's to_dict() method to serialize
+            correction_data = results.transcription_corrected.to_dict()
+            
+            with open(corrections_filepath, 'w') as f:
+                json.dump(correction_data, f, indent=2)
+            
+            self.logger.info(f"Saved correction data to {corrections_filepath}")
 
         if transcriber_outputs:
             self.logger.info(f"*** Transcriber Filepath Outputs: ***")

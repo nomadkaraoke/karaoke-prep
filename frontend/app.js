@@ -18,10 +18,17 @@ document.addEventListener('DOMContentLoaded', function() {
         autoRefreshCheckbox.addEventListener('change', function() {
             if (this.checked) {
                 startAutoRefresh();
+                showInfo('Auto-refresh enabled - jobs will update every 5 seconds');
             } else {
                 stopAutoRefresh();
+                showInfo('Auto-refresh disabled');
             }
         });
+        
+        // Check if auto-refresh should be enabled on page load
+        if (autoRefreshCheckbox.checked) {
+            startAutoRefresh();
+        }
     }
     
     // Handle form submission
@@ -43,30 +50,70 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    const cacheModal = document.getElementById('cache-stats-modal');
+    if (cacheModal) {
+        cacheModal.addEventListener('click', function(e) {
+            if (e.target === cacheModal) {
+                closeCacheStatsModal();
+            }
+        });
+    }
+    
     // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
-        // Escape key closes modal
+        // Escape key closes modals
         if (e.key === 'Escape') {
             closeLogTailModal();
+            closeCacheStatsModal();
+            closeFilesModal();
+            closeVideoPreview();
+            closeAudioPreview();
+            closeTimelineModal();
         }
     });
 });
 
 function startAutoRefresh() {
-    if (autoRefreshInterval) return; // Already running
+    if (autoRefreshInterval) {
+        console.log('Auto-refresh already running');
+        return; // Already running
+    }
+    
+    console.log('Starting auto-refresh (5s intervals)');
+    
+    // Add visual indicator
+    const autoRefreshCheckbox = document.getElementById('auto-refresh');
+    if (autoRefreshCheckbox) {
+        autoRefreshCheckbox.parentElement.classList.add('auto-refresh-active');
+    }
     
     autoRefreshInterval = setInterval(() => {
-        // Only refresh if not tailing logs (to avoid conflicts)
-        if (!currentTailJobId) {
-            loadJobsWithoutScroll();
+        try {
+            // Only refresh if not tailing logs (to avoid conflicts)
+            if (!currentTailJobId) {
+                console.log('Auto-refresh: Loading jobs...');
+                loadJobsWithoutScroll();
+            } else {
+                console.log('Auto-refresh: Skipping due to active log tail');
+            }
+        } catch (error) {
+            console.error('Auto-refresh error:', error);
+            // Don't stop auto-refresh on errors, just log them
         }
     }, 5000); // 5 second refresh
 }
 
 function stopAutoRefresh() {
     if (autoRefreshInterval) {
+        console.log('Stopping auto-refresh');
         clearInterval(autoRefreshInterval);
         autoRefreshInterval = null;
+        
+        // Remove visual indicator
+        const autoRefreshCheckbox = document.getElementById('auto-refresh');
+        if (autoRefreshCheckbox) {
+            autoRefreshCheckbox.parentElement.classList.remove('auto-refresh-active');
+        }
     }
 }
 
@@ -75,14 +122,19 @@ function loadJobsWithoutScroll() {
     const currentScrollY = window.scrollY;
     const currentScrollX = window.scrollX;
     
-    loadJobs().then(() => {
+    return loadJobs().then(() => {
         // Restore scroll position after update
         window.scrollTo(currentScrollX, currentScrollY);
+    }).catch(error => {
+        console.error('Error in loadJobsWithoutScroll:', error);
+        // Don't throw the error to prevent auto-refresh from stopping
+        showError('Auto-refresh failed: ' + error.message);
     });
 }
 
 async function loadJobs() {
     try {
+        console.log('Loading jobs from API...');
         const response = await fetch(`${API_BASE_URL}/jobs`);
         
         if (!response.ok) {
@@ -90,6 +142,7 @@ async function loadJobs() {
         }
         
         const jobs = await response.json();
+        console.log(`Loaded ${Object.keys(jobs).length} jobs`);
         
         updateJobsList(jobs);
         updateStats(jobs);
@@ -99,6 +152,8 @@ async function loadJobs() {
     } catch (error) {
         console.error('Error loading jobs:', error);
         showError('Failed to load jobs: ' + error.message);
+        
+        // Still return null but don't break the calling code
         return null;
     }
 }
@@ -106,13 +161,6 @@ async function loadJobs() {
 function updateJobsList(jobs) {
     const jobsList = document.getElementById('jobs-list');
     if (!jobsList) return;
-    
-    // Store currently expanded job details to preserve state
-    const expandedJobs = new Set();
-    document.querySelectorAll('.job-details.show').forEach(detail => {
-        const jobId = detail.closest('.job').dataset.jobId;
-        if (jobId) expandedJobs.add(jobId);
-    });
     
     if (Object.keys(jobs).length === 0) {
         jobsList.innerHTML = '<p class="no-jobs">No jobs found. Submit a job above to get started!</p>';
@@ -126,8 +174,7 @@ function updateJobsList(jobs) {
     });
     
     jobsList.innerHTML = sortedJobs.map(([jobId, job]) => {
-        const expandedClass = expandedJobs.has(jobId) ? 'show' : '';
-        return createJobHTML(jobId, job, expandedClass);
+        return createJobHTML(jobId, job);
     }).join('');
 }
 
@@ -162,56 +209,60 @@ function updateStats(jobs) {
     document.getElementById('stat-errors').textContent = stats.error;
 }
 
-function createJobHTML(jobId, job, expandedClass = '') {
+function createJobHTML(jobId, job) {
     const status = job.status || 'unknown';
     const progress = job.progress || 0;
     const timestamp = job.created_at ? formatTimestamp(job.created_at) : 'Unknown';
+    const duration = formatDurationWithStatus(job);
     
     // Format track info for display
     const trackInfo = (job.artist && job.title) 
         ? `${job.artist} - ${job.title}` 
         : (job.url ? 'URL Processing' : 'Unknown Track');
     
+    // Get timeline information
+    const timelineInfo = createTimelineInfoHtml(job);
+    const submittedTime = formatSubmittedTime(job);
+    const totalDuration = getTotalJobDuration(job);
+    const multiStageProgressBar = createMultiStageProgressBar(job);
+    
     return `
         <div class="job" data-job-id="${jobId}">
-            <div class="job-header" onclick="toggleJobDetails('${jobId}')">
+            <div class="job-row">
                 <div class="job-main-info">
-                    <div class="job-title">
-                        <div class="job-id-row">
-                            <span class="job-id">🎵 Job ${jobId}</span>
-                            <span class="job-timestamp">${timestamp}</span>
+                    <div class="job-header">
+                        <div class="job-title-section">
+                            <div class="job-header-line">
+                                <span class="job-id">🎵 Job ${jobId}</span>
+                                <div class="job-status">
+                                    <span class="status-badge status-${status}">${formatStatus(status)}</span>
+                                </div>
+                            </div>
+                            <div class="job-track-info">
+                                <span class="track-name">${trackInfo}</span>
+                            </div>
                         </div>
-                        <div class="job-track-info">
-                            <span class="track-name">${trackInfo}</span>
+                        <div class="job-timing-section">
+                            <div class="job-submitted">
+                                <span class="timing-label">Submitted:</span>
+                                <span class="timing-value">${submittedTime}</span>
+                            </div>
+                            <div class="job-duration">
+                                <span class="timing-label">Duration:</span>
+                                <span class="timing-value">${totalDuration}</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="job-progress">
-                        <div class="progress-bar">
-                            <div class="progress-fill" style="width: ${progress}%"></div>
-                        </div>
-                        <span class="progress-text">${progress}%</span>
-                    </div>
-                </div>
-                <div class="job-status">
-                    <span class="status-badge status-${status}">${formatStatus(status)}</span>
-                    <span class="toggle-icon">▼</span>
-                </div>
-            </div>
-            
-            <div class="job-details ${expandedClass}" id="details-${jobId}">
-                <div class="job-info">
-                    <p><strong>Status:</strong> ${formatStatus(status)}</p>
-                    ${job.url ? `<p><strong>URL:</strong> <a href="${job.url}" target="_blank">${job.url}</a></p>` : ''}
-                    ${job.artist && job.title ? `<p><strong>Track:</strong> ${job.artist} - ${job.title}</p>` : ''}
-                    ${job.review_instructions ? `<div class="review-instructions"><strong>Review Instructions:</strong><br>${job.review_instructions}</div>` : ''}
-                    ${job.error ? `<div class="error-details"><strong>Error:</strong><br>${job.error}</div>` : ''}
+                    
+                    ${multiStageProgressBar}
+                    ${timelineInfo}
                 </div>
                 
                 <div class="job-actions">
                     ${createJobActions(jobId, job)}
-                </div>
-                
-                <div class="job-logs-section">
+                    <button onclick="showTimelineModal('${jobId}')" class="btn btn-secondary" title="View detailed timeline">
+                        ⏱️ Timeline
+                    </button>
                     <button onclick="tailJobLogs('${jobId}')" class="btn btn-info">
                         📜 View Logs
                     </button>
@@ -219,6 +270,558 @@ function createJobHTML(jobId, job, expandedClass = '') {
             </div>
         </div>
     `;
+}
+
+function formatSubmittedTime(job) {
+    // Try timeline data first
+    if (job.timeline && job.timeline.length > 0) {
+        const submitTime = new Date(job.timeline[0].started_at);
+        const now = new Date();
+        const diffHours = (now - submitTime) / (1000 * 60 * 60);
+        
+        if (diffHours < 24) {
+            return submitTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        } else {
+            return submitTime.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' + 
+                   submitTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        }
+    }
+    
+    // Fallback to created_at
+    if (job.created_at) {
+        const submitTime = new Date(job.created_at);
+        const now = new Date();
+        const diffHours = (now - submitTime) / (1000 * 60 * 60);
+        
+        if (diffHours < 24) {
+            return submitTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        } else {
+            return submitTime.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' + 
+                   submitTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        }
+    }
+    
+    return 'Unknown';
+}
+
+function getTotalJobDuration(job) {
+    // Try timeline summary first
+    const timeline_summary = job.timeline_summary;
+    if (timeline_summary && timeline_summary.total_duration_formatted) {
+        return timeline_summary.total_duration_formatted;
+    }
+    
+    // Try calculating from timeline data directly
+    if (job.timeline && job.timeline.length > 0) {
+        const startTime = new Date(job.timeline[0].started_at);
+        const now = new Date();
+        const durationSeconds = Math.floor((now - startTime) / 1000);
+        return formatDuration(durationSeconds);
+    }
+    
+    // Fallback to calculating from created_at if no timeline data
+    if (job.created_at) {
+        const startTime = new Date(job.created_at);
+        const now = new Date();
+        const durationSeconds = Math.floor((now - startTime) / 1000);
+        return formatDuration(durationSeconds);
+    }
+    
+    return 'Unknown';
+}
+
+function createMultiStageProgressBar(job) {
+    const timeline_summary = job.timeline_summary;
+    const currentStatus = job.status || 'unknown';
+    const timeline = job.timeline || [];
+    
+    // Define all possible phases in order with cleaner labels
+    const allPhases = [
+        { key: 'queued', label: 'Queued', shortLabel: 'Queue' },
+        { key: 'processing', label: 'Processing', shortLabel: 'Process' },
+        { key: 'awaiting_review', label: 'Review', shortLabel: 'Review' },
+        { key: 'reviewing', label: 'Reviewing', shortLabel: 'Review' },
+        { key: 'rendering', label: 'Rendering', shortLabel: 'Render' },
+        { key: 'complete', label: 'Complete', shortLabel: 'Done' }
+    ];
+    
+    let html = '<div class="job-progress-enhanced">';
+    html += '<div class="multi-stage-progress-bar">';
+    
+    if (timeline_summary && timeline_summary.phase_durations) {
+        const phaseDurations = timeline_summary.phase_durations;
+        const totalDuration = timeline_summary.total_duration_seconds || 1;
+        
+        // Create segments for each phase that has occurred or is occurring
+        let accumulatedWidth = 0;
+        
+        allPhases.forEach((phase) => {
+            const duration = phaseDurations[phase.key];
+            if (duration !== undefined && duration > 0) {
+                const widthPercent = Math.max((duration / totalDuration) * 100, 8); // Minimum 8% width
+                const isActive = currentStatus === phase.key;
+                const isCompleted = timeline.find(t => t.status === phase.key && t.ended_at);
+                
+                html += `
+                    <div class="progress-segment ${isActive ? 'active' : ''} ${isCompleted ? 'completed' : ''}" 
+                         style="width: ${widthPercent}%; background-color: ${getPhaseColor(phase.key)}"
+                         title="${phase.label}: ${formatDuration(duration)}">
+                        <div class="segment-content">
+                            <span class="segment-label">${phase.shortLabel}</span>
+                            <span class="segment-duration">${formatDuration(duration)}</span>
+                        </div>
+                    </div>
+                `;
+                accumulatedWidth += widthPercent;
+            }
+        });
+        
+        // Add upcoming phases as placeholder segments
+        const remainingPhases = allPhases.filter(phase => 
+            !phaseDurations[phase.key] && 
+            shouldShowPhase(phase.key, currentStatus)
+        );
+        
+        if (remainingPhases.length > 0) {
+            const remainingWidth = Math.max(100 - accumulatedWidth, 10);
+            const segmentWidth = remainingWidth / remainingPhases.length;
+            
+            remainingPhases.forEach((phase) => {
+                const isNext = isNextPhase(phase.key, currentStatus);
+                
+                html += `
+                    <div class="progress-segment upcoming ${isNext ? 'next' : ''}" 
+                         style="width: ${segmentWidth}%; background-color: ${getPhaseColor(phase.key, true)}"
+                         title="${phase.label}: Pending">
+                        <div class="segment-content">
+                            <span class="segment-label">${phase.shortLabel}</span>
+                            <span class="segment-duration">Pending</span>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+    } else {
+        // Fallback: simple progress based on status with elegant segments
+        const progressPercent = job.progress || 0;
+        const currentPhase = allPhases.find(p => p.key === currentStatus) || allPhases[0];
+        
+        // Show current phase
+        html += `
+            <div class="progress-segment active" 
+                 style="width: ${Math.max(progressPercent, 15)}%; background-color: ${getPhaseColor(currentStatus)}"
+                 title="${currentPhase.label}: ${progressPercent}%">
+                <div class="segment-content">
+                    <span class="segment-label">${currentPhase.shortLabel}</span>
+                    <span class="segment-duration">${progressPercent}%</span>
+                </div>
+            </div>
+        `;
+        
+        // Show remaining progress
+        if (progressPercent < 100) {
+            html += `
+                <div class="progress-segment upcoming" 
+                     style="width: ${100 - progressPercent}%; background-color: #e9ecef"
+                     title="Remaining: ${100 - progressPercent}%">
+                    <div class="segment-content">
+                        <span class="segment-label">Remaining</span>
+                        <span class="segment-duration">${100 - progressPercent}%</span>
+                    </div>
+                </div>
+            `;
+        }
+    }
+    
+    html += '</div>';
+    html += '</div>';
+    
+    return html;
+}
+
+function shouldShowPhase(phaseKey, currentStatus) {
+    const phaseOrder = ['queued', 'processing', 'awaiting_review', 'reviewing', 'rendering', 'complete'];
+    const currentIndex = phaseOrder.indexOf(currentStatus);
+    const phaseIndex = phaseOrder.indexOf(phaseKey);
+    
+    // Show phases that come after the current status (except 'complete' which we handle specially)
+    return phaseIndex > currentIndex && phaseKey !== 'complete';
+}
+
+function isNextPhase(phaseKey, currentStatus) {
+    const phaseOrder = ['queued', 'processing', 'awaiting_review', 'reviewing', 'rendering', 'complete'];
+    const currentIndex = phaseOrder.indexOf(currentStatus);
+    const phaseIndex = phaseOrder.indexOf(phaseKey);
+    
+    return phaseIndex === currentIndex + 1;
+}
+
+function getPhaseColor(phase, isUpcoming = false) {
+    const colors = {
+        'queued': isUpcoming ? '#adb5bd' : '#6c757d',
+        'processing': isUpcoming ? '#66a3ff' : '#007bff', 
+        'awaiting_review': isUpcoming ? '#ffdf88' : '#ffc107',
+        'reviewing': isUpcoming ? '#ff9f5c' : '#fd7e14',
+        'rendering': isUpcoming ? '#66d9a3' : '#28a745',
+        'complete': isUpcoming ? '#66d9a3' : '#28a745',
+        'error': isUpcoming ? '#ff8a9a' : '#dc3545'
+    };
+    return colors[phase] || (isUpcoming ? '#e9ecef' : '#6c757d');
+}
+
+function createTimelineInfoHtml(job) {
+    const timeline_summary = job.timeline_summary;
+    if (!timeline_summary || !timeline_summary.phase_durations) {
+        return '';
+    }
+    
+    const phases = timeline_summary.phase_durations;
+    const totalDuration = timeline_summary.total_duration_formatted || '0s';
+    
+    // Create mini timeline visualization
+    let timelineHtml = '<div class="job-timeline-mini">';
+    timelineHtml += `<div class="timeline-total">Total: ${totalDuration}</div>`;
+    
+    if (Object.keys(phases).length > 0) {
+        timelineHtml += '<div class="timeline-phases">';
+        
+        // Show up to 4 most significant phases
+        const sortedPhases = Object.entries(phases)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4);
+        
+        sortedPhases.forEach(([phase, duration]) => {
+            const formattedDuration = formatDuration(duration);
+            const phaseColor = getPhaseColor(phase);
+            
+            timelineHtml += `
+                <span class="timeline-phase" style="background-color: ${phaseColor}" 
+                      title="${formatStatus(phase)}: ${formattedDuration}">
+                    ${getPhaseIcon(phase)} ${formattedDuration}
+                </span>
+            `;
+        });
+        
+        timelineHtml += '</div>';
+    }
+    
+    timelineHtml += '</div>';
+    return timelineHtml;
+}
+
+function getPhaseIcon(phase) {
+    const icons = {
+        'queued': '⏳',
+        'processing': '⚙️',
+        'awaiting_review': '⏸️',
+        'reviewing': '👁️',
+        'rendering': '🎬',
+        'complete': '✅',
+        'error': '❌'
+    };
+    return icons[phase] || '📋';
+}
+
+// Timeline Modal Functions
+async function showTimelineModal(jobId) {
+    try {
+        showInfo('Loading timeline data...');
+        
+        const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/timeline`);
+        
+        if (!response.ok) {
+            // If timeline endpoint fails, try to get basic job data and create a simple timeline
+            console.warn('Timeline endpoint failed, trying basic job data...');
+            const jobResponse = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
+            
+            if (jobResponse.ok) {
+                const jobData = await jobResponse.json();
+                createSimpleTimelineModal(jobData);
+                return;
+            }
+            
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const timelineData = await response.json();
+        
+        // Create and show the timeline modal
+        createTimelineModal(timelineData);
+        
+    } catch (error) {
+        console.error('Error loading timeline:', error);
+        showError(`Error loading timeline: ${error.message}`);
+    }
+}
+
+function createSimpleTimelineModal(jobData) {
+    const modalHtml = `
+        <div id="timeline-modal" class="modal">
+            <div class="modal-content timeline-modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title">⏱️ Timeline for ${jobData.artist || 'Unknown'} - ${jobData.title || 'Unknown'}</h3>
+                    <div class="modal-controls">
+                        <button onclick="closeTimelineModal()" class="modal-close">✕</button>
+                    </div>
+                </div>
+                <div class="modal-body">
+                    <div class="timeline-summary">
+                        <div class="timeline-summary-cards">
+                            <div class="timeline-card">
+                                <div class="timeline-card-value">${getTotalJobDuration(jobData)}</div>
+                                <div class="timeline-card-label">Total Time</div>
+                            </div>
+                            <div class="timeline-card">
+                                <div class="timeline-card-value">${formatStatus(jobData.status)}</div>
+                                <div class="timeline-card-label">Current Status</div>
+                            </div>
+                            <div class="timeline-card">
+                                <div class="timeline-card-value">${jobData.progress || 0}%</div>
+                                <div class="timeline-card-label">Progress</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="simple-timeline-info">
+                        <h4>Job Information</h4>
+                        <p><strong>Status:</strong> ${formatStatus(jobData.status)}</p>
+                        <p><strong>Progress:</strong> ${jobData.progress || 0}%</p>
+                        <p><strong>Submitted:</strong> ${formatSubmittedTime(jobData)}</p>
+                        <p><strong>Duration:</strong> ${getTotalJobDuration(jobData)}</p>
+                        ${jobData.created_at ? `<p><strong>Created:</strong> ${formatTimestamp(jobData.created_at)}</p>` : ''}
+                        <br>
+                        <p><em>This job was created before detailed timeline tracking was implemented.</em></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove any existing timeline modal
+    const existingModal = document.getElementById('timeline-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Show modal
+    const modal = document.getElementById('timeline-modal');
+    modal.style.display = 'flex';
+    
+    // Add click outside to close
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closeTimelineModal();
+        }
+    });
+}
+
+function createTimelineModal(timelineData) {
+    const modalHtml = `
+        <div id="timeline-modal" class="modal">
+            <div class="modal-content timeline-modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title">⏱️ Timeline for ${timelineData.artist} - ${timelineData.title}</h3>
+                    <div class="modal-controls">
+                        <button onclick="closeTimelineModal()" class="modal-close">✕</button>
+                    </div>
+                </div>
+                <div class="modal-body">
+                    ${createTimelineVisualizationHtml(timelineData)}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove any existing timeline modal
+    const existingModal = document.getElementById('timeline-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Show modal
+    const modal = document.getElementById('timeline-modal');
+    modal.style.display = 'flex';
+    
+    // Add click outside to close
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closeTimelineModal();
+        }
+    });
+}
+
+function createTimelineVisualizationHtml(timelineData) {
+    const timeline = timelineData.timeline || [];
+    const summary = timelineData.timeline_summary || {};
+    const metrics = timelineData.performance_metrics || {};
+    
+    let html = '';
+    
+    // Summary cards
+    html += `
+        <div class="timeline-summary">
+            <div class="timeline-summary-cards">
+                <div class="timeline-card">
+                    <div class="timeline-card-value">${metrics.total_processing_time || '0s'}</div>
+                    <div class="timeline-card-label">Total Time</div>
+                </div>
+                <div class="timeline-card">
+                    <div class="timeline-card-value">${metrics.phases_completed || 0}</div>
+                    <div class="timeline-card-label">Phases Complete</div>
+                </div>
+                <div class="timeline-card">
+                    <div class="timeline-card-value">${formatStatus(timelineData.current_status)}</div>
+                    <div class="timeline-card-label">Current Status</div>
+                </div>
+                ${metrics.estimated_remaining ? `
+                    <div class="timeline-card">
+                        <div class="timeline-card-value">${metrics.estimated_remaining}</div>
+                        <div class="timeline-card-label">Est. Remaining</div>
+                    </div>
+                ` : ''}
+            </div>
+        </div>
+    `;
+    
+    // Visual timeline
+    if (timeline.length > 0) {
+        html += '<div class="timeline-visualization">';
+        html += '<h4>Phase Timeline</h4>';
+        html += '<div class="timeline-chart">';
+        
+        const totalDuration = summary.total_duration_seconds || 1;
+        
+        timeline.forEach((phase, index) => {
+            const duration = phase.duration_seconds;
+            const startTime = new Date(phase.started_at);
+            const endTime = phase.ended_at ? new Date(phase.ended_at) : new Date();
+            const isActive = !phase.ended_at;
+            
+            // Calculate width percentage for visualization
+            const widthPercent = duration ? (duration / totalDuration) * 100 : (isActive ? 10 : 0);
+            
+            html += `
+                <div class="timeline-phase-bar ${isActive ? 'active' : ''}" 
+                     style="width: ${Math.max(widthPercent, 5)}%; background-color: ${getPhaseColor(phase.status)}">
+                    <div class="timeline-phase-info">
+                        <div class="timeline-phase-name">
+                            ${getPhaseIcon(phase.status)} ${formatStatus(phase.status)}
+                        </div>
+                        <div class="timeline-phase-duration">
+                            ${duration ? formatDuration(duration) : (isActive ? 'In Progress' : 'Unknown')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        html += '</div>';
+        
+        // Detailed phase table
+        html += '<div class="timeline-details">';
+        html += '<h4>Phase Details</h4>';
+        html += '<div class="timeline-table">';
+        html += `
+            <div class="timeline-table-header">
+                <div>Phase</div>
+                <div>Started</div>
+                <div>Ended</div>
+                <div>Duration</div>
+                <div>Status</div>
+            </div>
+        `;
+        
+        timeline.forEach((phase) => {
+            const startTime = formatDetailedTimestamp(phase.started_at);
+            const endTime = phase.ended_at ? formatDetailedTimestamp(phase.ended_at) : 'In Progress';
+            const duration = phase.duration_seconds ? formatDuration(phase.duration_seconds) : 'In Progress';
+            const isActive = !phase.ended_at;
+            
+            html += `
+                <div class="timeline-table-row ${isActive ? 'active' : ''}">
+                    <div class="timeline-phase-cell">
+                        ${getPhaseIcon(phase.status)} ${formatStatus(phase.status)}
+                    </div>
+                    <div>${startTime}</div>
+                    <div>${endTime}</div>
+                    <div>${duration}</div>
+                    <div>
+                        <span class="status-indicator" style="background-color: ${getPhaseColor(phase.status)}"></span>
+                        ${isActive ? 'Active' : 'Complete'}
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        html += '</div>';
+    }
+    
+    // Phase transitions (if any gaps between phases)
+    if (timelineData.phase_transitions && timelineData.phase_transitions.length > 0) {
+        html += '<div class="timeline-transitions">';
+        html += '<h4>Phase Transitions</h4>';
+        html += '<div class="transitions-list">';
+        
+        timelineData.phase_transitions.forEach(transition => {
+            if (transition.transition_duration_seconds > 1) { // Only show significant gaps
+                html += `
+                    <div class="transition-item">
+                        <span class="transition-phases">
+                            ${formatStatus(transition.from_status)} → ${formatStatus(transition.to_status)}
+                        </span>
+                        <span class="transition-duration">
+                            Gap: ${formatDuration(transition.transition_duration_seconds)}
+                        </span>
+                    </div>
+                `;
+            }
+        });
+        
+        html += '</div>';
+        html += '</div>';
+    }
+    
+    return html;
+}
+
+function formatDetailedTimestamp(isoString) {
+    const date = new Date(isoString);
+    return date.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+function formatDuration(seconds) {
+    if (seconds < 60) {
+        return `${seconds}s`;
+    } else if (seconds < 3600) {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return `${minutes}m ${remainingSeconds}s`;
+    } else {
+        const hours = Math.floor(seconds / 3600);
+        const remainingMinutes = Math.floor((seconds % 3600) / 60);
+        return `${hours}h ${remainingMinutes}m`;
+    }
+}
+
+function closeTimelineModal() {
+    const modal = document.getElementById('timeline-modal');
+    if (modal) {
+        modal.remove();
+    }
 }
 
 function createJobActions(jobId, job) {
@@ -236,6 +839,7 @@ function createJobActions(jobId, job) {
     
     if (status === 'complete') {
         actions.push(`<button onclick="downloadVideo('${jobId}')" class="btn btn-primary">📥 Download Video</button>`);
+        actions.push(`<button onclick="showFilesModal('${jobId}')" class="btn btn-info">📁 All Files</button>`);
     }
     
     if (status === 'error') {
@@ -246,19 +850,6 @@ function createJobActions(jobId, job) {
     actions.push(`<button onclick="deleteJob('${jobId}')" class="btn btn-danger">🗑️ Delete</button>`);
     
     return actions.join(' ');
-}
-
-function toggleJobDetails(jobId) {
-    const details = document.getElementById(`details-${jobId}`);
-    const toggleIcon = details.parentElement.querySelector('.toggle-icon');
-    
-    if (details.classList.contains('show')) {
-        details.classList.remove('show');
-        toggleIcon.textContent = '▼';
-    } else {
-        details.classList.add('show');
-        toggleIcon.textContent = '▲';
-    }
 }
 
 function tailJobLogs(jobId) {
@@ -483,6 +1074,255 @@ function exportLogs() {
     window.open(`${API_BASE_URL}/admin/export-logs`);
 }
 
+async function viewCacheStats() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/cache/stats`);
+        const stats = await response.json();
+        
+        if (response.ok) {
+            showCacheStatsModal(stats);
+        } else {
+            showError(stats.error || 'Failed to load cache stats');
+        }
+    } catch (error) {
+        console.error('Error loading cache stats:', error);
+        showError('Failed to load cache stats: ' + error.message);
+    }
+}
+
+async function clearCache() {
+    if (!confirm('Are you sure you want to clear old cache files (90+ days)? This cannot be undone.')) return;
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/cache/clear`, {
+            method: 'POST'
+        });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showSuccess(result.message);
+            // Refresh cache stats if modal is open
+            const modal = document.getElementById('cache-stats-modal');
+            if (modal && modal.style.display !== 'none') {
+                viewCacheStats();
+            }
+        } else {
+            showError(result.message || 'Failed to clear cache');
+        }
+    } catch (error) {
+        console.error('Error clearing cache:', error);
+        showError('Failed to clear cache: ' + error.message);
+    }
+}
+
+async function warmCache() {
+    try {
+        showInfo('Initiating cache warming...');
+        
+        const response = await fetch(`${API_BASE_URL}/admin/cache/warm`, {
+            method: 'POST'
+        });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showSuccess(result.message);
+        } else {
+            showError(result.message || 'Failed to warm cache');
+        }
+    } catch (error) {
+        console.error('Error warming cache:', error);
+        showError('Failed to warm cache: ' + error.message);
+    }
+}
+
+async function loadAudioShakeCache() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/cache/audioshake`);
+        const result = await response.json();
+        
+        if (response.ok && result.status === 'success') {
+            return result.cached_responses;
+        } else {
+            console.error('Failed to load AudioShake cache:', result);
+            return [];
+        }
+    } catch (error) {
+        console.error('Error loading AudioShake cache:', error);
+        return [];
+    }
+}
+
+async function deleteAudioShakeCache(audioHash) {
+    if (!confirm(`Are you sure you want to delete the cached AudioShake response for hash ${audioHash}?`)) return;
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/cache/audioshake/${audioHash}`, {
+            method: 'DELETE'
+        });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            showSuccess(result.message);
+            // Refresh cache stats if modal is open
+            const modal = document.getElementById('cache-stats-modal');
+            if (modal && modal.style.display !== 'none') {
+                viewCacheStats();
+            }
+        } else {
+            showError(result.message || 'Failed to delete cached response');
+        }
+    } catch (error) {
+        console.error('Error deleting cached response:', error);
+        showError('Failed to delete cached response: ' + error.message);
+    }
+}
+
+function showCacheStatsModal(stats) {
+    const modal = document.getElementById('cache-stats-modal');
+    if (!modal) {
+        console.error('Cache stats modal not found');
+        return;
+    }
+    
+    // Update cache stats content
+    updateCacheStatsContent(stats);
+    
+    // Show modal
+    modal.style.display = 'flex';
+}
+
+function closeCacheStatsModal() {
+    const modal = document.getElementById('cache-stats-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function updateCacheStatsContent(stats) {
+    const statsContainer = document.getElementById('cache-stats-content');
+    if (!statsContainer) return;
+    
+    // Load AudioShake cache data
+    const audioShakeCache = await loadAudioShakeCache();
+    
+    const formatBytes = (bytes) => {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    };
+    
+    const formatFileCount = (count) => {
+        return count === 1 ? '1 file' : `${count} files`;
+    };
+    
+    let html = `
+        <div class="cache-overview">
+            <h4>📊 Cache Overview</h4>
+            <div class="cache-summary">
+                <div class="cache-stat">
+                    <span class="cache-stat-label">Total Files:</span>
+                    <span class="cache-stat-value">${stats.total_files}</span>
+                </div>
+                <div class="cache-stat">
+                    <span class="cache-stat-label">Total Size:</span>
+                    <span class="cache-stat-value">${formatBytes(stats.total_size_bytes)} (${stats.total_size_gb} GB)</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="cache-directories">
+            <h4>📁 Cache Directories</h4>
+            <div class="cache-dirs-grid">
+    `;
+    
+    // Cache directory stats
+    const dirLabels = {
+        'audio_hashes': '🎵 Audio Hashes',
+        'audioshake_responses': '🔊 AudioShake API',
+        'models': '🤖 Model Files',
+        'transcriptions': '📝 Transcriptions'
+    };
+    
+    Object.entries(stats.cache_directories || {}).forEach(([dirName, dirStats]) => {
+        const label = dirLabels[dirName] || dirName;
+        html += `
+            <div class="cache-dir-card">
+                <div class="cache-dir-header">${label}</div>
+                <div class="cache-dir-stats">
+                    <div>${formatFileCount(dirStats.file_count)}</div>
+                    <div>${formatBytes(dirStats.size_bytes)}</div>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += `
+            </div>
+        </div>
+    `;
+    
+    // AudioShake cache details
+    if (audioShakeCache.length > 0) {
+        html += `
+            <div class="audioshake-cache">
+                <h4>🔊 AudioShake Cache Details</h4>
+                <div class="audioshake-cache-list">
+        `;
+        
+        audioShakeCache.forEach(item => {
+            const timestamp = new Date(item.timestamp).toLocaleString();
+            const shortHash = item.audio_hash.substring(0, 12) + '...';
+            
+            html += `
+                <div class="audioshake-cache-item">
+                    <div class="cache-item-info">
+                        <div class="cache-item-hash">${shortHash}</div>
+                        <div class="cache-item-timestamp">${timestamp}</div>
+                        <div class="cache-item-size">${formatBytes(item.file_size_bytes)}</div>
+                    </div>
+                    <button onclick="deleteAudioShakeCache('${item.audio_hash}')" class="btn btn-danger btn-sm">
+                        🗑️ Delete
+                    </button>
+                </div>
+            `;
+        });
+        
+        html += `
+                </div>
+            </div>
+        `;
+    } else {
+        html += `
+            <div class="audioshake-cache">
+                <h4>🔊 AudioShake Cache Details</h4>
+                <p class="no-cache">No AudioShake responses cached yet.</p>
+            </div>
+        `;
+    }
+    
+    // Cache actions
+    html += `
+        <div class="cache-actions">
+            <h4>🛠️ Cache Management</h4>
+            <div class="cache-actions-grid">
+                <button onclick="clearCache()" class="btn btn-warning">
+                    🧹 Clear Old Cache (90+ days)
+                </button>
+                <button onclick="warmCache()" class="btn btn-info">
+                    🔥 Warm Cache
+                </button>
+                <button onclick="viewCacheStats()" class="btn btn-secondary">
+                    🔄 Refresh Stats
+                </button>
+            </div>
+        </div>
+    `;
+    
+    statsContainer.innerHTML = html;
+}
+
 function toggleAdminPanel() {
     const panel = document.getElementById('admin-panel');
     if (panel) {
@@ -533,8 +1373,32 @@ async function deleteJob(jobId) {
     }
 }
 
-function reviewLyrics(jobId) {
-    window.open(`${API_BASE_URL}/review/${jobId}`, '_blank');
+async function reviewLyrics(jobId) {
+    try {
+        showNotification('Starting review server...', 'info');
+        
+        // Call the start review endpoint
+        const response = await fetch(`${API_BASE_URL}/review/${jobId}/start`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        
+        if (result.review_url) {
+            showNotification('Review server started! Opening review interface...', 'success');
+            // Open the review interface
+            window.open(result.review_url, '_blank');
+        } else {
+            throw new Error('No review URL returned from server');
+        }
+    } catch (error) {
+        console.error('Error starting review:', error);
+        showNotification(`Error starting review: ${error.message}`, 'error');
+    }
 }
 
 function downloadVideo(jobId) {
@@ -604,10 +1468,14 @@ async function submitJob() {
             method: 'POST',
             body: formData
         });
+        console.log('submitJob response from /submit-file submission');
+        console.log(response);
         
         const result = await response.json();
+        console.log('submitJob JSON result from /submit-file submission');
+        console.log(result);
         
-        if (result.status === 'success') {
+        if (response.status === 200) {
             const usingCustomStyles = customStylesVisible && (stylesFile || stylesArchive);
             const stylesMessage = usingCustomStyles ? ' with custom styles' : ' with default Nomad styles';
             showSuccess(`Job submitted successfully${stylesMessage}! Job ID: ${result.job_id}`);
@@ -785,6 +1653,51 @@ function formatStatus(status) {
 
 function formatTimestamp(timestamp) {
     return new Date(timestamp).toLocaleString();
+}
+
+function calculateDuration(createdAt) {
+    if (!createdAt) return 'Unknown';
+    
+    const now = new Date();
+    const startTime = new Date(createdAt);
+    const diffMs = now - startTime;
+    
+    if (diffMs < 0) return 'Unknown';
+    
+    const seconds = Math.floor(diffMs / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) {
+        return `${days}d ${hours % 24}h`;
+    } else if (hours > 0) {
+        return `${hours}h ${minutes % 60}m`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds % 60}s`;
+    } else {
+        return `${seconds}s`;
+    }
+}
+
+function formatDurationWithStatus(job) {
+    const duration = calculateDuration(job.created_at);
+    const status = job.status || 'unknown';
+    
+    // Different duration labels based on status
+    if (status === 'queued') {
+        return `⏱️ ${duration} waiting`;
+    } else if (['processing_audio', 'transcribing', 'rendering'].includes(status)) {
+        return `⏳ ${duration} running`;
+    } else if (status === 'awaiting_review') {
+        return `⏸️ ${duration} awaiting review`;
+    } else if (status === 'complete') {
+        return `✅ ${duration} total`;
+    } else if (status === 'error') {
+        return `❌ ${duration} before error`;
+    } else {
+        return `📅 ${duration}`;
+    }
 }
 
 function escapeHtml(text) {
@@ -1018,6 +1931,329 @@ function updateCopyButtonFeedback() {
             copyBtn.textContent = originalText;
             copyBtn.className = originalClass;
         }, 2000);
+    }
+}
+
+// Files modal functions
+async function showFilesModal(jobId) {
+    try {
+        showInfo('Loading files...');
+        
+        const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/files`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const filesData = await response.json();
+        
+        // Create and show the files modal
+        createFilesModal(filesData);
+        
+    } catch (error) {
+        console.error('Error loading files:', error);
+        showError(`Error loading files: ${error.message}`);
+    }
+}
+
+function createFilesModal(filesData) {
+    const modalHtml = `
+        <div id="files-modal" class="modal">
+            <div class="modal-content files-modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title">📁 Files for ${filesData.artist} - ${filesData.title}</h3>
+                    <div class="modal-controls">
+                        <button onclick="downloadAllFiles('${filesData.job_id}')" class="modal-control-btn primary" title="Download all files as ZIP">
+                            📦 Download All (${filesData.total_size_mb} MB)
+                        </button>
+                        <button onclick="closeFilesModal()" class="modal-close">✕</button>
+                    </div>
+                </div>
+                <div class="modal-body">
+                    <div class="files-summary">
+                        <div class="files-stats">
+                            <span class="files-stat"><strong>${filesData.total_files}</strong> files</span>
+                            <span class="files-stat"><strong>${filesData.total_size_mb} MB</strong> total</span>
+                            <span class="files-stat">Status: <strong>${formatStatus(filesData.status)}</strong></span>
+                        </div>
+                    </div>
+                    
+                    <div class="files-categories">
+                        ${createFilesCategoriesHtml(filesData)}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove any existing files modal
+    const existingModal = document.getElementById('files-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Show modal
+    const modal = document.getElementById('files-modal');
+    modal.style.display = 'flex';
+    
+    // Add click outside to close
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closeFilesModal();
+        }
+    });
+}
+
+function createFilesCategoriesHtml(filesData) {
+    if (!filesData.categories || Object.keys(filesData.categories).length === 0) {
+        return '<p class="no-files">No files found for this job.</p>';
+    }
+    
+    let html = '';
+    
+    Object.entries(filesData.categories).forEach(([categoryId, category]) => {
+        html += `
+            <div class="file-category">
+                <div class="file-category-header">
+                    <h4>${category.name}</h4>
+                    <span class="file-category-count">${category.count} files</span>
+                </div>
+                <p class="file-category-description">${category.description}</p>
+                <div class="file-category-files">
+                    ${category.files.map(file => createFileItemHtml(filesData.job_id, file)).join('')}
+                </div>
+            </div>
+        `;
+    });
+    
+    return html;
+}
+
+function createFileItemHtml(jobId, file) {
+    const iconClass = getFileIcon(file.mime_type);
+    const sizeDisplay = file.size_mb > 0.1 ? `${file.size_mb} MB` : `${Math.round(file.size / 1024)} KB`;
+    
+    return `
+        <div class="file-item">
+            <div class="file-info">
+                <div class="file-name">
+                    <span class="file-icon">${iconClass}</span>
+                    <span class="file-name-text">${file.name}</span>
+                </div>
+                <div class="file-details">
+                    <span class="file-size">${sizeDisplay}</span>
+                    <span class="file-date">${formatFileDate(file.modified)}</span>
+                </div>
+            </div>
+            <div class="file-actions">
+                ${createFileActionButtons(jobId, file)}
+            </div>
+        </div>
+    `;
+}
+
+function createFileActionButtons(jobId, file) {
+    const buttons = [];
+    
+    // Download button
+    buttons.push(`
+        <button onclick="downloadFile('${jobId}', '${escapeHtml(file.path)}', '${escapeHtml(file.name)}')" 
+                class="btn btn-sm btn-primary" title="Download this file">
+            📥 Download
+        </button>
+    `);
+    
+    // Preview button for videos
+    if (file.mime_type.startsWith('video/')) {
+        buttons.push(`
+            <button onclick="previewVideo('${jobId}', '${escapeHtml(file.path)}', '${escapeHtml(file.name)}')" 
+                    class="btn btn-sm btn-secondary" title="Preview video">
+                ▶️ Preview
+            </button>
+        `);
+    }
+    
+    // Preview button for audio
+    if (file.mime_type.startsWith('audio/')) {
+        buttons.push(`
+            <button onclick="previewAudio('${jobId}', '${escapeHtml(file.path)}', '${escapeHtml(file.name)}')" 
+                    class="btn btn-sm btn-secondary" title="Preview audio">
+                🔊 Preview
+            </button>
+        `);
+    }
+    
+    return buttons.join(' ');
+}
+
+function getFileIcon(mimeType) {
+    if (mimeType.startsWith('video/')) return '🎬';
+    if (mimeType.startsWith('audio/')) return '🎵';
+    if (mimeType.startsWith('image/')) return '🖼️';
+    if (mimeType === 'application/zip') return '📦';
+    if (mimeType === 'text/plain') return '📄';
+    if (mimeType === 'application/json') return '📋';
+    return '📁';
+}
+
+function formatFileDate(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+}
+
+function closeFilesModal() {
+    const modal = document.getElementById('files-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// File action functions
+async function downloadFile(jobId, filePath, fileName) {
+    try {
+        const url = `${API_BASE_URL}/jobs/${jobId}/files/${encodeURIComponent(filePath)}`;
+        
+        // Create a temporary link and click it
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        showSuccess(`Downloading ${fileName}...`);
+        
+    } catch (error) {
+        console.error('Error downloading file:', error);
+        showError(`Error downloading file: ${error.message}`);
+    }
+}
+
+async function downloadAllFiles(jobId) {
+    try {
+        showInfo('Creating download package...');
+        
+        const url = `${API_BASE_URL}/jobs/${jobId}/download-all`;
+        
+        // Create a temporary link and click it
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `karaoke-${jobId}-complete.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        showSuccess('Downloading complete package...');
+        
+    } catch (error) {
+        console.error('Error downloading all files:', error);
+        showError(`Error downloading files: ${error.message}`);
+    }
+}
+
+function previewVideo(jobId, filePath, fileName) {
+    const videoUrl = `${API_BASE_URL}/jobs/${jobId}/files/${encodeURIComponent(filePath)}`;
+    
+    const previewHtml = `
+        <div id="video-preview-modal" class="modal">
+            <div class="modal-content video-preview-content">
+                <div class="modal-header">
+                    <h3 class="modal-title">🎬 ${fileName}</h3>
+                    <div class="modal-controls">
+                        <button onclick="closeVideoPreview()" class="modal-close">✕</button>
+                    </div>
+                </div>
+                <div class="modal-body">
+                    <video controls class="preview-video" preload="metadata">
+                        <source src="${videoUrl}" type="video/mp4">
+                        <source src="${videoUrl}" type="video/x-matroska">
+                        Your browser does not support the video tag.
+                    </video>
+                    <div class="preview-actions">
+                        <button onclick="downloadFile('${jobId}', '${escapeHtml(filePath)}', '${escapeHtml(fileName)}')" 
+                                class="btn btn-primary">📥 Download</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing preview
+    const existingPreview = document.getElementById('video-preview-modal');
+    if (existingPreview) {
+        existingPreview.remove();
+    }
+    
+    document.body.insertAdjacentHTML('beforeend', previewHtml);
+    
+    const modal = document.getElementById('video-preview-modal');
+    modal.style.display = 'flex';
+    
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closeVideoPreview();
+        }
+    });
+}
+
+function previewAudio(jobId, filePath, fileName) {
+    const audioUrl = `${API_BASE_URL}/jobs/${jobId}/files/${encodeURIComponent(filePath)}`;
+    
+    const previewHtml = `
+        <div id="audio-preview-modal" class="modal">
+            <div class="modal-content audio-preview-content">
+                <div class="modal-header">
+                    <h3 class="modal-title">🎵 ${fileName}</h3>
+                    <div class="modal-controls">
+                        <button onclick="closeAudioPreview()" class="modal-close">✕</button>
+                    </div>
+                </div>
+                <div class="modal-body">
+                    <audio controls class="preview-audio" preload="metadata">
+                        <source src="${audioUrl}">
+                        Your browser does not support the audio tag.
+                    </audio>
+                    <div class="preview-actions">
+                        <button onclick="downloadFile('${jobId}', '${escapeHtml(filePath)}', '${escapeHtml(fileName)}')" 
+                                class="btn btn-primary">📥 Download</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing preview
+    const existingPreview = document.getElementById('audio-preview-modal');
+    if (existingPreview) {
+        existingPreview.remove();
+    }
+    
+    document.body.insertAdjacentHTML('beforeend', previewHtml);
+    
+    const modal = document.getElementById('audio-preview-modal');
+    modal.style.display = 'flex';
+    
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closeAudioPreview();
+        }
+    });
+}
+
+function closeVideoPreview() {
+    const modal = document.getElementById('video-preview-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+function closeAudioPreview() {
+    const modal = document.getElementById('audio-preview-modal');
+    if (modal) {
+        modal.remove();
     }
 }
 

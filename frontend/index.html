@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎤 Karaoke Generator</title>
+    <title>🎤 Nomad Karaoke Generator</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -112,7 +112,7 @@
                 <h2>Job Status & Logs</h2>
                 <div class="auto-refresh-control">
                     <label>
-                        <input type="checkbox" id="auto-refresh">
+                        <input type="checkbox" id="auto-refresh" checked>
                         Auto-refresh (5s)
                     </label>
                 </div>
@@ -138,6 +138,9 @@
             <div class="admin-buttons">
                 <button onclick="refreshData()" class="btn btn-primary">
                     🔄 Refresh Data
+                </button>
+                <button onclick="viewCacheStats()" class="btn btn-info">
+                    💾 Cache Stats
                 </button>
                 <button onclick="clearErrorJobs()" class="btn btn-danger">
                     🗑️ Clear Error Jobs
@@ -166,6 +169,23 @@
             <div class="modal-body">
                 <div id="modal-logs" class="modal-logs font-md">
                     <div class="logs-loading">Starting log tail...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cache Stats Modal -->
+    <div id="cache-stats-modal" class="modal">
+        <div class="modal-content cache-modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">💾 Cache Statistics & Management</h3>
+                <div class="modal-controls">
+                    <button onclick="closeCacheStatsModal()" class="modal-close">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="cache-stats-content" class="cache-stats-content">
+                    <div class="cache-loading">Loading cache statistics...</div>
                 </div>
             </div>
         </div>
