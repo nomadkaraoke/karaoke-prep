@@ -3,8 +3,8 @@ import re
 import logging
 import shutil
 import json
-from lyrics_transcriber import LyricsTranscriber, OutputConfig, TranscriberConfig, LyricsConfig
-from lyrics_transcriber.core.controller import LyricsControllerResult
+from lyrics_transcriber_local.lyrics_transcriber import LyricsTranscriber, OutputConfig, TranscriberConfig, LyricsConfig
+from lyrics_transcriber_local.lyrics_transcriber.core.controller import LyricsControllerResult
 from dotenv import load_dotenv
 from .utils import sanitize_filename
 

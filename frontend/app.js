@@ -168,8 +168,8 @@ function updateJobsList(jobs) {
     }
     
     const sortedJobs = Object.entries(jobs).sort((a, b) => {
-        const timeA = new Date(a[1].created_at || 0);
-        const timeB = new Date(b[1].created_at || 0);
+        const timeA = parseServerTime(a[1].created_at || 0);
+        const timeB = parseServerTime(b[1].created_at || 0);
         return timeB - timeA; // Most recent first
     });
     
@@ -275,7 +275,7 @@ function createJobHTML(jobId, job) {
 function formatSubmittedTime(job) {
     // Try timeline data first
     if (job.timeline && job.timeline.length > 0) {
-        const submitTime = new Date(job.timeline[0].started_at);
+        const submitTime = parseServerTime(job.timeline[0].started_at);
         const now = new Date();
         const diffHours = (now - submitTime) / (1000 * 60 * 60);
         
@@ -289,7 +289,7 @@ function formatSubmittedTime(job) {
     
     // Fallback to created_at
     if (job.created_at) {
-        const submitTime = new Date(job.created_at);
+        const submitTime = parseServerTime(job.created_at);
         const now = new Date();
         const diffHours = (now - submitTime) / (1000 * 60 * 60);
         
@@ -313,18 +313,18 @@ function getTotalJobDuration(job) {
     
     // Try calculating from timeline data directly
     if (job.timeline && job.timeline.length > 0) {
-        const startTime = new Date(job.timeline[0].started_at);
+        const startTime = parseServerTime(job.timeline[0].started_at);
         const now = new Date();
         const durationSeconds = Math.floor((now - startTime) / 1000);
-        return formatDuration(durationSeconds);
+        return formatDuration(Math.max(0, durationSeconds)); // Ensure non-negative
     }
     
     // Fallback to calculating from created_at if no timeline data
     if (job.created_at) {
-        const startTime = new Date(job.created_at);
+        const startTime = parseServerTime(job.created_at);
         const now = new Date();
         const durationSeconds = Math.floor((now - startTime) / 1000);
-        return formatDuration(durationSeconds);
+        return formatDuration(Math.max(0, durationSeconds)); // Ensure non-negative
     }
     
     return 'Unknown';
@@ -699,8 +699,8 @@ function createTimelineVisualizationHtml(timelineData) {
         
         timeline.forEach((phase, index) => {
             const duration = phase.duration_seconds;
-            const startTime = new Date(phase.started_at);
-            const endTime = phase.ended_at ? new Date(phase.ended_at) : new Date();
+            const startTime = parseServerTime(phase.started_at);
+            const endTime = phase.ended_at ? parseServerTime(phase.ended_at) : new Date();
             const isActive = !phase.ended_at;
             
             // Calculate width percentage for visualization
@@ -793,7 +793,7 @@ function createTimelineVisualizationHtml(timelineData) {
 }
 
 function formatDetailedTimestamp(isoString) {
-    const date = new Date(isoString);
+    const date = parseServerTime(isoString);
     return date.toLocaleString([], {
         month: 'short',
         day: 'numeric',
@@ -835,6 +835,12 @@ function createJobActions(jobId, job) {
         } else {
             actions.push(`<button onclick="reviewLyrics('${jobId}')" class="btn btn-success">📝 Review Lyrics</button>`);
         }
+    }
+    
+    if (status === 'reviewing') {
+        // For reviewing status, go directly to the review URL
+        const reviewUrl = `https://lyrics.nomadkaraoke.com/?baseApiUrl=${API_BASE_URL}/corrections/${jobId}`;
+        actions.push(`<a href="${reviewUrl}" target="_blank" class="btn btn-success">📝 Continue Review</a>`);
     }
     
     if (status === 'complete') {
@@ -1021,7 +1027,7 @@ async function loadLogTailData(jobId) {
         }
         
         const logsHTML = logs.map(log => {
-            const timestamp = new Date(log.timestamp).toLocaleTimeString();
+            const timestamp = parseServerTime(log.timestamp).toLocaleTimeString();
             const levelClass = log.level.toLowerCase();
             return `<div class="log-entry log-${levelClass}">
                 <span class="log-timestamp">${timestamp}</span>
@@ -1272,7 +1278,7 @@ async function updateCacheStatsContent(stats) {
         `;
         
         audioShakeCache.forEach(item => {
-            const timestamp = new Date(item.timestamp).toLocaleString();
+            const timestamp = parseServerTime(item.timestamp).toLocaleString();
             const shortHash = item.audio_hash.substring(0, 12) + '...';
             
             html += `
@@ -1638,6 +1644,18 @@ async function loadExampleData() {
 }
 
 // Utility functions
+function parseServerTime(timestamp) {
+    // Assume server timestamps are in UTC, ensure proper parsing
+    if (!timestamp) return new Date();
+    
+    // If timestamp doesn't end with 'Z' or have timezone info, treat as UTC
+    if (typeof timestamp === 'string' && !timestamp.includes('Z') && !timestamp.includes('+') && !timestamp.includes('-')) {
+        return new Date(timestamp + 'Z');
+    }
+    
+    return new Date(timestamp);
+}
+
 function formatStatus(status) {
     const statusMap = {
         'queued': 'Queued',
@@ -1652,17 +1670,17 @@ function formatStatus(status) {
 }
 
 function formatTimestamp(timestamp) {
-    return new Date(timestamp).toLocaleString();
+    return parseServerTime(timestamp).toLocaleString();
 }
 
 function calculateDuration(createdAt) {
     if (!createdAt) return 'Unknown';
     
     const now = new Date();
-    const startTime = new Date(createdAt);
+    const startTime = parseServerTime(createdAt);
     const diffMs = now - startTime;
     
-    if (diffMs < 0) return 'Unknown';
+    if (diffMs < 0) return '0s'; // Handle any remaining edge cases
     
     const seconds = Math.floor(diffMs / 1000);
     const minutes = Math.floor(seconds / 60);

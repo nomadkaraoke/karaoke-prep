@@ -68,7 +68,12 @@ karaoke_image = (
         "libsox-dev",
         "sox",
     ])
+    .env({
+        "LYRICS_TRANSCRIBER_CACHE_DIR": "/cache",
+        "AUDIO_SEPARATOR_MODEL_DIR": "/models"
+    })
     .add_local_dir("karaoke_gen", "/root/karaoke_gen")
+    .add_local_dir("lyrics_transcriber_local", "/root/lyrics_transcriber_local")
     .add_local_file("core.py", "/root/core.py")
 )
 
@@ -179,97 +184,23 @@ class CacheManager:
         self.cache_dir = Path(cache_dir)
         self.logger = logger or logging.getLogger(__name__)
         
-        # Create cache subdirectories
-        self.audio_hashes_dir = self.cache_dir / "audio_hashes"
-        self.audioshake_dir = self.cache_dir / "audioshake_responses"
-        self.models_dir = self.cache_dir / "models"
-        self.transcription_dir = self.cache_dir / "transcriptions"
-        
-        # Ensure directories exist
-        for dir_path in [self.audio_hashes_dir, self.audioshake_dir, self.models_dir, self.transcription_dir]:
-            dir_path.mkdir(parents=True, exist_ok=True)
+        # Ensure cache directory exists
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
     
     def get_audio_hash(self, audio_file_path: str) -> str:
-        """Generate SHA256 hash of audio file for cache key."""
+        """Generate MD5 hash of audio file for cache key."""
         import hashlib
         
-        hash_file = self.audio_hashes_dir / f"{Path(audio_file_path).name}.hash"
+        # Verify audio hash matches (basic security check)
+        with open(audio_file_path, 'rb') as f:
+            audio_hash = hashlib.md5(f.read()).hexdigest()
         
-        # Check if hash already cached
-        if hash_file.exists():
-            with open(hash_file, 'r') as f:
-                cached_hash = f.read().strip()
-                self.logger.debug(f"Found cached audio hash: {cached_hash}")
-                return cached_hash
-        
-        # Calculate hash
-        sha256_hash = hashlib.sha256()
-        with open(audio_file_path, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        
-        audio_hash = sha256_hash.hexdigest()
-        
-        # Cache the hash
-        with open(hash_file, 'w') as f:
-            f.write(audio_hash)
-        
-        self.logger.info(f"Generated and cached audio hash: {audio_hash}")
+        self.logger.debug(f"Generated audio hash: {audio_hash}")
         return audio_hash
-    
-    def cache_audioshake_response(self, audio_hash: str, response_data: dict) -> None:
-        """Cache AudioShake API response by audio hash."""
-        cache_file = self.audioshake_dir / f"{audio_hash}.json"
-        
-        with open(cache_file, 'w') as f:
-            json.dump({
-                "timestamp": datetime.datetime.now().isoformat(),
-                "audio_hash": audio_hash,
-                "response": response_data
-            }, f, indent=2)
-        
-        self.logger.info(f"Cached AudioShake response for hash {audio_hash}")
-    
-    def get_cached_audioshake_response(self, audio_hash: str) -> Optional[dict]:
-        """Retrieve cached AudioShake response by audio hash."""
-        cache_file = self.audioshake_dir / f"{audio_hash}.json"
-        
-        if not cache_file.exists():
-            return None
-        
-        try:
-            with open(cache_file, 'r') as f:
-                cached_data = json.load(f)
-            
-            # Check if cache is not too old (optional - remove if you want indefinite caching)
-            cache_age_days = 30
-            cache_time = datetime.datetime.fromisoformat(cached_data["timestamp"])
-            if (datetime.datetime.now() - cache_time).days > cache_age_days:
-                self.logger.info(f"AudioShake cache expired for hash {audio_hash}")
-                return None
-            
-            self.logger.info(f"Found cached AudioShake response for hash {audio_hash}")
-            return cached_data["response"]
-            
-        except (json.JSONDecodeError, KeyError) as e:
-            self.logger.warning(f"Invalid cache file for hash {audio_hash}: {e}")
-            return None
-    
-    def cache_model_file(self, model_name: str, model_path: str) -> str:
-        """Cache a model file and return the cached path."""
-        cached_model_path = self.models_dir / model_name
-        
-        if not cached_model_path.exists():
-            shutil.copy2(model_path, cached_model_path)
-            self.logger.info(f"Cached model {model_name}")
-        else:
-            self.logger.debug(f"Model {model_name} already cached")
-        
-        return str(cached_model_path)
     
     def cache_transcription_result(self, audio_hash: str, transcription_data: dict) -> None:
         """Cache transcription results by audio hash."""
-        cache_file = self.transcription_dir / f"{audio_hash}.json"
+        cache_file = self.cache_dir / f"transcription_{audio_hash}.json"
         
         with open(cache_file, 'w') as f:
             json.dump({
@@ -282,7 +213,7 @@ class CacheManager:
     
     def get_cached_transcription_result(self, audio_hash: str) -> Optional[dict]:
         """Retrieve cached transcription result by audio hash."""
-        cache_file = self.transcription_dir / f"{audio_hash}.json"
+        cache_file = self.cache_dir / f"transcription_{audio_hash}.json"
         
         if not cache_file.exists():
             return None
@@ -305,11 +236,17 @@ class CacheManager:
         cutoff_time = time.time() - (max_age_days * 24 * 60 * 60)
         cleared_count = 0
         
-        for cache_dir in [self.audioshake_dir, self.transcription_dir]:
-            for cache_file in cache_dir.glob("*.json"):
-                if cache_file.stat().st_mtime < cutoff_time:
-                    cache_file.unlink()
-                    cleared_count += 1
+        # Clear all JSON cache files older than the cutoff
+        for cache_file in self.cache_dir.glob("*.json"):
+            if cache_file.stat().st_mtime < cutoff_time:
+                cache_file.unlink()
+                cleared_count += 1
+        
+        # Also clear old preview videos
+        for cache_file in self.cache_dir.glob("preview_*.mp4"):
+            if cache_file.stat().st_mtime < cutoff_time:
+                cache_file.unlink()
+                cleared_count += 1
         
         if cleared_count > 0:
             self.logger.info(f"Cleared {cleared_count} old cache files")
@@ -324,49 +261,6 @@ def setup_cache_manager(job_id: str) -> CacheManager:
     
     return cache_manager
 
-# Example AudioShake API caching integration
-def cached_audioshake_request(cache_manager: CacheManager, audio_file_path: str, api_endpoint: str, api_data: dict, job_id: str = None) -> dict:
-    """
-    Example function showing how to cache AudioShake API responses.
-    
-    This is a template you can use to modify the lyrics-transcriber library
-    or your karaoke processing code to cache AudioShake API calls.
-    """
-    # Get audio hash for cache key
-    audio_hash = cache_manager.get_audio_hash(audio_file_path)
-    
-    # Check for cached response
-    cached_response = cache_manager.get_cached_audioshake_response(audio_hash)
-    if cached_response:
-        if job_id:
-            log_message(job_id, "INFO", f"Using cached AudioShake response for hash {audio_hash}")
-        return cached_response
-    
-    # If no cache, make the actual API call
-    import requests
-    import os
-    
-    if job_id:
-        log_message(job_id, "INFO", f"Making AudioShake API call for hash {audio_hash}")
-    
-    # Make the API request (example - adjust based on actual AudioShake API)
-    headers = {"Authorization": f"Bearer {os.environ.get('AUDIOSHAKE_API_TOKEN')}"}
-    response = requests.post(api_endpoint, json=api_data, headers=headers)
-    
-    if response.status_code == 200:
-        response_data = response.json()
-        
-        # Cache the successful response
-        cache_manager.cache_audioshake_response(audio_hash, response_data)
-        
-        if job_id:
-            log_message(job_id, "INFO", f"Cached AudioShake response for hash {audio_hash}")
-        
-        return response_data
-    else:
-        # Don't cache error responses
-        raise Exception(f"AudioShake API error: {response.status_code} - {response.text}")
-
 # Add a cache warming function for common use cases
 @app.function(
     image=karaoke_image,
@@ -374,21 +268,29 @@ def cached_audioshake_request(cache_manager: CacheManager, audio_file_path: str,
     timeout=300,  # 5 minute timeout for cache operations
 )
 def warm_cache():
-    """Warm up the cache with commonly used models or data."""
+    """Warm up the cache with commonly used data."""
     try:
         cache_manager = CacheManager("/cache")
         
-        # Example: Pre-load commonly used model files
-        model_files = [
-            "/models/model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-            "/models/mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"
-        ]
-        
-        for model_file in model_files:
-            if Path(model_file).exists():
-                model_name = Path(model_file).name
-                cache_manager.cache_model_file(model_name, model_file)
-                print(f"Cached model: {model_name}")
+        # Check cache statistics for debugging
+        cache_dir = cache_manager.cache_dir
+        if cache_dir.exists():
+            all_files = list(cache_dir.glob("*"))
+            total_files = len([f for f in all_files if f.is_file()])
+            total_size = sum(f.stat().st_size for f in all_files if f.is_file())
+            
+            print(f"Cache directory: {cache_dir}")
+            print(f"Total cache files: {total_files}")
+            print(f"Total cache size: {total_size / 1024 / 1024:.2f} MB")
+            
+            # Show breakdown by file type
+            audioshake_files = len(list(cache_dir.glob("audioshake_*.json")))
+            genius_files = len(list(cache_dir.glob("genius_*.json")))
+            preview_files = len(list(cache_dir.glob("preview_*.mp4")))
+            
+            print(f"AudioShake cache files: {audioshake_files}")
+            print(f"Genius cache files: {genius_files}")
+            print(f"Preview video files: {preview_files}")
         
         print("Cache warming completed")
         return {"status": "success", "message": "Cache warmed successfully"}
@@ -493,9 +395,9 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
         # Set up logging to capture all messages
         log_handler = setup_job_logging(job_id)
         
-        from lyrics_transcriber.output.generator import OutputGenerator
-        from lyrics_transcriber.core.config import OutputConfig
-        from lyrics_transcriber.types import CorrectionResult
+        from lyrics_transcriber_local.lyrics_transcriber.output.generator import OutputGenerator
+        from lyrics_transcriber_local.lyrics_transcriber.core.config import OutputConfig
+        from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
         
         log_message(job_id, "INFO", f"Starting phase 2 (video generation) for job {job_id}")
         
@@ -533,7 +435,6 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
         output_config = OutputConfig(
             output_styles_json=styles_file,
             output_dir=str(Path(track_output_dir) / "lyrics"),
-            cache_dir="/root/lyrics-transcriber-cache",
             render_video=True,  # Now we DO want video generation
             generate_cdg=True,  # Now we DO want CDG generation
             video_resolution="4k",
@@ -1588,34 +1489,55 @@ async def get_cache_stats():
         cache_manager = CacheManager("/cache")
         
         stats = {
-            "cache_directories": {},
+            "cache_categories": {},
             "total_files": 0,
             "total_size_bytes": 0
         }
         
-        # Check each cache directory
-        for cache_type, cache_dir in {
-            "audio_hashes": cache_manager.audio_hashes_dir,
-            "audioshake_responses": cache_manager.audioshake_dir,
-            "models": cache_manager.models_dir,
-            "transcriptions": cache_manager.transcription_dir
-        }.items():
+        # Define cache file patterns based on real cache structure
+        cache_patterns = {
+            "audioshake_responses": ["audioshake_*_raw.json", "audioshake_*_converted.json"],
+            "genius_lyrics": ["genius_*_raw.json", "genius_*_converted.json"],
+            "spotify_lyrics": ["spotify_*_raw.json", "spotify_*_converted.json"],
+            "whisper_transcriptions": ["whisper_*_raw.json", "whisper_*_converted.json"],
+            "file_sources": ["file_*_raw.json", "file_*_converted.json"],
+            "anchor_sequences": ["anchors_*.json"],
+            "preview_videos": ["preview_*.mp4"],
+            "processed_lyrics": ["* (Lyrics *).txt"],
+            "temporary_files": ["temp_*.ass", "resized_*.png"],
+            "other_files": ["*.json", "*.txt", "*.mp4", "*.png"]  # Catch-all for remaining files
+        }
+        
+        # Check each cache category
+        for category, patterns in cache_patterns.items():
+            files = []
+            for pattern in patterns:
+                files.extend(cache_manager.cache_dir.glob(pattern))
             
-            if cache_dir.exists():
-                files = list(cache_dir.glob("*"))
-                total_size = sum(f.stat().st_size for f in files if f.is_file())
+            # Remove duplicates (files might match multiple patterns)
+            files = list(set(files))
+            
+            if files:
+                category_size = sum(f.stat().st_size for f in files if f.is_file())
                 
-                stats["cache_directories"][cache_type] = {
+                stats["cache_categories"][category] = {
                     "file_count": len(files),
-                    "size_bytes": total_size,
-                    "size_mb": round(total_size / 1024 / 1024, 2)
+                    "size_bytes": category_size,
+                    "size_mb": round(category_size / 1024 / 1024, 2)
                 }
                 
                 stats["total_files"] += len(files)
-                stats["total_size_bytes"] += total_size
+                stats["total_size_bytes"] += category_size
         
-        stats["total_size_mb"] = round(stats["total_size_bytes"] / 1024 / 1024, 2)
-        stats["total_size_gb"] = round(stats["total_size_bytes"] / 1024 / 1024 / 1024, 2)
+        # Get actual total from all files (to handle any overlaps)
+        all_files = list(cache_manager.cache_dir.glob("*"))
+        actual_files = [f for f in all_files if f.is_file()]
+        actual_total_size = sum(f.stat().st_size for f in actual_files)
+        
+        stats["total_files"] = len(actual_files)
+        stats["total_size_bytes"] = actual_total_size
+        stats["total_size_mb"] = round(actual_total_size / 1024 / 1024, 2)
+        stats["total_size_gb"] = round(actual_total_size / 1024 / 1024 / 1024, 2)
         
         return JSONResponse(stats)
     except Exception as e:
@@ -1644,18 +1566,51 @@ async def get_audioshake_cache():
         cache_manager = CacheManager("/cache")
         
         cached_responses = []
-        for cache_file in cache_manager.audioshake_dir.glob("*.json"):
+        
+        # Look for both raw and converted AudioShake files
+        audioshake_files = []
+        audioshake_files.extend(cache_manager.cache_dir.glob("audioshake_*_raw.json"))
+        audioshake_files.extend(cache_manager.cache_dir.glob("audioshake_*_converted.json"))
+        
+        for cache_file in audioshake_files:
             try:
                 with open(cache_file, 'r') as f:
                     cached_data = json.load(f)
                 
+                # Extract hash from filename
+                filename = cache_file.name
+                if filename.startswith("audioshake_"):
+                    parts = filename.replace("audioshake_", "").replace(".json", "")
+                    if parts.endswith("_raw"):
+                        audio_hash = parts[:-4]
+                        file_type = "raw"
+                    elif parts.endswith("_converted"):
+                        audio_hash = parts[:-10]
+                        file_type = "converted"
+                    else:
+                        audio_hash = parts
+                        file_type = "unknown"
+                else:
+                    audio_hash = "unknown"
+                    file_type = "unknown"
+                
                 cached_responses.append({
-                    "audio_hash": cached_data.get("audio_hash", "unknown"),
+                    "audio_hash": audio_hash,
+                    "file_type": file_type,
                     "timestamp": cached_data.get("timestamp", "unknown"),
-                    "file_size_bytes": cache_file.stat().st_size
+                    "file_size_bytes": cache_file.stat().st_size,
+                    "filename": cache_file.name
                 })
-            except Exception:
-                # Skip invalid cache files
+            except Exception as e:
+                # Skip invalid cache files but log for debugging
+                cached_responses.append({
+                    "audio_hash": "invalid",
+                    "file_type": "error",
+                    "timestamp": "unknown",
+                    "file_size_bytes": cache_file.stat().st_size,
+                    "filename": cache_file.name,
+                    "error": str(e)
+                })
                 continue
         
         return JSONResponse({
@@ -1671,13 +1626,24 @@ async def delete_audioshake_cache(audio_hash: str):
     """Delete specific AudioShake cache entry."""
     try:
         cache_manager = CacheManager("/cache")
-        cache_file = cache_manager.audioshake_dir / f"{audio_hash}.json"
         
-        if cache_file.exists():
-            cache_file.unlink()
+        # Look for both raw and converted files
+        cache_files = [
+            cache_manager.cache_dir / f"audioshake_{audio_hash}_raw.json",
+            cache_manager.cache_dir / f"audioshake_{audio_hash}_converted.json"
+        ]
+        
+        deleted_files = []
+        for cache_file in cache_files:
+            if cache_file.exists():
+                cache_file.unlink()
+                deleted_files.append(cache_file.name)
+        
+        if deleted_files:
             return JSONResponse({
                 "status": "success",
-                "message": f"Deleted AudioShake cache for hash {audio_hash}"
+                "message": f"Deleted AudioShake cache for hash {audio_hash}",
+                "deleted_files": deleted_files
             })
         else:
             return JSONResponse({
@@ -2069,8 +2035,8 @@ def add_lyrics_source(job_id: str, source: str, lyrics_text: str):
     """Add new lyrics source and rerun correction."""
     import json
     from pathlib import Path
-    from lyrics_transcriber.types import CorrectionResult
-    from lyrics_transcriber.correction.operations import CorrectionOperations
+    from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
+    from lyrics_transcriber_local.lyrics_transcriber.correction.operations import CorrectionOperations
     
     try:
         # Set up logging
@@ -2159,8 +2125,8 @@ def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
     """Update enabled correction handlers and rerun correction."""
     import json
     from pathlib import Path
-    from lyrics_transcriber.types import CorrectionResult
-    from lyrics_transcriber.correction.operations import CorrectionOperations
+    from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
+    from lyrics_transcriber_local.lyrics_transcriber.correction.operations import CorrectionOperations
     
     try:
         # Set up logging
@@ -2236,9 +2202,9 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
     """Generate a preview video with current corrections."""
     import json
     from pathlib import Path
-    from lyrics_transcriber.types import CorrectionResult
-    from lyrics_transcriber.core.config import OutputConfig
-    from lyrics_transcriber.correction.operations import CorrectionOperations
+    from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
+    from lyrics_transcriber_local.lyrics_transcriber.core.config import OutputConfig
+    from lyrics_transcriber_local.lyrics_transcriber.correction.operations import CorrectionOperations
     
     try:
         # Set up logging
@@ -2277,6 +2243,10 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         artist = job_data.get("artist", "Unknown")
         title = job_data.get("title", "Unknown")
         track_dir = Path(track_output_dir)
+        
+        # Ensure the base directory exists
+        track_dir.mkdir(parents=True, exist_ok=True)
+        
         audio_file = track_dir / f"{artist} - {title} (Original).wav"
         
         if not audio_file.exists():
@@ -2309,9 +2279,10 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         else:
             log_message(job_id, "DEBUG", f"Styles file exists and is accessible: {styles_file}")
         
+        # Note: CorrectionOperations.generate_preview_video will create its own "previews" subdirectory
+        # so we pass the base track_output_dir, not track_output_dir/previews
         preview_config = OutputConfig(
-            output_dir=str(Path(track_output_dir) / "previews"),
-            cache_dir="/cache",
+            output_dir=str(track_output_dir),
             output_styles_json=styles_file,
             video_resolution="360p",  # Force 360p for preview
             render_video=True,

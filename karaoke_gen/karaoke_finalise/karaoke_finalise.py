@@ -19,7 +19,7 @@ import time
 from google.oauth2.credentials import Credentials
 import base64
 from email.mime.text import MIMEText
-from lyrics_transcriber.output.cdg import CDGGenerator
+from lyrics_transcriber_local.lyrics_transcriber.output.cdg import CDGGenerator
 
 
 class KaraokeFinalise:
