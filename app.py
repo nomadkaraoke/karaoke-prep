@@ -398,6 +398,7 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
         from lyrics_transcriber_local.lyrics_transcriber.output.generator import OutputGenerator
         from lyrics_transcriber_local.lyrics_transcriber.core.config import OutputConfig
         from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
+        from lyrics_transcriber_local.lyrics_transcriber.correction.operations import CorrectionOperations
         
         log_message(job_id, "INFO", f"Starting phase 2 (video generation) for job {job_id}")
         
@@ -410,25 +411,31 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
         artist = job_data.get("artist", "Unknown")
         title = job_data.get("title", "Unknown")
         
-        # Load correction data
+        # Always load the original correction data from file first
+        corrections_file_path = job_data.get("corrections_file")
+        if not corrections_file_path:
+            corrections_file_path = str(Path(track_output_dir) / "lyrics" / f"{artist} - {title} (Lyrics Corrections).json")
+        
+        log_message(job_id, "INFO", f"Loading original correction data from {corrections_file_path}")
+        
+        if not Path(corrections_file_path).exists():
+            raise Exception(f"Corrections file not found: {corrections_file_path}")
+        
+        with open(corrections_file_path, 'r') as f:
+            original_corrections_data = json.load(f)
+        
+        base_correction_result = CorrectionResult.from_dict(original_corrections_data)
+        
+        # Apply updated data if provided
         if updated_correction_data:
-            log_message(job_id, "INFO", "Using updated correction data from review")
-            correction_result = CorrectionResult.from_dict(updated_correction_data)
+            log_message(job_id, "INFO", "Applying updated correction data from review")
+            correction_result = CorrectionOperations.update_correction_result_with_data(
+                base_correction_result, 
+                updated_correction_data
+            )
         else:
-            # Load from saved file
-            corrections_file_path = job_data.get("corrections_file")
-            if not corrections_file_path:
-                corrections_file_path = str(Path(track_output_dir) / "lyrics" / f"{artist} - {title} (Lyrics Corrections).json")
-            
-            log_message(job_id, "INFO", f"Loading correction data from {corrections_file_path}")
-            
-            if not Path(corrections_file_path).exists():
-                raise Exception(f"Corrections file not found: {corrections_file_path}")
-            
-            with open(corrections_file_path, 'r') as f:
-                corrections_data = json.load(f)
-            
-            correction_result = CorrectionResult.from_dict(corrections_data)
+            log_message(job_id, "INFO", "Using original correction data (no updates from review)")
+            correction_result = base_correction_result
         
         # Set up output config for Phase 2 (video generation)
         styles_file = job_data.get("styles_file_path") or str(Path(track_output_dir) / "styles_updated.json")

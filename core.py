@@ -381,6 +381,7 @@ class ServerlessKaraokeProcessor:
     def _update_styles_paths(self, input_styles_path: str, output_styles_path: str, assets_dir: str) -> None:
         """
         Update file paths in styles JSON to point to the extracted assets directory.
+        Also install any font files system-wide so they can be referenced by name.
         """
         try:
             with open(input_styles_path, 'r') as f:
@@ -389,6 +390,7 @@ class ServerlessKaraokeProcessor:
             # Build a map of all files in the assets directory for quick lookup
             assets_path = Path(assets_dir)
             file_map = {}
+            font_files = []  # Track font files for installation
             
             self.logger.info(f"Building file map from assets directory: {assets_dir}")
             for root, dirs, files in os.walk(assets_dir):
@@ -396,9 +398,19 @@ class ServerlessKaraokeProcessor:
                     file_path = os.path.join(root, file)
                     filename = file.lower()  # Use lowercase for case-insensitive matching
                     file_map[filename] = file_path
+                    
+                    # Check if this is a font file
+                    if filename.endswith(('.ttf', '.otf', '.woff', '.woff2')):
+                        font_files.append(file_path)
+                        self.logger.info(f"Found font file for installation: {file_path}")
+                    
                     self.logger.debug(f"Found asset file: {filename} -> {file_path}")
             
-            self.logger.info(f"Found {len(file_map)} files in assets directory")
+            self.logger.info(f"Found {len(file_map)} files in assets directory, {len(font_files)} fonts")
+            
+            # Install font files system-wide
+            if font_files:
+                self._install_fonts(font_files)
             
             # Common keys that reference files
             file_keys = [
@@ -476,3 +488,91 @@ class ServerlessKaraokeProcessor:
             import traceback
             self.logger.error(f"Traceback: {traceback.format_exc()}")
             raise
+
+    def _install_fonts(self, font_files: List[str]) -> None:
+        """
+        Install font files system-wide so they can be referenced by name in FFmpeg.
+        """
+        import subprocess
+        
+        try:
+            # Try to create a user fonts directory first
+            user_fonts_dir = Path.home() / '.fonts'
+            system_fonts_dir = Path('/usr/share/fonts/truetype/custom')
+            
+            # Try user directory first, fall back to system directory
+            fonts_dir = None
+            
+            try:
+                user_fonts_dir.mkdir(parents=True, exist_ok=True)
+                fonts_dir = user_fonts_dir
+                self.logger.info(f"Using user fonts directory: {fonts_dir}")
+            except PermissionError:
+                self.logger.info("Cannot write to user fonts directory, trying system directory")
+                try:
+                    system_fonts_dir.mkdir(parents=True, exist_ok=True)
+                    fonts_dir = system_fonts_dir
+                    self.logger.info(f"Using system fonts directory: {fonts_dir}")
+                except PermissionError:
+                    self.logger.warning("Cannot write to system fonts directory, trying /tmp")
+                    fonts_dir = Path('/tmp/fonts')
+                    fonts_dir.mkdir(parents=True, exist_ok=True)
+                    self.logger.info(f"Using temporary fonts directory: {fonts_dir}")
+            
+            # Copy font files to the fonts directory
+            installed_fonts = []
+            for font_file in font_files:
+                try:
+                    source_path = Path(font_file)
+                    dest_path = fonts_dir / source_path.name
+                    
+                    # Copy the font file
+                    shutil.copy2(source_path, dest_path)
+                    installed_fonts.append(str(dest_path))
+                    self.logger.info(f"✓ Installed font: {source_path.name} -> {dest_path}")
+                    
+                except Exception as e:
+                    self.logger.error(f"✗ Failed to install font {font_file}: {str(e)}")
+            
+            if installed_fonts:
+                # Refresh the font cache
+                try:
+                    # Try to run fc-cache to refresh font cache
+                    result = subprocess.run(['fc-cache', '-f'], 
+                                          capture_output=True, text=True, timeout=30)
+                    if result.returncode == 0:
+                        self.logger.info("✓ Font cache refreshed successfully")
+                    else:
+                        self.logger.warning(f"Font cache refresh had warnings: {result.stderr}")
+                    
+                    # List installed fonts for verification
+                    try:
+                        result = subprocess.run(['fc-list'], 
+                                              capture_output=True, text=True, timeout=10)
+                        if result.returncode == 0:
+                            font_list = result.stdout
+                            for font_file in installed_fonts:
+                                font_name = Path(font_file).stem
+                                if font_name.lower() in font_list.lower():
+                                    self.logger.info(f"✓ Verified font is available: {font_name}")
+                                else:
+                                    self.logger.warning(f"⚠ Font may not be properly installed: {font_name}")
+                    except Exception as e:
+                        self.logger.debug(f"Could not verify font installation: {str(e)}")
+                        
+                except subprocess.TimeoutExpired:
+                    self.logger.warning("Font cache refresh timed out")
+                except FileNotFoundError:
+                    self.logger.warning("fc-cache not found, fonts may not be properly cached")
+                except Exception as e:
+                    self.logger.warning(f"Error refreshing font cache: {str(e)}")
+                
+                self.logger.info(f"Successfully installed {len(installed_fonts)} fonts")
+            else:
+                self.logger.warning("No fonts were successfully installed")
+                
+        except Exception as e:
+            self.logger.error(f"Error installing fonts: {str(e)}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            # Don't raise - font installation failure shouldn't stop the job

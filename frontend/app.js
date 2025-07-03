@@ -10,6 +10,15 @@ let autoScrollEnabled = true;
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
+    // Debug timezone information
+    console.log('🌍 Timezone Debug Info:', {
+        userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        localTime: new Date().toISOString(),
+        localTimeString: new Date().toString(),
+        timezoneOffset: new Date().getTimezoneOffset(),
+        userAgent: navigator.userAgent.substring(0, 100)
+    });
+    
     loadJobs();
     
     // Auto-refresh checkbox handler
@@ -313,18 +322,52 @@ function getTotalJobDuration(job) {
     
     // Try calculating from timeline data directly
     if (job.timeline && job.timeline.length > 0) {
-        const startTime = parseServerTime(job.timeline[0].started_at);
-        const now = new Date();
-        const durationSeconds = Math.floor((now - startTime) / 1000);
-        return formatDuration(Math.max(0, durationSeconds)); // Ensure non-negative
+        try {
+            const startTime = parseServerTime(job.timeline[0].started_at);
+            const now = new Date();
+            const durationMs = now - startTime;
+            
+            // Debug logging for timezone issues
+            if (durationMs < 0) {
+                console.warn('Negative duration detected:', {
+                    startTime: startTime.toISOString(),
+                    now: now.toISOString(),
+                    originalTimestamp: job.timeline[0].started_at,
+                    durationMs,
+                    userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                });
+            }
+            
+            const durationSeconds = Math.floor(Math.max(0, durationMs) / 1000);
+            return formatDuration(durationSeconds);
+        } catch (error) {
+            console.error('Error calculating timeline duration:', error, job.timeline[0]);
+        }
     }
     
     // Fallback to calculating from created_at if no timeline data
     if (job.created_at) {
-        const startTime = parseServerTime(job.created_at);
-        const now = new Date();
-        const durationSeconds = Math.floor((now - startTime) / 1000);
-        return formatDuration(Math.max(0, durationSeconds)); // Ensure non-negative
+        try {
+            const startTime = parseServerTime(job.created_at);
+            const now = new Date();
+            const durationMs = now - startTime;
+            
+            // Debug logging for timezone issues
+            if (durationMs < 0) {
+                console.warn('Negative duration detected from created_at:', {
+                    startTime: startTime.toISOString(),
+                    now: now.toISOString(),
+                    originalTimestamp: job.created_at,
+                    durationMs,
+                    userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                });
+            }
+            
+            const durationSeconds = Math.floor(Math.max(0, durationMs) / 1000);
+            return formatDuration(durationSeconds);
+        } catch (error) {
+            console.error('Error calculating created_at duration:', error, job.created_at);
+        }
     }
     
     return 'Unknown';
@@ -1648,12 +1691,17 @@ function parseServerTime(timestamp) {
     // Assume server timestamps are in UTC, ensure proper parsing
     if (!timestamp) return new Date();
     
+    // Convert to string if it's not already
+    const timestampStr = String(timestamp);
+    
     // If timestamp doesn't end with 'Z' or have timezone info, treat as UTC
-    if (typeof timestamp === 'string' && !timestamp.includes('Z') && !timestamp.includes('+') && !timestamp.includes('-')) {
-        return new Date(timestamp + 'Z');
+    if (!timestampStr.includes('Z') && !timestampStr.includes('+') && !timestampStr.includes('-')) {
+        // Add 'Z' to explicitly mark as UTC
+        return new Date(timestampStr + 'Z');
     }
     
-    return new Date(timestamp);
+    // If it already has timezone info, parse normally
+    return new Date(timestampStr);
 }
 
 function formatStatus(status) {
@@ -1676,25 +1724,40 @@ function formatTimestamp(timestamp) {
 function calculateDuration(createdAt) {
     if (!createdAt) return 'Unknown';
     
-    const now = new Date();
-    const startTime = parseServerTime(createdAt);
-    const diffMs = now - startTime;
-    
-    if (diffMs < 0) return '0s'; // Handle any remaining edge cases
-    
-    const seconds = Math.floor(diffMs / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
-    
-    if (days > 0) {
-        return `${days}d ${hours % 24}h`;
-    } else if (hours > 0) {
-        return `${hours}h ${minutes % 60}m`;
-    } else if (minutes > 0) {
-        return `${minutes}m ${seconds % 60}s`;
-    } else {
-        return `${seconds}s`;
+    try {
+        const now = new Date();
+        const startTime = parseServerTime(createdAt);
+        const diffMs = now - startTime;
+        
+        // Debug logging for timezone issues
+        if (diffMs < 0) {
+            console.warn('Negative duration in calculateDuration:', {
+                startTime: startTime.toISOString(),
+                now: now.toISOString(),
+                originalTimestamp: createdAt,
+                diffMs,
+                userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            });
+            return '0s'; // Handle negative durations
+        }
+        
+        const seconds = Math.floor(diffMs / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+        
+        if (days > 0) {
+            return `${days}d ${hours % 24}h`;
+        } else if (hours > 0) {
+            return `${hours}h ${minutes % 60}m`;
+        } else if (minutes > 0) {
+            return `${minutes}m ${seconds % 60}s`;
+        } else {
+            return `${seconds}s`;
+        }
+    } catch (error) {
+        console.error('Error in calculateDuration:', error, createdAt);
+        return 'Error';
     }
 }
 
@@ -2275,4 +2338,31 @@ function closeAudioPreview() {
     }
 }
 
-console.log('🎤 Karaoke Generator Frontend Ready!'); 
+// Debug helper function for testing timestamp parsing
+window.debugTimestamp = function(timestamp) {
+    console.group('🕐 Debug Timestamp Parsing:', timestamp);
+    try {
+        const parsed = parseServerTime(timestamp);
+        const now = new Date();
+        const diff = now - parsed;
+        
+        console.log('Original timestamp:', timestamp);
+        console.log('Parsed as:', parsed.toISOString());
+        console.log('Parsed local string:', parsed.toString());
+        console.log('Current time:', now.toISOString());
+        console.log('Current local string:', now.toString());
+        console.log('Difference (ms):', diff);
+        console.log('Difference (seconds):', Math.floor(diff / 1000));
+        console.log('Formatted duration:', formatDuration(Math.floor(Math.max(0, diff) / 1000)));
+        
+        if (diff < 0) {
+            console.warn('⚠️ NEGATIVE DURATION DETECTED - This will show as 0s');
+        }
+    } catch (error) {
+        console.error('Error parsing timestamp:', error);
+    }
+    console.groupEnd();
+};
+
+console.log('🎤 Karaoke Generator Frontend Ready!');
+console.log('💡 Use debugTimestamp("your-timestamp-here") to test timestamp parsing'); 
