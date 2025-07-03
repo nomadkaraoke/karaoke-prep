@@ -1378,28 +1378,61 @@ async def get_preview_video(job_id: str, preview_hash: str):
             raise HTTPException(status_code=404, detail="Preview directory not found")
         
         # Find preview video file with matching hash
-        preview_files = list(preview_dir.glob(f"preview_{preview_hash}*"))
-        video_file = None
+        log_message(job_id, "DEBUG", f"Looking for preview video in {preview_dir}")
+        log_message(job_id, "DEBUG", f"Preview hash: {preview_hash}")
         
+        # List all files in preview directory for debugging
+        if preview_dir.exists():
+            all_files = list(preview_dir.glob("*"))
+            log_message(job_id, "DEBUG", f"Files in preview directory: {[f.name for f in all_files]}")
+        
+        preview_files = list(preview_dir.glob(f"preview_{preview_hash}*"))
+        log_message(job_id, "DEBUG", f"Found preview files matching pattern: {[f.name for f in preview_files]}")
+        
+        video_file = None
         for file in preview_files:
+            log_message(job_id, "DEBUG", f"Checking file: {file.name}, suffix: {file.suffix}")
             if file.suffix in ['.mp4', '.mkv', '.avi']:
                 video_file = file
+                log_message(job_id, "DEBUG", f"Selected video file: {video_file}")
                 break
         
         if not video_file or not video_file.exists():
+            log_message(job_id, "ERROR", f"Preview video not found. Pattern: preview_{preview_hash}*, Directory: {preview_dir}")
+            if preview_dir.exists():
+                all_files = list(preview_dir.glob("*"))
+                log_message(job_id, "ERROR", f"Available files: {[f.name for f in all_files]}")
             raise HTTPException(status_code=404, detail="Preview video not found")
         
         log_message(job_id, "DEBUG", f"Serving preview video: {video_file}")
         
+        # Detect proper MIME type based on actual file extension
+        file_extension = video_file.suffix.lower()
+        if file_extension == '.mp4':
+            media_type = "video/mp4"
+        elif file_extension == '.mkv':
+            media_type = "video/x-matroska"
+        elif file_extension == '.avi':
+            media_type = "video/x-msvideo"
+        else:
+            media_type = "video/mp4"  # Default fallback
+        
+        log_message(job_id, "DEBUG", f"Using media type: {media_type} for file: {video_file.name}")
+        
+        # Get file size for Content-Length header
+        file_size = video_file.stat().st_size
+        log_message(job_id, "DEBUG", f"Video file size: {file_size} bytes")
+        
         return FileResponse(
             path=str(video_file),
-            filename=f"preview_{preview_hash}.mp4",
-            media_type="video/mp4",
+            filename=f"preview_{preview_hash}{file_extension}",
+            media_type=media_type,
             headers={
                 "Accept-Ranges": "bytes",
                 "Content-Disposition": "inline",
-                "Cache-Control": "no-cache",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
                 "X-Content-Type-Options": "nosniff",
+                "Content-Length": str(file_size),
             }
         )
         
@@ -2279,10 +2312,15 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         else:
             log_message(job_id, "DEBUG", f"Styles file exists and is accessible: {styles_file}")
         
-        # Note: CorrectionOperations.generate_preview_video will create its own "previews" subdirectory
-        # so we pass the base track_output_dir, not track_output_dir/previews
+        # Create previews directory for storing preview videos
+        preview_dir = Path(track_output_dir) / "previews"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Set up preview config with cache_dir pointing to previews directory
+        # This ensures the video is created where the API expects to find it
         preview_config = OutputConfig(
             output_dir=str(track_output_dir),
+            cache_dir=str(preview_dir),  # Point cache_dir to previews directory
             output_styles_json=styles_file,
             video_resolution="360p",  # Force 360p for preview
             render_video=True,
@@ -2306,6 +2344,10 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         )
         
         log_message(job_id, "SUCCESS", f"Generated preview video: {result['video_path']}")
+        
+        # Ensure volume changes are committed before returning
+        output_volume.commit()
+        log_message(job_id, "DEBUG", "Volume committed after preview video generation")
         
         # Clean up logging handler
         root_logger = logging.getLogger()
