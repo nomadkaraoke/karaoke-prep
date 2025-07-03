@@ -1,8 +1,8 @@
 """
 Core processing functions for karaoke generation.
 
-This module contains the isolated core logic from the original karaoke-gen CLI tool,
-modified to remove interactive elements and print statements for serverless execution.
+This module contains a wrapper around the existing KaraokePrep functionality
+for serverless execution on Modal.
 """
 
 import os
@@ -12,23 +12,12 @@ import logging
 import tempfile
 import shutil
 import asyncio
+import zipfile
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
-# Import the existing processor classes
-from karaoke_gen.audio_processor import AudioProcessor
-from karaoke_gen.lyrics_processor import LyricsProcessor
-from karaoke_gen.video_generator import VideoGenerator
-from karaoke_gen.file_handler import FileHandler
-from karaoke_gen.metadata import extract_info_for_online_media, parse_track_metadata
-from karaoke_gen.config import (
-    load_style_params,
-    setup_title_format,
-    setup_end_format,
-    get_video_durations,
-    get_existing_images,
-    setup_ffmpeg_command,
-)
+# Import the existing KaraokePrep class that the CLI uses
+from karaoke_gen import KaraokePrep
 
 
 def setup_logger(log_level=logging.INFO) -> logging.Logger:
@@ -45,288 +34,30 @@ def setup_logger(log_level=logging.INFO) -> logging.Logger:
     return logger
 
 
-class CoreKaraokeProcessor:
+class ServerlessKaraokeProcessor:
     """
-    Main processor class that orchestrates the karaoke generation workflow.
+    Serverless wrapper around the existing KaraokePrep functionality.
+    Uses the same code path as the CLI for consistency.
     """
     
     def __init__(self, model_dir: str = "/models", output_dir: str = "/output"):
         self.model_dir = model_dir
         self.output_dir = output_dir
-        self.logger = setup_logger()
+        # Use the logger from this module - job-specific logging will be set up externally
+        self.logger = logging.getLogger(__name__)
     
-    def download_and_prep_audio(self, url: str, output_dir: str) -> str:
+    async def process_uploaded_file(self, job_id: str, audio_file_path: str, artist: str, title: str, styles_file_path: Optional[str] = None, styles_archive_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Download audio from URL and convert to WAV format.
-        
-        Args:
-            url: YouTube or other media URL
-            output_dir: Directory to store downloaded files
-            
-        Returns:
-            Path to the converted WAV audio file
-        """
-        self.logger.info(f"Starting download and prep for URL: {url}")
-        
-        # Create a temporary FileHandler instance for download operations
-        file_handler = FileHandler(
-            logger=self.logger,
-            ffmpeg_base_command=setup_ffmpeg_command(logging.INFO),
-            create_track_subfolders=False,
-            dry_run=False,
-        )
-        
-        try:
-            # Extract metadata from URL
-            extracted_info = extract_info_for_online_media(url, None, None, self.logger)
-            if not extracted_info:
-                raise ValueError(f"Could not extract metadata from URL: {url}")
-            
-            metadata_result = parse_track_metadata(
-                extracted_info, None, None, None, self.logger
-            )
-            
-            artist = metadata_result["artist"]
-            title = metadata_result["title"]
-            extractor = metadata_result["extractor"]
-            media_id = metadata_result["media_id"]
-            
-            # Create filename
-            filename_suffix = f"{extractor} {media_id}" if media_id else extractor
-            artist_title = f"{artist} - {title}"
-            output_filename_no_extension = os.path.join(output_dir, f"{artist_title} ({filename_suffix})")
-            
-            # Download video with enhanced yt-dlp options for better bot avoidance
-            downloaded_file = self._download_video_with_fallback(file_handler, url, output_filename_no_extension)
-            
-            # Convert to WAV
-            wav_file = file_handler.convert_to_wav(downloaded_file, output_filename_no_extension + " (Original)")
-            
-            self.logger.info(f"Successfully downloaded and converted to WAV: {wav_file}")
-            return wav_file
-            
-        except Exception as e:
-            self.logger.error(f"Failed to download and prep audio: {str(e)}")
-            raise
-    
-    def _download_video_with_fallback(self, file_handler, url: str, output_filename_no_extension: str) -> str:
-        """Download video with enhanced options and fallback strategies."""
-        import yt_dlp
-        
-        # Enhanced yt-dlp options to avoid bot detection
-        enhanced_opts = {
-            "quiet": True,
-            "format": "bv*+ba/b",
-            "outtmpl": f"{output_filename_no_extension}.%(ext)s",
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "extractor_retries": 3,
-            "sleep_interval": 1,
-            "max_sleep_interval": 5,
-            "ignoreerrors": False,
-            # Add headers to look more like a real browser
-            "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate",
-                "DNT": "1",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-            }
-        }
-        
-        try:
-            self.logger.info("Attempting download with enhanced options...")
-            with yt_dlp.YoutubeDL(enhanced_opts) as ydl_instance:
-                ydl_instance.download([url])
-                
-                # Search for the downloaded file
-                import glob
-                downloaded_files = glob.glob(f"{output_filename_no_extension}.*")
-                if downloaded_files:
-                    downloaded_file_name = downloaded_files[0]
-                    self.logger.info(f"Download successful: {downloaded_file_name}")
-                    return downloaded_file_name
-                else:
-                    raise Exception("No files found after download")
-                    
-        except Exception as e:
-            self.logger.warning(f"Enhanced download failed: {str(e)}")
-            
-            # Fallback to basic download method
-            try:
-                self.logger.info("Falling back to basic download method...")
-                return file_handler.download_video(url, output_filename_no_extension)
-            except Exception as fallback_error:
-                self.logger.error(f"Fallback download also failed: {str(fallback_error)}")
-                raise Exception(f"All download methods failed. Last error: {str(fallback_error)}")
-    
-    def run_audio_separation(self, audio_file: str, model_dir: str) -> Tuple[str, str]:
-        """
-        Run audio separation on the input audio file.
-        
-        Args:
-            audio_file: Path to input audio WAV file
-            model_dir: Directory containing AI models
-            
-        Returns:
-            Tuple of (instrumental_path, vocals_path)
-        """
-        self.logger.info(f"Starting audio separation for: {audio_file}")
-        
-        # Get artist and title from filename for output naming
-        filename = os.path.basename(audio_file)
-        artist_title = filename.replace(".wav", "").replace(" (Original)", "")
-        track_output_dir = os.path.dirname(audio_file)
-        
-        # Initialize AudioProcessor
-        audio_processor = AudioProcessor(
-            logger=self.logger,
-            log_level=logging.INFO,
-            log_formatter=None,
-            model_file_dir=model_dir,
-            lossless_output_format="FLAC",
-            clean_instrumental_model="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-            backing_vocals_models=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"],
-            other_stems_models=["htdemucs_6s.yaml"],
-            ffmpeg_base_command=setup_ffmpeg_command(logging.INFO),
-        )
-        
-        # Run separation
-        separation_results = audio_processor.process_audio_separation(
-            audio_file=audio_file,
-            artist_title=artist_title,
-            track_output_dir=track_output_dir,
-        )
-        
-        # Extract paths for instrumental and vocals
-        instrumental_path = separation_results["clean_instrumental"]["instrumental"]
-        vocals_path = separation_results["clean_instrumental"]["vocals"]
-        
-        self.logger.info(f"Audio separation completed - Instrumental: {instrumental_path}, Vocals: {vocals_path}")
-        return instrumental_path, vocals_path
-
-
-    def transcribe_lyrics(self, vocals_path: str, artist: str, title: str, output_dir: str) -> Dict[str, Any]:
-        """
-        Transcribe lyrics from vocals audio file.
-        
-        Args:
-            vocals_path: Path to vocals audio file
-            artist: Artist name
-            title: Song title
-            output_dir: Output directory for lyrics files
-            
-        Returns:
-            Dictionary containing transcription results and file paths
-        """
-        self.logger.info(f"Starting lyrics transcription for: {vocals_path}")
-        
-        # Initialize LyricsProcessor
-        lyrics_processor = LyricsProcessor(
-            logger=self.logger,
-            style_params_json=None,  # Use default styles
-            lyrics_file=None,
-            skip_transcription=False,
-            skip_transcription_review=True,  # Skip interactive review for serverless
-            render_video=False,  # Don't render video in transcription step
-            subtitle_offset_ms=0,
-        )
-        
-        # Run transcription
-        transcription_results = lyrics_processor.transcribe_lyrics(
-            input_audio_wav=vocals_path,
-            artist=artist,
-            title=title,
-            track_output_dir=output_dir,
-        )
-        
-        self.logger.info("Lyrics transcription completed")
-        return transcription_results
-
-    def convert_to_wav(self, audio_file_path: str, artist: str, title: str, output_dir: str) -> str:
-        """
-        Convert uploaded audio file to WAV format.
-        
-        Args:
-            audio_file_path: Path to uploaded audio file
-            artist: Artist name
-            title: Song title  
-            output_dir: Output directory
-            
-        Returns:
-            Path to converted WAV file
-        """
-        self.logger.info(f"Converting audio file to WAV: {audio_file_path}")
-        
-        # Create FileHandler for conversion
-        file_handler = FileHandler(
-            logger=self.logger,
-            ffmpeg_base_command=setup_ffmpeg_command(logging.INFO),
-            create_track_subfolders=False,
-            dry_run=False,
-        )
-        
-        # Check if the input file is already a WAV file in the right location
-        if audio_file_path.endswith('.wav') and output_dir in audio_file_path:
-            self.logger.info("File is already a WAV in the output directory")
-            return audio_file_path
-        
-        # Create output filename
-        artist_title = f"{artist} - {title}"
-        output_filename_no_extension = os.path.join(output_dir, f"{artist_title} (Original)")
-        
-        # Convert to WAV
-        wav_file = file_handler.convert_to_wav(audio_file_path, output_filename_no_extension)
-        
-        self.logger.info(f"Successfully converted to WAV: {wav_file}")
-        return wav_file
-    
-    def transcribe_lyrics_with_metadata(self, vocals_path: str, artist: str, title: str) -> Dict[str, Any]:
-        """
-        Transcribe lyrics from vocals audio file with provided metadata.
-        
-        Args:
-            vocals_path: Path to vocals audio file
-            artist: Artist name
-            title: Song title
-            
-        Returns:
-            Dictionary containing transcription results
-        """
-        self.logger.info(f"Starting lyrics transcription for: {artist} - {title}")
-        
-        track_output_dir = os.path.dirname(vocals_path)
-        
-        # Initialize LyricsProcessor
-        lyrics_processor = LyricsProcessor(
-            logger=self.logger,
-            style_params_json=None,  # Use default styles
-            lyrics_file=None,
-            skip_transcription=False,
-            skip_transcription_review=True,  # Skip interactive review for serverless
-            render_video=False,  # Don't render video in transcription step
-            subtitle_offset_ms=0,
-        )
-        
-        # Run transcription
-        transcription_results = lyrics_processor.transcribe_lyrics(
-            input_audio_wav=vocals_path,
-            artist=artist,
-            title=title,
-            track_output_dir=track_output_dir,
-        )
-        
-        self.logger.info("Lyrics transcription completed")
-        return transcription_results
-
-    def process_track(self, job_id: str, url: str, status_callback=None) -> Dict[str, Any]:
-        """
-        Process a single track through the complete karaoke generation pipeline.
+        Process uploaded audio file through the complete karaoke generation pipeline.
+        Uses the same KaraokePrep workflow as the CLI.
         
         Args:
             job_id: Unique identifier for this job
-            url: YouTube or media URL
-            status_callback: Optional callback function to update job status
+            audio_file_path: Path to uploaded audio file
+            artist: Artist name
+            title: Song title
+            styles_file_path: Optional path to uploaded styles JSON file
+            styles_archive_path: Optional path to uploaded styles archive file
             
         Returns:
             Dictionary with processing results and output file paths
@@ -335,235 +66,314 @@ class CoreKaraokeProcessor:
             job_output_dir = Path(self.output_dir) / job_id
             job_output_dir.mkdir(parents=True, exist_ok=True)
             
-            if status_callback:
-                status_callback(job_id, {"status": "downloading", "progress": 10})
+            self.logger.info(f"Processing uploaded file: {audio_file_path}")
+            self.logger.info(f"Artist: {artist}, Title: {title}")
+            if styles_file_path:
+                self.logger.info(f"Using custom styles: {styles_file_path}")
             
-            # Step 1: Download and prep audio
-            audio_path = self.download_and_prep_audio(url, str(job_output_dir))
+            # Handle styles archive extraction
+            if styles_archive_path:
+                self.logger.info(f"Using styles archive: {styles_archive_path}")
+                
+                # Extract archive to the job output directory instead of /tmp
+                styles_assets_dir = job_output_dir / "styles_assets"
+                styles_assets_dir.mkdir(exist_ok=True)
+                
+                with zipfile.ZipFile(styles_archive_path, 'r') as zip_ref:
+                    zip_ref.extractall(styles_assets_dir)
+                
+                self.logger.info(f"Extracted styles archive to {styles_assets_dir}")
+                
+                # List extracted files for debugging
+                extracted_files = []
+                for root, dirs, files in os.walk(styles_assets_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        extracted_files.append(file_path)
+                        
+                        # Check if file is readable
+                        try:
+                            file_stat = os.stat(file_path)
+                            self.logger.info(f"Extracted file: {file_path} (size: {file_stat.st_size} bytes)")
+                        except Exception as e:
+                            self.logger.warning(f"Could not stat file {file_path}: {e}")
+                
+                # Update styles JSON to use the extracted files
+                if styles_file_path:
+                    updated_styles_path = job_output_dir / "styles_updated.json"
+                    self._update_styles_paths(styles_file_path, str(updated_styles_path), str(styles_assets_dir))
+                    styles_file_path = str(updated_styles_path)
+                    self.logger.info(f"Updated styles file paths: {styles_file_path}")
             
-            if status_callback:
-                status_callback(job_id, {"status": "separating_audio", "progress": 25})
+            # Validate that style-referenced files exist (do this after archive extraction)
+            if styles_file_path:
+                self.logger.info("Starting styles file validation...")
+                missing_files = self._validate_styles_files(styles_file_path)
+                if missing_files:
+                    self.logger.error(f"Validation failed. Missing files: {missing_files}")
+                    raise Exception(f"Missing style files - please ensure these files are included in the styles archive: {', '.join(missing_files)}")
+                else:
+                    self.logger.info("Styles file validation passed - all files found")
             
-            # Step 2: Run audio separation
-            instrumental_path, vocals_path = self.run_audio_separation(audio_path, self.model_dir)
-            
-            if status_callback:
-                status_callback(job_id, {"status": "transcribing", "progress": 50})
-            
-            # Step 3: Transcribe lyrics (extract artist/title from filename)
-            filename = os.path.basename(audio_path)
-            # Parse artist - title from filename (assumes format "Artist - Title (...)...")
-            if " - " in filename:
-                artist, title_part = filename.split(" - ", 1)
-                title = title_part.split(" (")[0]  # Remove extractor info
-            else:
-                artist, title = "Unknown Artist", "Unknown Title"
-            
-            transcription_results = self.transcribe_lyrics(
-                vocals_path, artist, title, str(job_output_dir)
+            # Set up KaraokePrep with the same formatter used by the CLI
+            log_formatter = logging.Formatter(
+                fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", 
+                datefmt="%Y-%m-%d %H:%M:%S"
             )
             
-            if status_callback:
-                status_callback(job_id, {"status": "awaiting_review", "progress": 75})
+            # Create KaraokePrep instance using the same configuration as CLI
+            kprep = KaraokePrep(
+                input_media=audio_file_path,
+                artist=artist,
+                title=title,
+                filename_pattern=None,
+                dry_run=False,
+                log_formatter=log_formatter,
+                log_level=logging.INFO,
+                render_bounding_boxes=False,
+                output_dir=str(job_output_dir),
+                create_track_subfolders=False,  # Don't create subfolders in serverless
+                lossless_output_format="FLAC",
+                output_png=True,
+                output_jpg=True,
+                clean_instrumental_model="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+                backing_vocals_models=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"],
+                other_stems_models=["htdemucs_6s.yaml"],
+                model_file_dir=self.model_dir,
+                existing_instrumental=None,
+                skip_separation=False,
+                lyrics_artist=artist,
+                lyrics_title=title,
+                lyrics_file=None,
+                skip_lyrics=False,
+                skip_transcription=False,
+                skip_transcription_review=False,
+                subtitle_offset_ms=0,
+                style_params_json=styles_file_path,  # Use uploaded styles file if provided
+            )
+            
+            # Process the track using the full KaraokePrep workflow
+            self.logger.info("Starting KaraokePrep processing...")
+            tracks = await kprep.process()
+            
+            if not tracks:
+                raise Exception("No tracks were processed")
+            
+            track = tracks[0]  # We're processing a single track
+            
+            self.logger.info(f"Successfully processed track: {track['artist']} - {track['title']}")
             
             return {
                 "job_id": job_id,
-                "artist": artist,
-                "title": title,
-                "audio_path": audio_path,
-                "instrumental_path": instrumental_path,
-                "vocals_path": vocals_path,
-                "transcription_results": transcription_results,
-                "status": "awaiting_review"
+                "status": "awaiting_review",
+                "track_data": track,
+                "track_output_dir": track.get("track_output_dir", str(job_output_dir)),
             }
             
         except Exception as e:
-            self.logger.error(f"Error processing track {job_id}: {str(e)}")
-            if status_callback:
-                status_callback(job_id, {"status": "error", "progress": 0, "error": str(e)})
+            self.logger.error(f"Error processing uploaded file {job_id}: {str(e)}")
             raise
-    
-    async def finalize_track(self, job_id: str, corrected_lyrics: str, status_callback=None) -> Dict[str, Any]:
+
+    async def process_url(self, job_id: str, url: str) -> Dict[str, Any]:
         """
-        Finalize track processing with corrected lyrics.
+        Process a URL through the complete karaoke generation pipeline.
+        Uses the same KaraokePrep workflow as the CLI.
         
         Args:
-            job_id: Job identifier
-            corrected_lyrics: Human-corrected lyrics
-            status_callback: Optional status callback
+            job_id: Unique identifier for this job
+            url: YouTube or other media URL
             
         Returns:
-            Dictionary with final processing results
+            Dictionary with processing results and output file paths
         """
         try:
             job_output_dir = Path(self.output_dir) / job_id
+            job_output_dir.mkdir(parents=True, exist_ok=True)
             
-            if status_callback:
-                status_callback(job_id, {"status": "generating_video", "progress": 80})
+            self.logger.info(f"Processing URL: {url}")
             
-            # Find the instrumental file
-            instrumental_files = list(job_output_dir.glob("*Instrumental*.flac"))
-            if not instrumental_files:
-                raise ValueError("No instrumental file found")
-            
-            instrumental_path = str(instrumental_files[0])
-            
-            # Extract artist/title from directory structure or files
-            audio_files = list(job_output_dir.glob("*.wav"))
-            if audio_files:
-                filename = audio_files[0].stem
-                if " - " in filename:
-                    artist, title_part = filename.split(" - ", 1)
-                    title = title_part.split(" (")[0]
-                else:
-                    artist, title = "Unknown Artist", "Unknown Title"
-            else:
-                artist, title = "Unknown Artist", "Unknown Title"
-            
-            # Generate final video
-            final_video_path = self.generate_video_assets(
-                corrected_lyrics, instrumental_path, str(job_output_dir), artist, title
+            # Set up KaraokePrep with the same formatter used by the CLI
+            log_formatter = logging.Formatter(
+                fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", 
+                datefmt="%Y-%m-%d %H:%M:%S"
             )
             
-            if status_callback:
-                status_callback(job_id, {
-                    "status": "complete", 
-                    "progress": 100, 
-                    "video_path": final_video_path
-                })
+            # Create KaraokePrep instance using the same configuration as CLI
+            kprep = KaraokePrep(
+                input_media=url,
+                artist=None,  # Will be extracted from URL
+                title=None,   # Will be extracted from URL
+                filename_pattern=None,
+                dry_run=False,
+                log_formatter=log_formatter,
+                log_level=logging.INFO,
+                render_bounding_boxes=False,
+                output_dir=str(job_output_dir),
+                create_track_subfolders=False,  # Don't create subfolders in serverless
+                lossless_output_format="FLAC",
+                output_png=True,
+                output_jpg=True,
+                clean_instrumental_model="model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+                backing_vocals_models=["mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"],
+                other_stems_models=["htdemucs_6s.yaml"],
+                model_file_dir=self.model_dir,
+                existing_instrumental=None,
+                skip_separation=False,
+                lyrics_artist=None,
+                lyrics_title=None,
+                lyrics_file=None,
+                skip_lyrics=False,
+                skip_transcription=False,
+                skip_transcription_review=True,  # Skip interactive review for serverless
+                subtitle_offset_ms=0,
+                style_params_json=None,  # No styles support for URL processing yet
+            )
+            
+            # Process the track using the full KaraokePrep workflow
+            self.logger.info("Starting KaraokePrep processing...")
+            tracks = await kprep.process()
+            
+            if not tracks:
+                raise Exception("No tracks were processed")
+            
+            track = tracks[0]  # We're processing a single track
+            
+            self.logger.info(f"Successfully processed track: {track['artist']} - {track['title']}")
             
             return {
                 "job_id": job_id,
-                "status": "complete",
-                "final_video_path": final_video_path,
-                "artist": artist,
-                "title": title
+                "status": "awaiting_review", 
+                "track_data": track,
+                "track_output_dir": track.get("track_output_dir", str(job_output_dir)),
             }
             
         except Exception as e:
-            self.logger.error(f"Error finalizing track {job_id}: {str(e)}")
-            if status_callback:
-                status_callback(job_id, {"status": "error", "progress": 0, "error": str(e)})
+            self.logger.error(f"Error processing URL {job_id}: {str(e)}")
             raise
     
-    def generate_video_assets(self, lyrics_data: str, instrumental_path: str) -> str:
+    def get_review_data(self, job_id: str, track_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Generate final karaoke video with synchronized lyrics.
-        
-        Args:
-            lyrics_data: Corrected lyrics text or JSON data
-            instrumental_path: Path to instrumental audio
+        Extract review data from processed track for frontend review interface.
+        """
+        try:
+            track_dir = Path(track_data.get("track_output_dir", f"{self.output_dir}/{job_id}"))
             
-        Returns:
-            Path to generated video file
-        """
-        self.logger.info("Starting video generation...")
-        
-        # Parse artist and title from the instrumental filename
-        filename = os.path.basename(instrumental_path)
-        base_name = filename.replace(".flac", "").replace(".wav", "")
-        
-        if " - " in base_name:
-            artist, title_part = base_name.split(" - ", 1)
-            title = title_part.split(" (")[0]
-        else:
-            artist, title = "Unknown Artist", "Unknown Title"
-        
-        output_dir = os.path.dirname(instrumental_path)
-        
-        # Initialize VideoGenerator
-        video_generator = VideoGenerator(
-            logger=self.logger,
-            ffmpeg_base_command=setup_ffmpeg_command(logging.INFO),
-            render_bounding_boxes=False,
-            output_png=True,
-            output_jpg=True,
-        )
-        
-        # Load default style parameters
-        style_params = load_style_params(None, self.logger)
-        title_format = setup_title_format(style_params)
-        end_format = setup_end_format(style_params)
-        
-        # Generate title screen
-        title_output_path = os.path.join(output_dir, f"{artist} - {title} (Title)")
-        title_video_path = os.path.join(output_dir, f"{artist} - {title} (Title).mov")
-        
-        video_generator.create_title_video(
-            artist=artist,
-            title=title,
-            format=title_format,
-            output_image_filepath_noext=title_output_path,
-            output_video_filepath=title_video_path,
-            existing_title_image=None,
-            intro_video_duration=5,  # 5 second title
-        )
-        
-        # Generate end screen
-        end_output_path = os.path.join(output_dir, f"{artist} - {title} (End)")
-        end_video_path = os.path.join(output_dir, f"{artist} - {title} (End).mov")
-        
-        video_generator.create_end_video(
-            artist=artist,
-            title=title,
-            format=end_format,
-            output_image_filepath_noext=end_output_path,
-            output_video_filepath=end_video_path,
-            existing_end_image=None,
-            end_video_duration=5,  # 5 second end screen
-        )
-        
-        # For now, return the title video path as a placeholder
-        # In a full implementation, this would combine title + karaoke content + end screen
-        final_video_path = os.path.join(output_dir, f"{artist} - {title} (Final).mp4")
-        
-        # Create a simple combined video (placeholder logic)
-        # This would be replaced with proper karaoke video generation
-        ffmpeg_command = (
-            f'ffmpeg -y -i "{title_video_path}" -i "{end_video_path}" '
-            f'-filter_complex "[0:v][1:v]concat=n=2:v=1[v]" -map "[v]" '
-            f'"{final_video_path}"'
-        )
-        
-        os.system(ffmpeg_command)
-        
-        self.logger.info(f"Video generation completed: {final_video_path}")
-        return final_video_path
-    
-    def transcribe_lyrics_with_metadata(self, vocals_path: str, artist: str, title: str) -> Dict[str, Any]:
-        """
-        Transcribe lyrics from vocals audio file with provided metadata.
-        
-        Args:
-            vocals_path: Path to vocals audio file
-            artist: Artist name
-            title: Song title
+            # Look for transcription results
+            transcription_files = {
+                "lrc_file": None,
+                "corrected_lyrics": None,
+                "original_lyrics": None,
+                "vocals_audio": None
+            }
             
-        Returns:
-            Dictionary containing transcription results
+            # Find LRC file
+            lrc_files = list(track_dir.glob("**/*.lrc"))
+            if lrc_files:
+                transcription_files["lrc_file"] = str(lrc_files[0])
+            
+            # Find corrected lyrics text file
+            corrected_files = list(track_dir.glob("**/*Corrected*.txt"))
+            if corrected_files:
+                with open(corrected_files[0], 'r') as f:
+                    transcription_files["corrected_lyrics"] = f.read()
+            
+            # Find original/uncorrected lyrics
+            original_files = list(track_dir.glob("**/*Uncorrected*.txt"))
+            if original_files:
+                with open(original_files[0], 'r') as f:
+                    transcription_files["original_lyrics"] = f.read()
+            
+            # Find vocals audio file
+            vocals_files = list(track_dir.glob("**/*Vocals*.flac")) + list(track_dir.glob("**/*Vocals*.FLAC"))
+            if vocals_files:
+                transcription_files["vocals_audio"] = str(vocals_files[0])
+            
+            return {
+                "job_id": job_id,
+                "artist": track_data.get("artist", "Unknown"),
+                "title": track_data.get("title", "Unknown"),
+                "transcription_files": transcription_files,
+                "track_data": track_data
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting review data for {job_id}: {str(e)}")
+            return {
+                "job_id": job_id,
+                "error": str(e)
+            }
+
+    def _validate_styles_files(self, styles_file_path: str) -> List[str]:
         """
-        self.logger.info(f"Starting lyrics transcription for: {artist} - {title}")
+        Validate that all files referenced in the styles JSON exist.
+        Returns a list of missing file paths.
+        """
+        missing_files = []
         
-        track_output_dir = os.path.dirname(vocals_path)
-        
-        # Initialize LyricsProcessor
-        lyrics_processor = LyricsProcessor(
-            logger=self.logger,
-            style_params_json=None,  # Use default styles
-            lyrics_file=None,
-            skip_transcription=False,
-            skip_transcription_review=True,  # Skip interactive review for serverless
-            render_video=False,  # Don't render video in transcription step
-            subtitle_offset_ms=0,
-        )
-        
-        # Run transcription
-        transcription_results = lyrics_processor.transcribe_lyrics(
-            input_audio_wav=vocals_path,
-            artist=artist,
-            title=title,
-            track_output_dir=track_output_dir,
-        )
-        
-        self.logger.info("Lyrics transcription completed")
-        return transcription_results
+        try:
+            with open(styles_file_path, 'r') as f:
+                styles_data = json.load(f)
+            
+            # Common keys that reference files
+            file_keys = [
+                'background_image', 'existing_image', 'font', 'font_path',
+                'instrumental_background', 'title_screen_background', 'outro_background'
+            ]
+            
+            def check_section(section_data, section_name):
+                if isinstance(section_data, dict):
+                    for key, value in section_data.items():
+                        if key in file_keys and value:
+                            # Convert to string and check if it's a file path
+                            file_path = str(value)
+                            if file_path.startswith('/') and not Path(file_path).exists():
+                                missing_files.append(file_path)
+                        elif isinstance(value, dict):
+                            check_section(value, f"{section_name}.{key}")
+            
+            # Check all sections
+            check_section(styles_data, "styles")
+            
+            return missing_files
+            
+        except Exception as e:
+            self.logger.warning(f"Could not validate styles file: {str(e)}")
+            return []  # Don't block processing for validation errors
+
+    def _update_styles_paths(self, input_styles_path: str, output_styles_path: str, assets_dir: str) -> None:
+        """
+        Update file paths in styles JSON to point to the extracted assets directory.
+        """
+        try:
+            with open(input_styles_path, 'r') as f:
+                styles_data = json.load(f)
+            
+            # Common keys that reference files
+            file_keys = [
+                'background_image', 'existing_image', 'font', 'font_path',
+                'instrumental_background', 'title_screen_background', 'outro_background'
+            ]
+            
+            def update_section(section_data):
+                if isinstance(section_data, dict):
+                    for key, value in section_data.items():
+                        if key in file_keys and value:
+                            file_path = str(value)
+                            if file_path.startswith('/tmp/'):
+                                # Extract filename and update to use assets directory
+                                filename = Path(file_path).name
+                                new_path = os.path.join(assets_dir, filename)
+                                section_data[key] = new_path
+                                self.logger.info(f"Updated path: {file_path} -> {new_path}")
+                        elif isinstance(value, dict):
+                            update_section(value)
+            
+            update_section(styles_data)
+            
+            # Write updated styles file
+            with open(output_styles_path, 'w') as f:
+                json.dump(styles_data, f, indent=2)
+                
+        except Exception as e:
+            self.logger.error(f"Could not update styles paths: {str(e)}")
+            raise

@@ -12,6 +12,11 @@ import traceback
 import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+import random
+import shutil
+import zipfile
+import os
+import logging
 
 from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
@@ -53,6 +58,7 @@ karaoke_image = (
         "fastapi>=0.104.0",
         "uvicorn>=0.24.0",
         "python-multipart>=0.0.6",
+        "requests>=2.31.0",
     ])
     .apt_install([
         "ffmpeg",
@@ -88,96 +94,138 @@ class JobSubmissionRequest(BaseModel):
 class LyricsReviewRequest(BaseModel):
     lyrics: str
 
+class JobLogHandler(logging.Handler):
+    """Custom logging handler that forwards log messages to job_logs_dict"""
+    
+    def __init__(self, job_id: str):
+        super().__init__()
+        self.job_id = job_id
+        # Prevent recursion by not processing our own log messages
+        self.processing = False
+        
+    def emit(self, record):
+        if self.processing:
+            return
+            
+        try:
+            self.processing = True
+            
+            # Format the log message
+            message = self.format(record)
+            
+            # Create log entry
+            log_entry = {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "level": record.levelname,
+                "message": message
+            }
+            
+            # Get existing logs or create new list
+            existing_logs = job_logs_dict.get(self.job_id, [])
+            existing_logs.append(log_entry)
+            job_logs_dict[self.job_id] = existing_logs
+            
+        except Exception:
+            # Silently ignore errors to prevent recursion
+            pass
+        finally:
+            self.processing = False
+
+def setup_job_logging(job_id: str):
+    """Set up logging to capture all messages for a job"""
+    
+    # Create custom handler
+    handler = JobLogHandler(job_id)
+    
+    # Set up formatter to match the CLI output format
+    formatter = logging.Formatter(
+        fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    handler.setFormatter(formatter)
+    
+    # Only add handler to root logger - this will capture all logging via propagation
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+    
+    return handler
+
+def log_message(job_id: str, level: str, message: str):
+    """Log a message with timestamp and level."""
+    timestamp = datetime.datetime.now().isoformat()
+    log_entry = {
+        "timestamp": timestamp,
+        "level": level,
+        "message": message
+    }
+    
+    # Get existing logs or create new list
+    existing_logs = job_logs_dict.get(job_id, [])
+    existing_logs.append(log_entry)
+    job_logs_dict[job_id] = existing_logs
+    
+    print(f"[{level}] {message}")
+
 # GPU Worker Functions
 @app.function(
     image=karaoke_image,
     gpu="any",
     volumes=VOLUME_CONFIG,
-    secrets=[modal.Secret.from_name("karaoke-api-keys")],
+    secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
 )
-def process_part_one(job_id: str, youtube_url: str):
+async def process_part_one(job_id: str, youtube_url: str):
     """First phase: Download audio, separate, and transcribe lyrics."""
     import sys
     import traceback
-    from datetime import datetime
-    
-    def log_message(level: str, message: str):
-        """Log a message with timestamp and level."""
-        timestamp = datetime.now().isoformat()
-        log_entry = {
-            "timestamp": timestamp,
-            "level": level,
-            "message": message
-        }
-        
-        # Get existing logs or create new list
-        existing_logs = job_logs_dict.get(job_id, [])
-        existing_logs.append(log_entry)
-        job_logs_dict[job_id] = existing_logs
-        
-        print(f"[{level}] {message}")
     
     try:
-        from core import CoreKaraokeProcessor
+        # Set up logging to capture all messages
+        log_handler = setup_job_logging(job_id)
         
-        log_message("INFO", f"Starting job {job_id} for URL: {youtube_url}")
+        from core import ServerlessKaraokeProcessor
+        
+        log_message(job_id, "INFO", f"Starting job {job_id} for URL: {youtube_url}")
         
         # Update status
         job_status_dict[job_id] = {
-            "status": "processing_audio", 
+            "status": "processing", 
             "progress": 10,
             "url": youtube_url,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.datetime.now().isoformat()
         }
         
-        # Initialize processor
-        processor = CoreKaraokeProcessor()
+        # Initialize processor - this now uses the same code path as the CLI
+        processor = ServerlessKaraokeProcessor(model_dir="/models", output_dir="/output")
         
-        # Phase 1: Download and prep audio
-        log_message("INFO", "Downloading and preparing audio...")
-        output_dir = Path(f"/output/{job_id}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        original_audio_path = processor.download_and_prep_audio(youtube_url, str(output_dir))
-        log_message("INFO", f"Audio downloaded to: {original_audio_path}")
-        
-        # Phase 2: Audio separation
-        job_status_dict[job_id] = {"status": "processing_audio", "progress": 30, "url": youtube_url}
-        log_message("INFO", "Starting audio separation...")
-        
-        instrumental_path, vocals_path = processor.run_audio_separation(original_audio_path, "/models")
-        log_message("INFO", f"Audio separated - Instrumental: {instrumental_path}, Vocals: {vocals_path}")
-        
-        # Phase 3: Transcribe lyrics
-        job_status_dict[job_id] = {"status": "transcribing", "progress": 60, "url": youtube_url}
-        log_message("INFO", "Starting lyrics transcription...")
-        
-        transcription_data = processor.transcribe_lyrics(vocals_path)
-        log_message("INFO", "Lyrics transcribed successfully")
-        
-        # Save transcription data
-        transcription_path = output_dir / "transcription_raw.json"
-        with open(transcription_path, 'w') as f:
-            json.dump(transcription_data, f, indent=2)
+        # Process using the full KaraokePrep workflow (same as CLI)
+        log_message(job_id, "INFO", "Starting full karaoke processing workflow...")
+        result = await processor.process_url(job_id, youtube_url)
         
         # Update status to awaiting review
         job_status_dict[job_id] = {
             "status": "awaiting_review", 
             "progress": 75,
             "url": youtube_url,
-            "transcription_path": str(transcription_path)
+            "track_data": result["track_data"],
+            "track_output_dir": result["track_output_dir"]
         }
         
-        log_message("SUCCESS", f"Phase 1 completed for job {job_id}. Awaiting lyrics review.")
-        return {"status": "success", "message": "Phase 1 completed, awaiting lyrics review"}
+        log_message(job_id, "SUCCESS", f"Processing completed for job {job_id}. Ready for review.")
+        
+        # Clean up logging handler
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(log_handler)
+        
+        return {"status": "success", "message": "Processing completed, ready for review"}
         
     except Exception as e:
         error_msg = str(e)
         error_traceback = traceback.format_exc()
         
-        log_message("ERROR", f"Phase 1 failed: {error_msg}")
-        log_message("ERROR", f"Traceback: {error_traceback}")
+        log_message(job_id, "ERROR", f"Phase 1 failed: {error_msg}")
+        log_message(job_id, "ERROR", f"Traceback: {error_traceback}")
         
         job_status_dict[job_id] = {
             "status": "error", 
@@ -186,6 +234,13 @@ def process_part_one(job_id: str, youtube_url: str):
             "error": error_msg,
             "traceback": error_traceback
         }
+        
+        # Clean up logging handler
+        try:
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(log_handler)
+        except:
+            pass
         
         raise Exception(f"Phase 1 failed: {error_msg}")
 
@@ -199,28 +254,14 @@ def process_part_two(job_id: str):
     """Second phase: Generate final video with corrected lyrics."""
     import sys
     import traceback
-    from datetime import datetime
-    
-    def log_message(level: str, message: str):
-        """Log a message with timestamp and level."""
-        timestamp = datetime.now().isoformat()
-        log_entry = {
-            "timestamp": timestamp,
-            "level": level,
-            "message": message
-        }
-        
-        # Get existing logs or create new list
-        existing_logs = job_logs_dict.get(job_id, [])
-        existing_logs.append(log_entry)
-        job_logs_dict[job_id] = existing_logs
-        
-        print(f"[{level}] {message}")
     
     try:
+        # Set up logging to capture all messages
+        log_handler = setup_job_logging(job_id)
+        
         from core import CoreKaraokeProcessor
         
-        log_message("INFO", f"Starting phase 2 for job {job_id}")
+        log_message(job_id, "INFO", f"Starting phase 2 for job {job_id}")
         
         # Update status
         job_status_dict[job_id] = {"status": "rendering", "progress": 80}
@@ -238,15 +279,15 @@ def process_part_two(job_id: str):
         with open(corrected_lyrics_path, 'r') as f:
             corrected_lyrics = json.load(f)
         
-        log_message("INFO", "Corrected lyrics loaded")
+        log_message(job_id, "INFO", "Corrected lyrics loaded")
         
         # Generate video assets
-        log_message("INFO", "Starting video generation...")
+        log_message(job_id, "INFO", "Starting video generation...")
         
         instrumental_path = output_dir / "instrumental.wav"
         video_path = processor.generate_video_assets(corrected_lyrics, str(instrumental_path))
         
-        log_message("INFO", f"Video generated: {video_path}")
+        log_message(job_id, "INFO", f"Video generated: {video_path}")
         
         # Update status to complete
         job_status_dict[job_id] = {
@@ -256,15 +297,20 @@ def process_part_two(job_id: str):
             "video_url": f"/api/jobs/{job_id}/download"
         }
         
-        log_message("SUCCESS", f"Job {job_id} completed successfully!")
+        log_message(job_id, "SUCCESS", f"Job {job_id} completed successfully!")
+        
+        # Clean up logging handler
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(log_handler)
+        
         return {"status": "success", "message": "Video generation completed", "video_path": video_path}
         
     except Exception as e:
         error_msg = str(e)
         error_traceback = traceback.format_exc()
         
-        log_message("ERROR", f"Phase 2 failed: {error_msg}")
-        log_message("ERROR", f"Traceback: {error_traceback}")
+        log_message(job_id, "ERROR", f"Phase 2 failed: {error_msg}")
+        log_message(job_id, "ERROR", f"Traceback: {error_traceback}")
         
         job_status_dict[job_id] = {
             "status": "error", 
@@ -272,6 +318,13 @@ def process_part_two(job_id: str):
             "error": error_msg,
             "traceback": error_traceback
         }
+        
+        # Clean up logging handler
+        try:
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(log_handler)
+        except:
+            pass
         
         raise Exception(f"Phase 2 failed: {error_msg}")
 
@@ -279,75 +332,56 @@ def process_part_two(job_id: str):
     image=karaoke_image,
     gpu="any",
     volumes=VOLUME_CONFIG,
-    secrets=[modal.Secret.from_name("karaoke-api-keys")],
+    secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
 )
-def process_part_one_uploaded(job_id: str, audio_file_path: str, artist: str, title: str):
+async def process_part_one_uploaded(job_id: str, audio_file_path: str, artist: str, title: str, styles_file_path: Optional[str] = None, styles_archive_path: Optional[str] = None):
     """First phase: Process uploaded audio file, separate, and transcribe lyrics."""
     import sys
     import traceback
-    from datetime import datetime
-    
-    def log_message(level: str, message: str):
-        """Log a message with timestamp and level."""
-        timestamp = datetime.now().isoformat()
-        log_entry = {
-            "timestamp": timestamp,
-            "level": level,
-            "message": message
-        }
-        
-        # Get existing logs or create new list
-        existing_logs = job_logs_dict.get(job_id, [])
-        existing_logs.append(log_entry)
-        job_logs_dict[job_id] = existing_logs
-        
-        print(f"[{level}] {message}")
     
     try:
-        from core import CoreKaraokeProcessor
+        # Set up logging to capture all messages
+        log_handler = setup_job_logging(job_id)
         
-        log_message("INFO", f"Starting job {job_id} for uploaded file: {audio_file_path}")
-        log_message("INFO", f"Artist: {artist}, Title: {title}")
+        from core import ServerlessKaraokeProcessor
+        
+        log_message(job_id, "INFO", f"Starting job {job_id} for uploaded file: {audio_file_path}")
+        log_message(job_id, "INFO", f"Artist: {artist}, Title: {title}")
+        
+        # CRITICAL: Reload the volume to see files written by other containers
+        output_volume.reload()
+        log_message(job_id, "DEBUG", "Volume reloaded to fetch latest changes")
+        
+        # Verify the uploaded file exists before processing
+        audio_path = Path(audio_file_path)
+        if not audio_path.exists():
+            raise Exception(f"Uploaded file not found: {audio_file_path}")
+        
+        file_size = audio_path.stat().st_size
+        if file_size == 0:
+            raise Exception(f"Uploaded file is empty: {audio_file_path}")
+        
+        log_message(job_id, "INFO", f"File verified: {audio_path.name} ({file_size} bytes)")
         
         # Update status
         job_status_dict[job_id] = {
-            "status": "processing_audio", 
+            "status": "processing", 
             "progress": 10,
             "artist": artist,
             "title": title,
             "filename": Path(audio_file_path).name,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.datetime.now().isoformat()
         }
         
-        # Initialize processor
-        processor = CoreKaraokeProcessor()
+        # Initialize processor - this now uses the same code path as the CLI
+        processor = ServerlessKaraokeProcessor(model_dir="/models", output_dir="/output")
         
-        output_dir = Path(f"/output/{job_id}")
-        
-        # Phase 1: Convert uploaded file to WAV if needed
-        log_message("INFO", "Converting uploaded file to WAV...")
-        wav_file_path = processor.convert_to_wav(audio_file_path, artist, title, str(output_dir))
-        log_message("INFO", f"Audio converted to WAV: {wav_file_path}")
-        
-        # Phase 2: Audio separation
-        job_status_dict[job_id] = {"status": "processing_audio", "progress": 30, "artist": artist, "title": title}
-        log_message("INFO", "Starting audio separation...")
-        
-        instrumental_path, vocals_path = processor.run_audio_separation(wav_file_path, "/models")
-        log_message("INFO", f"Audio separated - Instrumental: {instrumental_path}, Vocals: {vocals_path}")
-        
-        # Phase 3: Transcribe lyrics
-        job_status_dict[job_id] = {"status": "transcribing", "progress": 60, "artist": artist, "title": title}
-        log_message("INFO", "Starting lyrics transcription...")
-        
-        transcription_data = processor.transcribe_lyrics_with_metadata(vocals_path, artist, title)
-        log_message("INFO", "Lyrics transcribed successfully")
-        
-        # Save transcription data
-        transcription_path = output_dir / "transcription_raw.json"
-        with open(transcription_path, 'w') as f:
-            json.dump(transcription_data, f, indent=2)
+        # Process using the full KaraokePrep workflow (same as CLI)
+        log_message(job_id, "INFO", "Starting full karaoke processing workflow...")
+        if styles_file_path:
+            log_message(job_id, "INFO", f"Using custom styles from: {styles_file_path}")
+        result = await processor.process_uploaded_file(job_id, audio_file_path, artist, title, styles_file_path, styles_archive_path)
         
         # Update status to awaiting review
         job_status_dict[job_id] = {
@@ -355,18 +389,24 @@ def process_part_one_uploaded(job_id: str, audio_file_path: str, artist: str, ti
             "progress": 75,
             "artist": artist,
             "title": title,
-            "transcription_path": str(transcription_path)
+            "track_data": result["track_data"],
+            "track_output_dir": result["track_output_dir"]
         }
         
-        log_message("SUCCESS", f"Phase 1 completed for job {job_id}. Awaiting lyrics review.")
-        return {"status": "success", "message": "Phase 1 completed, awaiting lyrics review"}
+        log_message(job_id, "SUCCESS", f"Processing completed for job {job_id}. Ready for review.")
+        
+        # Clean up logging handler
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(log_handler)
+        
+        return {"status": "success", "message": "Processing completed, ready for review"}
         
     except Exception as e:
         error_msg = str(e)
         error_traceback = traceback.format_exc()
         
-        log_message("ERROR", f"Phase 1 failed: {error_msg}")
-        log_message("ERROR", f"Traceback: {error_traceback}")
+        log_message(job_id, "ERROR", f"Phase 1 failed: {error_msg}")
+        log_message(job_id, "ERROR", f"Traceback: {error_traceback}")
         
         job_status_dict[job_id] = {
             "status": "error", 
@@ -377,7 +417,16 @@ def process_part_one_uploaded(job_id: str, audio_file_path: str, artist: str, ti
             "traceback": error_traceback
         }
         
+        # Clean up logging handler
+        try:
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(log_handler)
+        except:
+            pass
+        
         raise Exception(f"Phase 1 failed: {error_msg}")
+
+# Removed setup_lyrics_review function - now using full KaraokePrep workflow
 
 # FastAPI Application for API endpoints
 api_app = FastAPI(title="Karaoke Generator API", version="1.0.0")
@@ -537,7 +586,7 @@ async def get_stats():
 
 @api_app.get("/api/review/{job_id}")
 async def get_lyrics_for_review(job_id: str):
-    """Get lyrics for review (returns HTML page)."""
+    """Get lyrics data for review interface."""
     try:
         job_data = job_status_dict.get(job_id)
         if not job_data:
@@ -546,42 +595,44 @@ async def get_lyrics_for_review(job_id: str):
         if job_data.get("status") != "awaiting_review":
             raise HTTPException(status_code=400, detail="Job is not awaiting review")
         
-        # Load raw transcription
-        output_dir = Path(f"/output/{job_id}")
-        transcription_path = output_dir / "transcription_raw.json"
+        # Get review data from the processed track
+        track_data = job_data.get("track_data", {})
+        track_output_dir = Path(job_data.get("track_output_dir", f"/output/{job_id}"))
         
-        if not transcription_path.exists():
-            raise HTTPException(status_code=404, detail="Transcription not found")
+        # Look for generated files by KaraokePrep
+        review_data = {
+            "job_id": job_id,
+            "artist": track_data.get("artist", "Unknown"),
+            "title": track_data.get("title", "Unknown"), 
+            "lrc_file": None,
+            "corrected_lyrics": None,
+            "original_lyrics": None,
+            "vocals_audio": None
+        }
         
-        with open(transcription_path, 'r') as f:
-            raw_lyrics = json.load(f)
+        # Find LRC file
+        lrc_files = list(track_output_dir.glob("**/*.lrc"))
+        if lrc_files:
+            review_data["lrc_file"] = str(lrc_files[0])
+            
+        # Find corrected lyrics text file  
+        corrected_files = list(track_output_dir.glob("**/*Corrected*.txt"))
+        if corrected_files:
+            with open(corrected_files[0], 'r') as f:
+                review_data["corrected_lyrics"] = f.read()
+                
+        # Find original/uncorrected lyrics
+        original_files = list(track_output_dir.glob("**/*Uncorrected*.txt"))
+        if original_files:
+            with open(original_files[0], 'r') as f:
+                review_data["original_lyrics"] = f.read()
+                
+        # Find vocals audio file
+        vocals_files = list(track_output_dir.glob("**/*Vocals*.flac")) + list(track_output_dir.glob("**/*Vocals*.FLAC"))
+        if vocals_files:
+            review_data["vocals_audio"] = str(vocals_files[0])
         
-        # Return HTML page for lyrics review
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Review Lyrics - Job {job_id}</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }}
-                textarea {{ width: 100%; height: 400px; font-family: monospace; }}
-                button {{ padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }}
-                button:hover {{ background: #0056b3; }}
-            </style>
-        </head>
-        <body>
-            <h1>Review Lyrics for Job {job_id}</h1>
-            <form action="/api/review/{job_id}" method="post">
-                <textarea name="lyrics" placeholder="Edit the lyrics here...">{json.dumps(raw_lyrics, indent=2)}</textarea>
-                <br><br>
-                <button type="submit">✅ Approve and Continue to Video Generation</button>
-            </form>
-        </body>
-        </html>
-        """
-        
-        from fastapi.responses import HTMLResponse
-        return HTMLResponse(content=html_content)
+        return JSONResponse(review_data)
         
     except HTTPException:
         raise
@@ -618,13 +669,7 @@ async def submit_lyrics_review(job_id: str, lyrics: str = Form(...)):
         }
         
         # Add log entry
-        existing_logs = job_logs_dict.get(job_id, [])
-        existing_logs.append({
-            "timestamp": datetime.datetime.now().isoformat(),
-            "level": "INFO",
-            "message": "Lyrics approved, starting video generation"
-        })
-        job_logs_dict[job_id] = existing_logs
+        log_message(job_id, "INFO", "Lyrics approved, starting video generation")
         
         # Spawn phase 2
         process_part_two.spawn(job_id)
@@ -724,64 +769,83 @@ async def health_check():
         "version": "1.0.0"
     })
 
-@api_app.post("/api/submit-file")
-async def submit_file_job(
-    audio_file: UploadFile = File(...),
-    artist: str = Form(...),
-    title: str = Form(...)
-):
-    """Submit a new karaoke generation job with an uploaded audio file."""
+# Debug endpoint for AudioShake API
+@api_app.get("/api/debug/audioshake")
+async def debug_audioshake():
+    """Debug AudioShake API connectivity and credentials."""
     try:
-        job_id = str(uuid.uuid4())[:8]
+        import os
+        import requests
         
-        # Validate file type
-        allowed_types = ['audio/mpeg', 'audio/wav', 'audio/wave', 'audio/x-wav', 
-                        'audio/flac', 'audio/x-flac', 'audio/mp4', 'audio/m4a', 
-                        'audio/aac', 'audio/ogg', 'audio/webm']
+        audioshake_token = os.environ.get("AUDIOSHAKE_API_TOKEN")
+        if not audioshake_token:
+            return JSONResponse({
+                "status": "error",
+                "message": "AUDIOSHAKE_API_TOKEN environment variable not set"
+            }, status_code=500)
         
-        if audio_file.content_type not in allowed_types:
-            # Check file extension as fallback
-            filename = audio_file.filename.lower()
-            allowed_extensions = ['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.webm']
-            if not any(filename.endswith(ext) for ext in allowed_extensions):
-                return JSONResponse({
-                    "status": "error",
-                    "message": "Invalid file type. Please upload an audio file."
-                }, status_code=400)
+        # Test API endpoints
+        headers = {"Authorization": f"Bearer {audioshake_token}"}
         
-        # Initialize job status
-        job_status_dict[job_id] = {
-            "status": "queued", 
-            "progress": 0,
-            "artist": artist,
-            "title": title,
-            "filename": audio_file.filename,
-            "created_at": datetime.datetime.now().isoformat()
-        }
+        # Test 1: Upload endpoint (GET to see if it responds - normally POST)
+        try:
+            upload_response = requests.get(
+                "https://groovy.audioshake.ai/upload/",
+                headers=headers,
+                timeout=10
+            )
+            upload_status = upload_response.status_code
+            upload_text = upload_response.text[:200]  # First 200 chars
+        except Exception as e:
+            upload_status = "error"
+            upload_text = str(e)
         
-        # Initialize job logs
-        job_logs_dict[job_id] = []
+        # Test 2: Job endpoint (GET to see if it responds - normally POST)
+        try:
+            job_response = requests.get(
+                "https://groovy.audioshake.ai/job/",
+                headers=headers,
+                timeout=10
+            )
+            job_status = job_response.status_code
+            job_text = job_response.text[:200]
+        except Exception as e:
+            job_status = "error"
+            job_text = str(e)
         
-        # Save the uploaded file
-        output_dir = Path(f"/output/{job_id}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        file_extension = Path(audio_file.filename).suffix
-        # Save with original filename temporarily
-        temp_file_path = output_dir / f"uploaded{file_extension}"
-        
-        with open(temp_file_path, "wb") as buffer:
-            content = await audio_file.read()
-            buffer.write(content)
-        
-        # Spawn the background job with temp file path
-        process_part_one_uploaded.spawn(job_id, str(temp_file_path), artist, title)
+        # Test 3: Test getting a non-existent job (to see API response format)
+        try:
+            test_job_response = requests.get(
+                "https://groovy.audioshake.ai/job/test-job-id",
+                headers=headers,
+                timeout=10
+            )
+            test_job_status = test_job_response.status_code
+            test_job_text = test_job_response.text[:200]
+        except Exception as e:
+            test_job_status = "error"
+            test_job_text = str(e)
         
         return JSONResponse({
-            "status": "success", 
-            "job_id": job_id,
-            "message": "File uploaded and job submitted successfully"
-        }, status_code=202)
+            "status": "success",
+            "audioshake_api_tests": {
+                "token_present": bool(audioshake_token),
+                "token_prefix": audioshake_token[:10] + "..." if audioshake_token else None,
+                "upload_endpoint": {
+                    "status": upload_status,
+                    "response_preview": upload_text
+                },
+                "job_endpoint": {
+                    "status": job_status,
+                    "response_preview": job_text
+                },
+                "test_job_endpoint": {
+                    "status": test_job_status,
+                    "response_preview": test_job_text
+                }
+            },
+            "timestamp": datetime.datetime.now().isoformat()
+        })
         
     except Exception as e:
         return JSONResponse({
@@ -789,10 +853,277 @@ async def submit_file_job(
             "message": str(e)
         }, status_code=500)
 
+# Lyrics Review Proxy Endpoints
+@api_app.get("/api/corrections/{job_id}/correction-data")
+async def proxy_correction_data(job_id: str):
+    """Proxy correction data request to local LyricsTranscriber server."""
+    try:
+        import requests
+        
+        # Check if review server is running for this job
+        review_port = get_review_server_port(job_id)
+        if not review_port:
+            raise HTTPException(status_code=404, detail="Review server not found for this job")
+        
+        # Forward request to local server
+        response = requests.get(f"http://localhost:{review_port}/api/correction-data", timeout=30)
+        response.raise_for_status()
+        
+        return JSONResponse(response.json())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error proxying correction data: {str(e)}")
+
+@api_app.post("/api/corrections/{job_id}/complete")
+async def proxy_complete_review(job_id: str, request: Request):
+    """Proxy review completion to local LyricsTranscriber server."""
+    try:
+        import requests
+        
+        # Check if review server is running for this job
+        review_port = get_review_server_port(job_id)
+        if not review_port:
+            raise HTTPException(status_code=404, detail="Review server not found for this job")
+        
+        # Get the request body
+        body = await request.body()
+        
+        # Forward request to local server
+        response = requests.post(
+            f"http://localhost:{review_port}/api/complete",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        return JSONResponse(response.json())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error proxying review completion: {str(e)}")
+
+@api_app.post("/api/corrections/{job_id}/preview-video")
+async def proxy_preview_video(job_id: str, request: Request):
+    """Proxy preview video generation to local LyricsTranscriber server."""
+    try:
+        import requests
+        
+        # Check if review server is running for this job
+        review_port = get_review_server_port(job_id)
+        if not review_port:
+            raise HTTPException(status_code=404, detail="Review server not found for this job")
+        
+        # Get the request body
+        body = await request.body()
+        
+        # Forward request to local server
+        response = requests.post(
+            f"http://localhost:{review_port}/api/preview-video",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            timeout=120  # Longer timeout for video generation
+        )
+        response.raise_for_status()
+        
+        return JSONResponse(response.json())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error proxying preview video: {str(e)}")
+
+@api_app.get("/api/corrections/{job_id}/preview-video/{preview_hash}")
+async def proxy_get_preview_video(job_id: str, preview_hash: str):
+    """Proxy preview video download to local LyricsTranscriber server."""
+    try:
+        import requests
+        from fastapi.responses import StreamingResponse
+        
+        # Check if review server is running for this job
+        review_port = get_review_server_port(job_id)
+        if not review_port:
+            raise HTTPException(status_code=404, detail="Review server not found for this job")
+        
+        # Forward request to local server
+        response = requests.get(
+            f"http://localhost:{review_port}/api/preview-video/{preview_hash}",
+            stream=True,
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        # Stream the video back
+        return StreamingResponse(
+            iter(lambda: response.raw.read(8192), b""),
+            media_type="video/mp4",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Disposition": "inline",
+                "Cache-Control": "no-cache",
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error proxying preview video: {str(e)}")
+
+@api_app.get("/api/corrections/{job_id}/audio/{audio_hash}")
+async def proxy_get_audio(job_id: str, audio_hash: str):
+    """Proxy audio file access to local LyricsTranscriber server."""
+    try:
+        import requests
+        from fastapi.responses import StreamingResponse
+        
+        # Check if review server is running for this job
+        review_port = get_review_server_port(job_id)
+        if not review_port:
+            raise HTTPException(status_code=404, detail="Review server not found for this job")
+        
+        # Forward request to local server
+        response = requests.get(
+            f"http://localhost:{review_port}/api/audio/{audio_hash}",
+            stream=True,
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        # Stream the audio back
+        return StreamingResponse(
+            iter(lambda: response.raw.read(8192), b""),
+            media_type="audio/mpeg"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error proxying audio: {str(e)}")
+
+@api_app.post("/api/corrections/{job_id}/handlers")
+async def proxy_update_handlers(job_id: str, request: Request):
+    """Proxy handler update to local LyricsTranscriber server."""
+    try:
+        import requests
+        
+        # Check if review server is running for this job
+        review_port = get_review_server_port(job_id)
+        if not review_port:
+            raise HTTPException(status_code=404, detail="Review server not found for this job")
+        
+        # Get the request body
+        body = await request.body()
+        
+        # Forward request to local server
+        response = requests.post(
+            f"http://localhost:{review_port}/api/handlers",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            timeout=60
+        )
+        response.raise_for_status()
+        
+        return JSONResponse(response.json())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error proxying handler update: {str(e)}")
+
+@api_app.post("/api/corrections/{job_id}/add-lyrics")
+async def proxy_add_lyrics(job_id: str, request: Request):
+    """Proxy add lyrics to local LyricsTranscriber server."""
+    try:
+        import requests
+        
+        # Check if review server is running for this job
+        review_port = get_review_server_port(job_id)
+        if not review_port:
+            raise HTTPException(status_code=404, detail="Review server not found for this job")
+        
+        # Get the request body
+        body = await request.body()
+        
+        # Forward request to local server
+        response = requests.post(
+            f"http://localhost:{review_port}/api/add-lyrics",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            timeout=60
+        )
+        response.raise_for_status()
+        
+        return JSONResponse(response.json())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error proxying add lyrics: {str(e)}")
+
+# Helper function to track review servers
+def get_review_server_port(job_id: str) -> Optional[int]:
+    """Get the port number for a job's review server."""
+    # This will be implemented to track running review servers
+    # For now, we'll use a simple mapping stored in the job status
+    job_data = job_status_dict.get(job_id)
+    if job_data and "review_server_port" in job_data:
+        return job_data["review_server_port"]
+    return None
+
+@api_app.post("/api/submit-file")
+async def submit_file(
+    audio_file: UploadFile = File(...),
+    artist: str = Form(...),
+    title: str = Form(...),
+    styles_file: Optional[UploadFile] = File(None),
+    styles_archive: Optional[UploadFile] = File(None)
+):
+    """Handle file upload and start processing."""
+    try:
+        # Generate unique job ID
+        job_id = str(random.randint(10000000, 99999999))
+        
+        # Create output directory
+        output_dir = Path("/output") / job_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save audio file
+        audio_file_path = output_dir / "uploaded.flac"
+        with open(audio_file_path, "wb") as buffer:
+            shutil.copyfileobj(audio_file.file, buffer)
+        
+        # Handle styles file if provided
+        styles_file_path = None
+        if styles_file:
+            styles_file_path = output_dir / "styles.json"
+            with open(styles_file_path, "wb") as buffer:
+                shutil.copyfileobj(styles_file.file, buffer)
+        
+        # Handle styles archive if provided
+        styles_archive_path = None
+        if styles_archive:
+            styles_archive_path = output_dir / "styles_archive.zip"
+            with open(styles_archive_path, "wb") as buffer:
+                shutil.copyfileobj(styles_archive.file, buffer)
+        
+        # Log the upload
+        audio_size = audio_file_path.stat().st_size
+        styles_size = styles_file_path.stat().st_size if styles_file_path else 0
+        archive_size = styles_archive_path.stat().st_size if styles_archive_path else 0
+        
+        upload_msg = f"Audio file uploaded: {audio_file.filename} ({audio_size} bytes)"
+        if styles_file_path:
+            upload_msg += f", Styles file uploaded: {styles_file.filename} ({styles_size} bytes)"
+        if styles_archive_path:
+            upload_msg += f", Styles archive uploaded: {styles_archive.filename} ({archive_size} bytes)"
+        print(upload_msg)
+        
+        # Start processing job
+        job = process_part_one_uploaded.spawn(
+            job_id, 
+            str(audio_file_path), 
+            artist, 
+            title, 
+            str(styles_file_path) if styles_file_path else None,
+            str(styles_archive_path) if styles_archive_path else None
+        )
+        
+        return {"job_id": job_id, "message": "Job started successfully"}
+        
+    except Exception as e:
+        print(f"Error in submit_file: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to submit job: {str(e)}"}
+        )
+
 # Expose API endpoints to the internet (API-only, frontend served separately via GitHub Pages)
 @app.function(
     image=karaoke_image,
-    volumes=VOLUME_CONFIG,
+    volumes=VOLUME_CONFIG,  # Mount volumes so API can write files to shared storage
+    secrets=[modal.Secret.from_name("env-vars")],  # Add secrets for debug endpoints
     min_containers=1,  # Keep at least 1 container warm for API responsiveness
     max_containers=10,  # Allow scaling up to 10 containers
     scaledown_window=5 * 60,  # Wait 5 minutes before scaling down

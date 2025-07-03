@@ -72,11 +72,11 @@ class AudioProcessor:
 
         for file in output_files:
             if "(Vocals)" in file:
-                self.logger.info(f"Renaming Vocals file {file} to {vocals_path}")
-                os.rename(file, vocals_path)
+                self.logger.info(f"Moving Vocals file {file} to {vocals_path}")
+                shutil.move(file, vocals_path)
             elif "(Instrumental)" in file:
-                self.logger.info(f"Renaming Instrumental file {file} to {instrumental_path}")
-                os.rename(file, instrumental_path)
+                self.logger.info(f"Moving Instrumental file {file} to {instrumental_path}")
+                shutil.move(file, instrumental_path)
             elif model_name in file:
                 # Example filename 1: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Piano)_htdemucs_6s.flac"
                 # Example filename 2: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Guitar)_htdemucs_6s.flac"
@@ -86,8 +86,8 @@ class AudioProcessor:
                 stem_name = stem_name.strip("()")  # Remove parentheses if present
 
                 other_stem_path = os.path.join(track_output_dir, f"{artist_title} ({stem_name} {model_name}).{self.lossless_output_format}")
-                self.logger.info(f"Renaming other stem file {file} to {other_stem_path}")
-                os.rename(file, other_stem_path)
+                self.logger.info(f"Moving other stem file {file} to {other_stem_path}")
+                shutil.move(file, other_stem_path)
 
             elif model_name_no_extension in file:
                 # Example filename 1: "Freddie Jackson - All I'll Ever Ask (feat. Najee) (Local)_(Piano)_htdemucs_6s.flac"
@@ -98,8 +98,8 @@ class AudioProcessor:
                 stem_name = stem_name.strip("()")  # Remove parentheses if present
 
                 other_stem_path = os.path.join(track_output_dir, f"{artist_title} ({stem_name} {model_name}).{self.lossless_output_format}")
-                self.logger.info(f"Renaming other stem file {file} to {other_stem_path}")
-                os.rename(file, other_stem_path)
+                self.logger.info(f"Moving other stem file {file} to {other_stem_path}")
+                shutil.move(file, other_stem_path)
 
         self.logger.info(f"Separation complete! Output file(s): {vocals_path} {instrumental_path}")
 
@@ -262,10 +262,10 @@ class AudioProcessor:
 
             for file in clean_output_files:
                 if "(Vocals)" in file and not self._file_exists(vocals_path):
-                    os.rename(file, vocals_path)
+                    shutil.move(file, vocals_path)
                     result["vocals"] = vocals_path
                 elif "(Instrumental)" in file and not self._file_exists(instrumental_path):
-                    os.rename(file, instrumental_path)
+                    shutil.move(file, instrumental_path)
                     result["instrumental"] = instrumental_path
         else:
             result["vocals"] = vocals_path
@@ -298,7 +298,7 @@ class AudioProcessor:
                     new_filename = f"{artist_title} ({stem_name} {model}).{self.lossless_output_format}"
                     other_stem_path = os.path.join(stems_dir, new_filename)
                     if not self._file_exists(other_stem_path):
-                        os.rename(file, other_stem_path)
+                        shutil.move(file, other_stem_path)
                     result[model][stem_name] = other_stem_path
 
         return result
@@ -318,10 +318,10 @@ class AudioProcessor:
 
                 for file in backing_vocals_output:
                     if "(Vocals)" in file and not self._file_exists(lead_vocals_path):
-                        os.rename(file, lead_vocals_path)
+                        shutil.move(file, lead_vocals_path)
                         result[model]["lead_vocals"] = lead_vocals_path
                     elif "(Instrumental)" in file and not self._file_exists(backing_vocals_path):
-                        os.rename(file, backing_vocals_path)
+                        shutil.move(file, backing_vocals_path)
                         result[model]["backing_vocals"] = backing_vocals_path
             else:
                 result[model]["lead_vocals"] = lead_vocals_path
