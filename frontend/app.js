@@ -7,6 +7,456 @@ let logTailInterval = null;
 let currentTailJobId = null;
 let logFontSizeIndex = 2; // Default to 'font-md'
 let autoScrollEnabled = true;
+let currentUser = null; // Store current user authentication data
+
+// Authentication functions
+function getAuthToken() {
+    return localStorage.getItem('karaoke_auth_token');
+}
+
+function setAuthToken(token) {
+    if (token) {
+        localStorage.setItem('karaoke_auth_token', token);
+    } else {
+        localStorage.removeItem('karaoke_auth_token');
+    }
+}
+
+function getAuthHeaders() {
+    const token = getAuthToken();
+    if (token) {
+        return {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        };
+    }
+    return {
+        'Content-Type': 'application/json'
+    };
+}
+
+async function authenticateUser() {
+    const token = getAuthToken();
+    if (!token) {
+        showAuthSection();
+        return false;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/auth/validate`, {
+            method: 'POST',
+            headers: getAuthHeaders()
+        });
+
+        if (response.ok) {
+            const authData = await response.json();
+            currentUser = authData;
+            showMainApp(authData);
+            return true;
+        } else {
+            // Token is invalid, clear it and show auth
+            setAuthToken(null);
+            currentUser = null;
+            showAuthSection();
+            return false;
+        }
+    } catch (error) {
+        console.error('Authentication error:', error);
+        showError('Authentication error: ' + error.message);
+        showAuthSection();
+        return false;
+    }
+}
+
+function showAuthSection() {
+    document.getElementById('auth-section').style.display = 'block';
+    document.getElementById('main-app').style.display = 'none';
+}
+
+function showMainApp(authData) {
+    document.getElementById('auth-section').style.display = 'none';
+    document.getElementById('main-app').style.display = 'block';
+    
+    // Update user status bar
+    updateUserStatusBar(authData);
+    
+    // Show admin panel if user is admin
+    if (authData.admin_access) {
+        document.getElementById('admin-panel').style.display = 'block';
+    } else {
+        document.getElementById('admin-panel').style.display = 'none';
+    }
+}
+
+function updateUserStatusBar(authData) {
+    const userTypeDisplay = document.getElementById('user-type-display');
+    const userRemainingDisplay = document.getElementById('user-remaining-display');
+    
+    // Format user type for display
+    const userTypeLabels = {
+        'admin': '👑 Admin Access',
+        'unlimited': '♾️ Unlimited Access', 
+        'limited': '🎫 Limited Access',
+        'stripe': '💳 Paid Access'
+    };
+    
+    userTypeDisplay.textContent = userTypeLabels[authData.user_type] || authData.user_type;
+    
+    // Format remaining uses
+    if (authData.remaining_uses === -1) {
+        userRemainingDisplay.textContent = '';
+    } else if (authData.remaining_uses === 0) {
+        userRemainingDisplay.textContent = '⚠️ No uses remaining';
+        userRemainingDisplay.classList.add('warning');
+    } else {
+        userRemainingDisplay.textContent = `${authData.remaining_uses} uses remaining`;
+        userRemainingDisplay.classList.remove('warning');
+    }
+}
+
+async function login(token) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/auth/login`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ token: token })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            setAuthToken(result.access_token);
+            currentUser = result;
+            showMainApp(result);
+            showSuccess('Authentication successful! Welcome to Karaoke Generator.');
+            
+            // Load initial data
+            await loadJobs();
+            
+            return true;
+        } else {
+            showError('Authentication failed: ' + result.message);
+            return false;
+        }
+    } catch (error) {
+        console.error('Login error:', error);
+        showError('Login failed: ' + error.message);
+        return false;
+    }
+}
+
+async function logout() {
+    try {
+        // Call logout endpoint if we have a token
+        const token = getAuthToken();
+        if (token) {
+            await fetch(`${API_BASE_URL}/auth/logout`, {
+                method: 'POST',
+                headers: getAuthHeaders()
+            });
+        }
+    } catch (error) {
+        console.error('Logout error:', error);
+    }
+    
+    // Clear local data
+    setAuthToken(null);
+    currentUser = null;
+    
+    // Stop auto-refresh and uncheck the checkbox
+    stopAutoRefresh();
+    const autoRefreshCheckbox = document.getElementById('auto-refresh');
+    if (autoRefreshCheckbox) {
+        autoRefreshCheckbox.checked = false;
+    }
+    
+    // Show auth section
+    showAuthSection();
+    
+    showInfo('Logged out successfully');
+}
+
+// User info modal functions
+function showUserInfo() {
+    if (!currentUser) return;
+    
+    const modal = document.getElementById('user-info-modal');
+    const content = document.getElementById('user-info-content');
+    
+    const userTypeLabels = {
+        'admin': 'Administrator',
+        'unlimited': 'Unlimited Access', 
+        'limited': 'Limited Access',
+        'stripe': 'Paid Access'
+    };
+    
+    const remainingText = currentUser.remaining_uses === -1 
+        ? 'Unlimited' 
+        : `${currentUser.remaining_uses} uses remaining`;
+    
+    content.innerHTML = `
+        <div class="user-info-grid">
+            <div class="user-info-item">
+                <label>Account Type:</label>
+                <span>${userTypeLabels[currentUser.user_type] || currentUser.user_type}</span>
+            </div>
+            <div class="user-info-item">
+                <label>Remaining Uses:</label>
+                <span>${remainingText}</span>
+            </div>
+            <div class="user-info-item">
+                <label>Admin Access:</label>
+                <span>${currentUser.admin_access ? 'Yes' : 'No'}</span>
+            </div>
+            <div class="user-info-item">
+                <label>Status:</label>
+                <span>${currentUser.message}</span>
+            </div>
+        </div>
+    `;
+    
+    modal.style.display = 'flex';
+}
+
+function closeUserInfoModal() {
+    document.getElementById('user-info-modal').style.display = 'none';
+}
+
+// Token management functions (admin only)
+async function showTokenManagement() {
+    if (!currentUser || !currentUser.admin_access) {
+        showError('Admin access required');
+        return;
+    }
+    
+    const modal = document.getElementById('token-management-modal');
+    const content = document.getElementById('token-management-content');
+    
+    modal.style.display = 'flex';
+    content.innerHTML = '<div class="token-loading">Loading tokens...</div>';
+    
+    try {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/tokens/list`);
+        
+        if (!response) return; // Auth failed, already handled
+        
+        if (response.ok) {
+            const result = await response.json();
+            displayTokenManagement(result.tokens);
+        } else {
+            const error = await response.json();
+            content.innerHTML = `<div class="error">Error loading tokens: ${error.message}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading tokens:', error);
+        content.innerHTML = `<div class="error">Error loading tokens: ${error.message}</div>`;
+    }
+}
+
+function displayTokenManagement(tokens) {
+    const content = document.getElementById('token-management-content');
+    
+    let html = `
+        <div class="token-management">
+            <div class="token-create-section">
+                <h4>Create New Token</h4>
+                <form id="create-token-form" onsubmit="createToken(event)">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="token-type">Type:</label>
+                            <select id="token-type" required>
+                                <option value="unlimited">Unlimited Access</option>
+                                <option value="limited">Limited Access</option>
+                                <option value="stripe">Stripe Payment</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="token-value">Token:</label>
+                            <input type="text" id="token-value" placeholder="Enter token value" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="token-max-uses">Max Uses:</label>
+                            <input type="number" id="token-max-uses" placeholder="Leave empty for unlimited" min="1">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="token-description">Description:</label>
+                        <input type="text" id="token-description" placeholder="Optional description">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Create Token</button>
+                </form>
+            </div>
+            
+            <div class="token-list-section">
+                <h4>Existing Tokens (${tokens.length})</h4>
+                <div class="token-list">
+    `;
+    
+    if (tokens.length === 0) {
+        html += '<p class="no-tokens">No tokens found.</p>';
+    } else {
+        tokens.forEach(token => {
+            const typeLabels = {
+                'unlimited': 'Unlimited',
+                'limited': 'Limited',
+                'stripe': 'Stripe',
+                'admin': 'Admin'
+            };
+            
+            const usageText = token.max_uses === -1 
+                ? `${token.current_uses} uses`
+                : `${token.current_uses}/${token.max_uses} uses`;
+            
+            const statusClass = token.active ? 'active' : 'revoked';
+            const statusText = token.active ? 'Active' : 'Revoked';
+            
+            html += `
+                <div class="token-item ${statusClass}">
+                    <div class="token-info">
+                        <div class="token-header">
+                            <span class="token-value">${token.token}</span>
+                            <span class="token-type">${typeLabels[token.type] || token.type}</span>
+                            <span class="token-status ${statusClass}">${statusText}</span>
+                        </div>
+                        <div class="token-details">
+                            <span class="token-usage">${usageText}</span>
+                            <span class="token-jobs">${token.jobs_created} jobs</span>
+                            ${token.description ? `<span class="token-description">${token.description}</span>` : ''}
+                        </div>
+                        ${token.last_used ? `<div class="token-last-used">Last used: ${new Date(token.last_used * 1000).toLocaleString()}</div>` : ''}
+                    </div>
+                    <div class="token-actions">
+                        ${token.active ? `<button onclick="revokeToken('${token.token}')" class="btn btn-danger btn-sm">Revoke</button>` : ''}
+                    </div>
+                </div>
+            `;
+        });
+    }
+    
+    html += `
+                </div>
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+async function createToken(event) {
+    event.preventDefault();
+    
+    const tokenType = document.getElementById('token-type').value;
+    const tokenValue = document.getElementById('token-value').value.trim();
+    const maxUses = document.getElementById('token-max-uses').value;
+    const description = document.getElementById('token-description').value.trim();
+    
+    if (!tokenValue) {
+        showError('Token value is required');
+        return;
+    }
+    
+    try {
+        const requestData = {
+            token_type: tokenType,
+            token_value: tokenValue,
+            description: description || null
+        };
+        
+        if (maxUses) {
+            requestData.max_uses = parseInt(maxUses);
+        }
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/tokens/create`, {
+            method: 'POST',
+            body: JSON.stringify(requestData)
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showSuccess(result.message);
+            // Clear form first before refreshing (which recreates the modal content)
+            const form = document.getElementById('create-token-form');
+            if (form) {
+                form.reset();
+            }
+            // Refresh token list
+            showTokenManagement();
+        } else {
+            showError('Error creating token: ' + result.message);
+        }
+    } catch (error) {
+        console.error('Error creating token:', error);
+        showError('Error creating token: ' + error.message);
+    }
+}
+
+async function revokeToken(tokenValue) {
+    if (!confirm(`Are you sure you want to revoke token "${tokenValue}"?`)) {
+        return;
+    }
+    
+    try {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/tokens/${encodeURIComponent(tokenValue)}/revoke`, {
+            method: 'POST'
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showSuccess(result.message);
+            // Refresh token list
+            showTokenManagement();
+        } else {
+            showError('Error revoking token: ' + result.message);
+        }
+    } catch (error) {
+        console.error('Error revoking token:', error);
+        showError('Error revoking token: ' + error.message);
+    }
+}
+
+function closeTokenManagementModal() {
+    document.getElementById('token-management-modal').style.display = 'none';
+}
+
+// Update all API calls to include authentication headers
+async function authenticatedFetch(url, options = {}) {
+    const headers = {
+        ...getAuthHeaders(),
+        ...options.headers
+    };
+    
+    const response = await fetch(url, {
+        ...options,
+        headers
+    });
+    
+    // If we get a 401, the token has expired - redirect to login
+    if (response.status === 401) {
+        setAuthToken(null);
+        currentUser = null;
+        
+        // Stop auto-refresh and uncheck the checkbox
+        stopAutoRefresh();
+        const autoRefreshCheckbox = document.getElementById('auto-refresh');
+        if (autoRefreshCheckbox) {
+            autoRefreshCheckbox.checked = false;
+        }
+        
+        showAuthSection();
+        showError('Session expired. Please log in again.');
+        return null;
+    }
+    
+    return response;
+}
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
@@ -19,12 +469,42 @@ document.addEventListener('DOMContentLoaded', function() {
         userAgent: navigator.userAgent.substring(0, 100)
     });
     
-    loadJobs();
+    // Initialize authentication
+    authenticateUser().then(isAuthenticated => {
+        if (isAuthenticated) {
+            loadJobs();
+            
+            // Only start auto-refresh after successful authentication
+            const autoRefreshCheckbox = document.getElementById('auto-refresh');
+            if (autoRefreshCheckbox && autoRefreshCheckbox.checked) {
+                startAutoRefresh();
+            }
+        }
+    });
+    
+    // Handle auth form submission
+    const authForm = document.getElementById('auth-form');
+    if (authForm) {
+        authForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const token = document.getElementById('access-token').value.trim();
+            if (token) {
+                await login(token);
+            }
+        });
+    }
     
     // Auto-refresh checkbox handler
     const autoRefreshCheckbox = document.getElementById('auto-refresh');
     if (autoRefreshCheckbox) {
         autoRefreshCheckbox.addEventListener('change', function() {
+            // Only allow auto-refresh if user is authenticated
+            if (!currentUser) {
+                this.checked = false;
+                showError('Please log in to use auto-refresh');
+                return;
+            }
+            
             if (this.checked) {
                 startAutoRefresh();
                 showInfo('Auto-refresh enabled - jobs will update every 5 seconds');
@@ -33,11 +513,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 showInfo('Auto-refresh disabled');
             }
         });
-        
-        // Check if auto-refresh should be enabled on page load
-        if (autoRefreshCheckbox.checked) {
-            startAutoRefresh();
-        }
     }
     
     // Handle form submission
@@ -68,6 +543,24 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    const userInfoModal = document.getElementById('user-info-modal');
+    if (userInfoModal) {
+        userInfoModal.addEventListener('click', function(e) {
+            if (e.target === userInfoModal) {
+                closeUserInfoModal();
+            }
+        });
+    }
+    
+    const tokenModal = document.getElementById('token-management-modal');
+    if (tokenModal) {
+        tokenModal.addEventListener('click', function(e) {
+            if (e.target === tokenModal) {
+                closeTokenManagementModal();
+            }
+        });
+    }
+    
     // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
         // Escape key closes modals
@@ -78,11 +571,23 @@ document.addEventListener('DOMContentLoaded', function() {
             closeVideoPreview();
             closeAudioPreview();
             closeTimelineModal();
+            closeUserInfoModal();
+            closeTokenManagementModal();
         }
     });
 });
 
 function startAutoRefresh() {
+    // Don't start auto-refresh if user is not authenticated
+    if (!currentUser) {
+        console.log('Auto-refresh not started: user not authenticated');
+        const autoRefreshCheckbox = document.getElementById('auto-refresh');
+        if (autoRefreshCheckbox) {
+            autoRefreshCheckbox.checked = false;
+        }
+        return;
+    }
+    
     if (autoRefreshInterval) {
         console.log('Auto-refresh already running');
         return; // Already running
@@ -98,6 +603,13 @@ function startAutoRefresh() {
     
     autoRefreshInterval = setInterval(() => {
         try {
+            // Check if user is still authenticated before refreshing
+            if (!currentUser) {
+                console.log('Auto-refresh: Stopping due to lost authentication');
+                stopAutoRefresh();
+                return;
+            }
+            
             // Only refresh if not tailing logs (to avoid conflicts)
             if (!currentTailJobId) {
                 console.log('Auto-refresh: Loading jobs...');
@@ -144,7 +656,9 @@ function loadJobsWithoutScroll() {
 async function loadJobs() {
     try {
         console.log('Loading jobs from API...');
-        const response = await fetch(`${API_BASE_URL}/jobs`);
+        const response = await authenticatedFetch(`${API_BASE_URL}/jobs`);
+        
+        if (!response) return null; // Auth failed, already handled
         
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -313,6 +827,47 @@ function formatSubmittedTime(job) {
     return 'Unknown';
 }
 
+function getJobEndTime(job) {
+    // Helper function to determine the correct end time for a job
+    const status = job.status || 'unknown';
+    const finishedStates = ['complete', 'error', 'cancelled', 'failed'];
+    
+    // If job is not finished, use current time
+    if (!finishedStates.includes(status)) {
+        return new Date();
+    }
+    
+    // For finished jobs, try to find the actual completion time
+    
+    // 1. Check timeline data for the last phase end time
+    if (job.timeline && job.timeline.length > 0) {
+        // Find the last phase with an end time
+        for (let i = job.timeline.length - 1; i >= 0; i--) {
+            if (job.timeline[i].ended_at) {
+                return parseServerTime(job.timeline[i].ended_at);
+            }
+        }
+    }
+    
+    // 2. Check for job completion timestamp (if available)
+    if (job.completed_at) {
+        return parseServerTime(job.completed_at);
+    }
+    
+    // 3. Check for job finished timestamp (if available)
+    if (job.finished_at) {
+        return parseServerTime(job.finished_at);
+    }
+    
+    // 4. Check for job updated timestamp (if available and status is finished)
+    if (job.updated_at && finishedStates.includes(status)) {
+        return parseServerTime(job.updated_at);
+    }
+    
+    // 5. Fallback to current time (shouldn't happen for finished jobs, but safety net)
+    return new Date();
+}
+
 function getTotalJobDuration(job) {
     // Try timeline summary first
     const timeline_summary = job.timeline_summary;
@@ -324,17 +879,18 @@ function getTotalJobDuration(job) {
     if (job.timeline && job.timeline.length > 0) {
         try {
             const startTime = parseServerTime(job.timeline[0].started_at);
-            const now = new Date();
-            const durationMs = now - startTime;
+            const endTime = getJobEndTime(job);
+            const durationMs = endTime - startTime;
             
             // Debug logging for timezone issues
             if (durationMs < 0) {
                 console.warn('Negative duration detected:', {
                     startTime: startTime.toISOString(),
-                    now: now.toISOString(),
+                    endTime: endTime.toISOString(),
                     originalTimestamp: job.timeline[0].started_at,
                     durationMs,
-                    userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    jobStatus: job.status
                 });
             }
             
@@ -349,17 +905,18 @@ function getTotalJobDuration(job) {
     if (job.created_at) {
         try {
             const startTime = parseServerTime(job.created_at);
-            const now = new Date();
-            const durationMs = now - startTime;
+            const endTime = getJobEndTime(job);
+            const durationMs = endTime - startTime;
             
             // Debug logging for timezone issues
             if (durationMs < 0) {
                 console.warn('Negative duration detected from created_at:', {
                     startTime: startTime.toISOString(),
-                    now: now.toISOString(),
+                    endTime: endTime.toISOString(),
                     originalTimestamp: job.created_at,
                     durationMs,
-                    userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    jobStatus: job.status
                 });
             }
             
@@ -570,14 +1127,14 @@ async function showTimelineModal(jobId) {
     try {
         showInfo('Loading timeline data...');
         
-        const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/timeline`);
+        const response = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}/timeline`);
         
         if (!response.ok) {
             // If timeline endpoint fails, try to get basic job data and create a simple timeline
             console.warn('Timeline endpoint failed, trying basic job data...');
-            const jobResponse = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
+            const jobResponse = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}`);
             
-            if (jobResponse.ok) {
+            if (jobResponse && jobResponse.ok) {
                 const jobData = await jobResponse.json();
                 createSimpleTimelineModal(jobData);
                 return;
@@ -741,13 +1298,46 @@ function createTimelineVisualizationHtml(timelineData) {
         const totalDuration = summary.total_duration_seconds || 1;
         
         timeline.forEach((phase, index) => {
-            const duration = phase.duration_seconds;
             const startTime = parseServerTime(phase.started_at);
-            const endTime = phase.ended_at ? parseServerTime(phase.ended_at) : new Date();
-            const isActive = !phase.ended_at;
+            
+            // Check if this is the last phase of a finished job
+            const isLastPhase = index === timeline.length - 1;
+            const jobFinished = ['complete', 'error', 'cancelled', 'failed'].includes(timelineData.current_status);
+            const shouldInferEndTime = isLastPhase && jobFinished && !phase.ended_at;
+            
+            let duration, endTime, isActive, widthPercent;
+            
+            if (phase.ended_at) {
+                // Phase has explicit end time
+                duration = phase.duration_seconds;
+                endTime = parseServerTime(phase.ended_at);
+                isActive = false;
+            } else if (shouldInferEndTime) {
+                // Infer end time for last phase of finished job
+                endTime = getJobEndTime({
+                    status: timelineData.current_status,
+                    timeline: timeline,
+                    completed_at: timelineData.completed_at,
+                    finished_at: timelineData.finished_at,
+                    updated_at: timelineData.updated_at
+                });
+                
+                // Calculate duration if not provided
+                if (phase.duration_seconds) {
+                    duration = phase.duration_seconds;
+                } else {
+                    duration = Math.floor((endTime - startTime) / 1000);
+                }
+                isActive = false;
+            } else {
+                // Phase is genuinely in progress
+                endTime = new Date();
+                duration = phase.duration_seconds;
+                isActive = true;
+            }
             
             // Calculate width percentage for visualization
-            const widthPercent = duration ? (duration / totalDuration) * 100 : (isActive ? 10 : 0);
+            widthPercent = duration ? (duration / totalDuration) * 100 : (isActive ? 10 : 0);
             
             html += `
                 <div class="timeline-phase-bar ${isActive ? 'active' : ''}" 
@@ -781,11 +1371,47 @@ function createTimelineVisualizationHtml(timelineData) {
             </div>
         `;
         
-        timeline.forEach((phase) => {
+        timeline.forEach((phase, index) => {
             const startTime = formatDetailedTimestamp(phase.started_at);
-            const endTime = phase.ended_at ? formatDetailedTimestamp(phase.ended_at) : 'In Progress';
-            const duration = phase.duration_seconds ? formatDuration(phase.duration_seconds) : 'In Progress';
-            const isActive = !phase.ended_at;
+            
+            // Check if this is the last phase of a finished job
+            const isLastPhase = index === timeline.length - 1;
+            const jobFinished = ['complete', 'error', 'cancelled', 'failed'].includes(timelineData.current_status);
+            const shouldInferEndTime = isLastPhase && jobFinished && !phase.ended_at;
+            
+            let endTime, duration, isActive;
+            
+            if (phase.ended_at) {
+                // Phase has explicit end time
+                endTime = formatDetailedTimestamp(phase.ended_at);
+                duration = phase.duration_seconds ? formatDuration(phase.duration_seconds) : 'Unknown';
+                isActive = false;
+            } else if (shouldInferEndTime) {
+                // Infer end time for last phase of finished job
+                const jobEndTime = getJobEndTime({
+                    status: timelineData.current_status,
+                    timeline: timeline,
+                    completed_at: timelineData.completed_at,
+                    finished_at: timelineData.finished_at,
+                    updated_at: timelineData.updated_at
+                });
+                endTime = formatDetailedTimestamp(jobEndTime.toISOString());
+                
+                // Calculate duration if not provided
+                if (phase.duration_seconds) {
+                    duration = formatDuration(phase.duration_seconds);
+                } else {
+                    const startDate = parseServerTime(phase.started_at);
+                    const durationSeconds = Math.floor((jobEndTime - startDate) / 1000);
+                    duration = formatDuration(Math.max(0, durationSeconds));
+                }
+                isActive = false;
+            } else {
+                // Phase is genuinely in progress
+                endTime = 'In Progress';
+                duration = 'In Progress';
+                isActive = true;
+            }
             
             html += `
                 <div class="timeline-table-row ${isActive ? 'active' : ''}">
@@ -1030,7 +1656,8 @@ async function loadLogTailData(jobId) {
     if (selectionInLogs) {
         // User is selecting text in logs - skip content update but still update title
         try {
-            const statusResponse = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
+            const statusResponse = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}`);
+            if (!statusResponse) return;
             const status = await statusResponse.json();
             
             const modalTitle = document.querySelector('#log-tail-modal .modal-title');
@@ -1045,9 +1672,11 @@ async function loadLogTailData(jobId) {
     
     try {
         const [statusResponse, logsResponse] = await Promise.all([
-            fetch(`${API_BASE_URL}/jobs/${jobId}`),
-            fetch(`${API_BASE_URL}/logs/${jobId}`)
+            authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}`),
+            authenticatedFetch(`${API_BASE_URL}/logs/${jobId}`)
         ]);
+        
+        if (!statusResponse || !logsResponse) return; // Auth failed, already handled
         
         const status = await statusResponse.json();
         const logs = await logsResponse.json();
@@ -1102,9 +1731,12 @@ async function clearErrorJobs() {
     if (!confirm('Are you sure you want to clear all error jobs?')) return;
     
     try {
-        const response = await fetch(`${API_BASE_URL}/admin/clear-errors`, {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/clear-errors`, {
             method: 'POST'
         });
+        
+        if (!response) return; // Auth failed, already handled
+        
         const result = await response.json();
         
         if (result.status === 'success') {
@@ -1125,12 +1757,15 @@ function exportLogs() {
 
 async function viewCacheStats() {
     try {
-        const response = await fetch(`${API_BASE_URL}/admin/cache/stats`);
-        const stats = await response.json();
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/cache/stats`);
+        
+        if (!response) return; // Auth failed, already handled
         
         if (response.ok) {
+            const stats = await response.json();
             showCacheStatsModal(stats);
         } else {
+            const stats = await response.json();
             showError(stats.error || 'Failed to load cache stats');
         }
     } catch (error) {
@@ -1143,9 +1778,11 @@ async function clearCache() {
     if (!confirm('Are you sure you want to clear old cache files (90+ days)? This cannot be undone.')) return;
     
     try {
-        const response = await fetch(`${API_BASE_URL}/admin/cache/clear`, {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/cache/clear`, {
             method: 'POST'
         });
+        
+        if (!response) return; // Auth failed, already handled
         const result = await response.json();
         
         if (result.status === 'success') {
@@ -1168,9 +1805,11 @@ async function warmCache() {
     try {
         showInfo('Initiating cache warming...');
         
-        const response = await fetch(`${API_BASE_URL}/admin/cache/warm`, {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/cache/warm`, {
             method: 'POST'
         });
+        
+        if (!response) return; // Auth failed, already handled
         const result = await response.json();
         
         if (result.status === 'success') {
@@ -1186,7 +1825,9 @@ async function warmCache() {
 
 async function loadAudioShakeCache() {
     try {
-        const response = await fetch(`${API_BASE_URL}/admin/cache/audioshake`);
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/cache/audioshake`);
+        
+        if (!response) return []; // Auth failed, return empty array
         const result = await response.json();
         
         if (response.ok && result.status === 'success') {
@@ -1205,9 +1846,11 @@ async function deleteAudioShakeCache(audioHash) {
     if (!confirm(`Are you sure you want to delete the cached AudioShake response for hash ${audioHash}?`)) return;
     
     try {
-        const response = await fetch(`${API_BASE_URL}/admin/cache/audioshake/${audioHash}`, {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/cache/audioshake/${audioHash}`, {
             method: 'DELETE'
         });
+        
+        if (!response) return; // Auth failed, already handled
         const result = await response.json();
         
         if (result.status === 'success') {
@@ -1383,14 +2026,28 @@ function toggleAdminPanel() {
 async function retryJob(jobId) {
     if (!confirm(`Are you sure you want to retry job ${jobId}?`)) return;
     
+    // Check if user has remaining uses for retry
+    if (currentUser && currentUser.remaining_uses === 0) {
+        showError('You have no remaining uses. Cannot retry job.');
+        return;
+    }
+    
     try {
-        const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/retry`, {
+        const response = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}/retry`, {
             method: 'POST'
         });
+        
+        if (!response) return; // Auth failed, already handled
+        
         const result = await response.json();
         
         if (result.status === 'success') {
             showSuccess(`Job ${jobId} retry initiated`);
+            // Update remaining uses if provided
+            if (currentUser && currentUser.remaining_uses > 0) {
+                currentUser.remaining_uses -= 1;
+                updateUserStatusBar(currentUser);
+            }
             await loadJobs();
         } else {
             showError(result.message || 'Failed to retry job');
@@ -1405,9 +2062,12 @@ async function deleteJob(jobId) {
     if (!confirm(`Are you sure you want to delete job ${jobId}?`)) return;
     
     try {
-        const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, {
+        const response = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}`, {
             method: 'DELETE'
         });
+        
+        if (!response) return; // Auth failed, already handled
+        
         const result = await response.json();
         
         if (result.status === 'success') {
@@ -1427,9 +2087,11 @@ async function reviewLyrics(jobId) {
         showNotification('Starting review server...', 'info');
         
         // Call the start review endpoint
-        const response = await fetch(`${API_BASE_URL}/review/${jobId}/start`, {
+        const response = await authenticatedFetch(`${API_BASE_URL}/review/${jobId}/start`, {
             method: 'POST'
         });
+        
+        if (!response) return; // Auth failed, already handled
         
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -1451,11 +2113,30 @@ async function reviewLyrics(jobId) {
 }
 
 function downloadVideo(jobId) {
-    window.open(`${API_BASE_URL}/jobs/${jobId}/download`, '_blank');
+    const token = getAuthToken();
+    if (!token) {
+        showError('Authentication required for downloads');
+        return;
+    }
+    
+    // Create download URL with authentication token
+    const url = `${API_BASE_URL}/jobs/${jobId}/download?token=${encodeURIComponent(token)}`;
+    window.open(url, '_blank');
 }
 
 // Form submission
 async function submitJob() {
+    // Check if user is authenticated and has remaining uses
+    if (!currentUser) {
+        showError('You must be logged in to submit jobs');
+        return;
+    }
+    
+    if (currentUser.remaining_uses === 0) {
+        showError('You have no remaining uses. Please contact support or purchase additional access.');
+        return;
+    }
+    
     // Prepare form data
     const formData = new FormData();
     const audioFile = document.getElementById('audio-file').files[0];
@@ -1513,12 +2194,30 @@ async function submitJob() {
         submitBtn.textContent = 'Uploading...';
         submitBtn.disabled = true;
         
+        // Create authenticated request headers for form data
+        const authHeaders = {};
+        const token = getAuthToken();
+        if (token) {
+            authHeaders['Authorization'] = `Bearer ${token}`;
+        }
+        
         const response = await fetch(`${API_BASE_URL}/submit-file`, {
             method: 'POST',
+            headers: authHeaders,
             body: formData
         });
         console.log('submitJob response from /submit-file submission');
         console.log(response);
+        
+        if (!response.ok) {
+            if (response.status === 401) {
+                setAuthToken(null);
+                currentUser = null;
+                showAuthSection();
+                showError('Session expired. Please log in again.');
+                return;
+            }
+        }
         
         const result = await response.json();
         console.log('submitJob JSON result from /submit-file submission');
@@ -1528,6 +2227,12 @@ async function submitJob() {
             const usingCustomStyles = customStylesVisible && (stylesFile || stylesArchive);
             const stylesMessage = usingCustomStyles ? ' with custom styles' : ' with default Nomad styles';
             showSuccess(`Job submitted successfully${stylesMessage}! Job ID: ${result.job_id}`);
+            
+            // Update user's remaining uses if provided
+            if (result.remaining_uses !== undefined) {
+                currentUser.remaining_uses = result.remaining_uses;
+                updateUserStatusBar(currentUser);
+            }
             
             // Clear form
             document.getElementById('audio-file').value = '';
@@ -1762,7 +2467,7 @@ function calculateDuration(createdAt) {
 }
 
 function formatDurationWithStatus(job) {
-    const duration = calculateDuration(job.created_at);
+    const duration = getTotalJobDuration(job); // Use the corrected duration calculation
     const status = job.status || 'unknown';
     
     // Different duration labels based on status
@@ -2020,7 +2725,7 @@ async function showFilesModal(jobId) {
     try {
         showInfo('Loading files...');
         
-        const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/files`);
+        const response = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}/files`);
         
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -2195,12 +2900,20 @@ function closeFilesModal() {
 // File action functions
 async function downloadFile(jobId, filePath, fileName) {
     try {
-        const url = `${API_BASE_URL}/jobs/${jobId}/files/${encodeURIComponent(filePath)}`;
+        const token = getAuthToken();
+        if (!token) {
+            showError('Authentication required for downloads');
+            return;
+        }
         
-        // Create a temporary link and click it
+        // Create download URL with authentication token
+        const url = `${API_BASE_URL}/jobs/${jobId}/files/${encodeURIComponent(filePath)}?token=${encodeURIComponent(token)}`;
+        
+        // Create a link and trigger download
         const link = document.createElement('a');
         link.href = url;
         link.download = fileName;
+        link.target = '_blank'; // Open in new tab to handle any potential auth redirects
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -2215,14 +2928,20 @@ async function downloadFile(jobId, filePath, fileName) {
 
 async function downloadAllFiles(jobId) {
     try {
-        showInfo('Creating download package...');
+        const token = getAuthToken();
+        if (!token) {
+            showError('Authentication required for downloads');
+            return;
+        }
         
-        const url = `${API_BASE_URL}/jobs/${jobId}/download-all`;
+        // Create download URL with authentication token
+        const url = `${API_BASE_URL}/jobs/${jobId}/download-all?token=${encodeURIComponent(token)}`;
         
-        // Create a temporary link and click it
+        // Create a link and trigger download
         const link = document.createElement('a');
         link.href = url;
         link.download = `karaoke-${jobId}-complete.zip`;
+        link.target = '_blank'; // Open in new tab to handle any potential auth redirects
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -2236,7 +2955,14 @@ async function downloadAllFiles(jobId) {
 }
 
 function previewVideo(jobId, filePath, fileName) {
-    const videoUrl = `${API_BASE_URL}/jobs/${jobId}/files/${encodeURIComponent(filePath)}`;
+    const token = getAuthToken();
+    if (!token) {
+        showError('Authentication required for video preview');
+        return;
+    }
+    
+    // Create authenticated video URL
+    const videoUrl = `${API_BASE_URL}/jobs/${jobId}/files/${encodeURIComponent(filePath)}?token=${encodeURIComponent(token)}`;
     
     const previewHtml = `
         <div id="video-preview-modal" class="modal">
@@ -2255,7 +2981,7 @@ function previewVideo(jobId, filePath, fileName) {
                     </video>
                     <div class="preview-actions">
                         <button onclick="downloadFile('${jobId}', '${escapeHtml(filePath)}', '${escapeHtml(fileName)}')" 
-                                class="btn btn-primary">📥 Download</button>
+                                class="btn btn-primary">📥 Download Video</button>
                     </div>
                 </div>
             </div>
@@ -2281,7 +3007,14 @@ function previewVideo(jobId, filePath, fileName) {
 }
 
 function previewAudio(jobId, filePath, fileName) {
-    const audioUrl = `${API_BASE_URL}/jobs/${jobId}/files/${encodeURIComponent(filePath)}`;
+    const token = getAuthToken();
+    if (!token) {
+        showError('Authentication required for audio preview');
+        return;
+    }
+    
+    // Create authenticated audio URL
+    const audioUrl = `${API_BASE_URL}/jobs/${jobId}/files/${encodeURIComponent(filePath)}?token=${encodeURIComponent(token)}`;
     
     const previewHtml = `
         <div id="audio-preview-modal" class="modal">
@@ -2299,7 +3032,7 @@ function previewAudio(jobId, filePath, fileName) {
                     </audio>
                     <div class="preview-actions">
                         <button onclick="downloadFile('${jobId}', '${escapeHtml(filePath)}', '${escapeHtml(fileName)}')" 
-                                class="btn btn-primary">📥 Download</button>
+                                class="btn btn-primary">📥 Download Audio</button>
                     </div>
                 </div>
             </div>

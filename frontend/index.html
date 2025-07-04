@@ -8,146 +8,233 @@
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <h1>🎤 Karaoke Generator</h1>
-            <p>Transform audio files into professional karaoke tracks with synchronized lyrics!</p>
-        </header>
-
-        <!-- Submit New Job Section -->
-        <section class="submit-section">
-            <h2>🎵 Submit a New Job</h2>
-            <form id="job-form" class="job-form">
-                <!-- Primary Form Fields -->
-                <div class="primary-fields">
-                    <div class="name-fields-row">
+        <!-- Authentication Section (shown when not authenticated) -->
+        <section id="auth-section" class="auth-section" style="display: none;">
+            <div class="auth-container">
+                <header class="auth-header">
+                    <h1>🎤 Karaoke Generator</h1>
+                    <p>Enter your access token to get started</p>
+                </header>
+                
+                <div class="auth-form-container">
+                    <form id="auth-form" class="auth-form">
                         <div class="form-group">
-                            <label for="artist">Artist Name</label>
-                            <input type="text" id="artist" class="form-control" placeholder="Enter artist name" required>
+                            <label for="access-token">Access Token</label>
+                            <input type="text" id="access-token" class="form-control" placeholder="Enter your access token" required>
+                            <small class="help-text">If you don't have an access token, contact support or check your purchase confirmation.</small>
                         </div>
-                        <div class="form-group">
-                            <label for="title">Song Title</label>
-                            <input type="text" id="title" class="form-control" placeholder="Enter song title" required>
-                        </div>
-                        <div class="example-actions">
-                            <button type="button" onclick="loadExampleData()" class="example-btn">
-                                🎵 Load Example<br><small>(ABBA - Waterloo)</small>
-                            </button>
-                        </div>
-                    </div>
+                        
+                        <button type="submit" class="auth-btn">
+                            🔓 Access Karaoke Generator
+                        </button>
+                    </form>
                     
-                    <div class="file-upload">
-                        <label for="audio-file">Audio File (MP3, WAV, FLAC, etc.)</label>
-                        <input type="file" id="audio-file" accept="audio/*" required>
-                        <small>Upload the audio file you want to convert to karaoke</small>
+                    <div class="auth-help">
+                        <h3>Need an access token?</h3>
+                        <p>Access tokens are provided when you:</p>
+                        <ul>
+                            <li>Purchase access through our payment portal</li>
+                            <li>Receive a promo code from Nomad Karaoke</li>
+                            <li>Are granted admin access</li>
+                        </ul>
+                        <p>Contact <a href="mailto:support@nomadkaraoke.com">support@nomadkaraoke.com</a> if you need help.</p>
                     </div>
                 </div>
-                
-                <!-- Styles Configuration -->
-                <div class="styles-section">
-                    <div class="styles-header">
-                        <div class="styles-info">
-                            <h3>🎨 Styling</h3>
-                            <p>Using Nomad Default Styles for professional karaoke appearance</p>
-                        </div>
-                        <button type="button" id="customize-styles-btn" onclick="toggleCustomStyles()" class="btn btn-secondary">
-                            🎛️ Customize Styles
-                        </button>
-                    </div>
-                    
-                    <div id="custom-styles-section" class="custom-styles-section" style="display: none;">
-                        <div class="file-upload">
-                            <label for="styles-file">Styles JSON File (optional)</label>
-                            <input type="file" id="styles-file" name="styles-file" accept=".json" class="form-control">
-                            <div class="form-actions">
-                                <button type="button" class="btn btn-link" onclick="loadDefaultStyles()">
-                                    📁 Load Nomad Default Styles
+            </div>
+        </section>
+
+        <!-- Main Application (shown when authenticated) -->
+        <div id="main-app" style="display: none;">
+            <!-- User Status Bar -->
+            <div class="user-status-bar">
+                <div class="user-info">
+                    <span class="user-type" id="user-type-display"></span>
+                    <span class="user-remaining" id="user-remaining-display"></span>
+                </div>
+                <div class="user-actions">
+                    <button onclick="showUserInfo()" class="btn btn-link">ℹ️ Account Info</button>
+                    <button onclick="logout()" class="btn btn-secondary">🚪 Logout</button>
+                </div>
+            </div>
+
+            <!-- Header -->
+            <header class="header">
+                <h1>🎤 Karaoke Generator</h1>
+                <p>Transform audio files into professional karaoke tracks with synchronized lyrics!</p>
+            </header>
+
+            <!-- Submit New Job Section -->
+            <section class="submit-section">
+                <h2>🎵 Submit a New Job</h2>
+                <form id="job-form" class="job-form">
+                    <!-- Primary Form Fields -->
+                    <div class="primary-fields">
+                        <div class="name-fields-row">
+                            <div class="form-group">
+                                <label for="artist">Artist Name</label>
+                                <input type="text" id="artist" class="form-control" placeholder="Enter artist name" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="title">Song Title</label>
+                                <input type="text" id="title" class="form-control" placeholder="Enter song title" required>
+                            </div>
+                            <div class="example-actions">
+                                <button type="button" onclick="loadExampleData()" class="example-btn">
+                                    🎵 Load Example<br><small>(ABBA - Waterloo)</small>
                                 </button>
                             </div>
                         </div>
                         
-                        <div class="form-group">
-                            <label for="styles-archive">Styles Assets Archive (optional)</label>
-                            <input type="file" id="styles-archive" name="styles-archive" accept=".zip" class="form-control">
-                            <small class="help-text">Upload a ZIP file containing fonts, images, and other assets referenced in the styles JSON</small>
+                        <div class="file-upload">
+                            <label for="audio-file">Audio File (MP3, WAV, FLAC, etc.)</label>
+                            <input type="file" id="audio-file" accept="audio/*" required>
+                            <small>Upload the audio file you want to convert to karaoke</small>
                         </div>
                     </div>
+                    
+                    <!-- Styles Configuration -->
+                    <div class="styles-section">
+                        <div class="styles-header">
+                            <div class="styles-info">
+                                <h3>🎨 Styling</h3>
+                                <p>Using Nomad Default Styles for professional karaoke appearance</p>
+                            </div>
+                            <button type="button" id="customize-styles-btn" onclick="toggleCustomStyles()" class="btn btn-secondary">
+                                🎛️ Customize Styles
+                            </button>
+                        </div>
+                        
+                        <div id="custom-styles-section" class="custom-styles-section" style="display: none;">
+                            <div class="file-upload">
+                                <label for="styles-file">Styles JSON File (optional)</label>
+                                <input type="file" id="styles-file" name="styles-file" accept=".json" class="form-control">
+                                <div class="form-actions">
+                                    <button type="button" class="btn btn-link" onclick="loadDefaultStyles()">
+                                        📁 Load Nomad Default Styles
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="styles-archive">Styles Assets Archive (optional)</label>
+                                <input type="file" id="styles-archive" name="styles-archive" accept=".zip" class="form-control">
+                                <small class="help-text">Upload a ZIP file containing fonts, images, and other assets referenced in the styles JSON</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="submit-btn">
+                        🎤 Generate Karaoke
+                    </button>
+                </form>
+            </section>
+
+            <!-- Statistics Cards -->
+            <section class="stats-section">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-total">0</div>
+                        <div class="stat-label">Total Jobs</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-processing">0</div>
+                        <div class="stat-label">Processing</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-awaiting-review">0</div>
+                        <div class="stat-label">Awaiting Review</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-complete">0</div>
+                        <div class="stat-label">Complete</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="stat-errors">0</div>
+                        <div class="stat-label">Errors</div>
+                    </div>
                 </div>
-                
-                <button type="submit" class="submit-btn">
-                    🎤 Generate Karaoke
+            </section>
+
+            <!-- Job Status & Logs -->
+            <section class="jobs-section">
+                <div class="section-header">
+                    <h2>Job Status & Logs</h2>
+                    <div class="auto-refresh-control">
+                        <label>
+                            <input type="checkbox" id="auto-refresh" checked>
+                            Auto-refresh (5s)
+                        </label>
+                    </div>
+                </div>
+                <div id="jobs-list" class="jobs-list">
+                    <div class="loading">Loading jobs...</div>
+                </div>
+            </section>
+
+            <!-- Admin Panel (Floating) - Only shown for admin users -->
+            <div class="admin-panel" id="admin-panel" style="display: none;">
+                <button class="admin-toggle" onclick="toggleAdminPanel()">
+                    ⚙️ Admin
                 </button>
-            </form>
-        </section>
-
-        <!-- Statistics Cards -->
-        <section class="stats-section">
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-number" id="stat-total">0</div>
-                    <div class="stat-label">Total Jobs</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="stat-processing">0</div>
-                    <div class="stat-label">Processing</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="stat-awaiting-review">0</div>
-                    <div class="stat-label">Awaiting Review</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="stat-complete">0</div>
-                    <div class="stat-label">Complete</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="stat-errors">0</div>
-                    <div class="stat-label">Errors</div>
+                <div class="admin-content">
+                    <h3>🔧 Admin Controls</h3>
+                    <div class="admin-buttons">
+                        <button onclick="showTokenManagement()" class="btn btn-primary">
+                            🎫 Manage Tokens
+                        </button>
+                        <button onclick="refreshData()" class="btn btn-primary">
+                            🔄 Refresh Data
+                        </button>
+                        <button onclick="viewCacheStats()" class="btn btn-info">
+                            💾 Cache Stats
+                        </button>
+                        <button onclick="clearErrorJobs()" class="btn btn-danger">
+                            🗑️ Clear Error Jobs
+                        </button>
+                        <button onclick="exportLogs()" class="btn btn-secondary">
+                            📤 Export Logs
+                        </button>
+                    </div>
                 </div>
             </div>
-        </section>
 
-        <!-- Job Status & Logs -->
-        <section class="jobs-section">
-            <div class="section-header">
-                <h2>Job Status & Logs</h2>
-                <div class="auto-refresh-control">
-                    <label>
-                        <input type="checkbox" id="auto-refresh" checked>
-                        Auto-refresh (5s)
-                    </label>
-                </div>
-            </div>
-            <div id="jobs-list" class="jobs-list">
-                <div class="loading">Loading jobs...</div>
-            </div>
-        </section>
-
-        <!-- Footer -->
-        <footer class="footer">
-            <p>Made with ❤️ by <a href="https://nomadkaraoke.com" target="_blank">Nomad Karaoke</a></p>
-        </footer>
+            <!-- Footer -->
+            <footer class="footer">
+                <p>Made with ❤️ by <a href="https://nomadkaraoke.com" target="_blank">Nomad Karaoke</a></p>
+            </footer>
+        </div>
     </div>
 
-    <!-- Admin Panel (Floating) -->
-    <div class="admin-panel" id="admin-panel">
-        <button class="admin-toggle" onclick="toggleAdminPanel()">
-            ⚙️ Admin
-        </button>
-        <div class="admin-content">
-            <h3>🔧 Admin Controls</h3>
-            <div class="admin-buttons">
-                <button onclick="refreshData()" class="btn btn-primary">
-                    🔄 Refresh Data
-                </button>
-                <button onclick="viewCacheStats()" class="btn btn-info">
-                    💾 Cache Stats
-                </button>
-                <button onclick="clearErrorJobs()" class="btn btn-danger">
-                    🗑️ Clear Error Jobs
-                </button>
-                <button onclick="exportLogs()" class="btn btn-secondary">
-                    📤 Export Logs
-                </button>
+    <!-- User Info Modal -->
+    <div id="user-info-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">👤 Account Information</h3>
+                <div class="modal-controls">
+                    <button onclick="closeUserInfoModal()" class="modal-close">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="user-info-content" class="user-info-content">
+                    <!-- User info will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Token Management Modal (Admin Only) -->
+    <div id="token-management-modal" class="modal">
+        <div class="modal-content token-modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">🎫 Token Management</h3>
+                <div class="modal-controls">
+                    <button onclick="closeTokenManagementModal()" class="modal-close">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="token-management-content" class="token-management-content">
+                    <div class="token-loading">Loading tokens...</div>
+                </div>
             </div>
         </div>
     </div>

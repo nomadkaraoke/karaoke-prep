@@ -17,10 +17,14 @@ import shutil
 import zipfile
 import os
 import logging
+import hashlib
+import time
+from enum import Enum
 
-from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File
+from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File, Header, Depends
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 
@@ -89,6 +93,11 @@ cache_volume = modal.Volume.from_name("karaoke-cache", create_if_missing=True)
 job_status_dict = modal.Dict.from_name("karaoke-job-statuses", create_if_missing=True)
 job_logs_dict = modal.Dict.from_name("karaoke-job-logs", create_if_missing=True)
 
+# Add new Modal Dicts for authentication after the existing ones
+auth_tokens_dict = modal.Dict.from_name("karaoke-auth-tokens", create_if_missing=True)
+token_usage_dict = modal.Dict.from_name("karaoke-token-usage", create_if_missing=True)
+user_sessions_dict = modal.Dict.from_name("karaoke-user-sessions", create_if_missing=True)
+
 # Mount volumes to specific paths inside the container
 VOLUME_CONFIG = {
     "/models": model_volume,
@@ -96,12 +105,35 @@ VOLUME_CONFIG = {
     "/cache": cache_volume
 }
 
+# User type enumeration (must be defined before Pydantic models that use it)
+class UserType(str, Enum):
+    ADMIN = "admin"
+    UNLIMITED = "unlimited" 
+    LIMITED = "limited"
+    STRIPE = "stripe"
+
 # Pydantic models for API requests
 class JobSubmissionRequest(BaseModel):
     url: str
 
 class LyricsReviewRequest(BaseModel):
     lyrics: str
+
+class AuthRequest(BaseModel):
+    token: str
+
+class AuthResponse(BaseModel):
+    success: bool
+    user_type: str
+    remaining_uses: Optional[int] = None
+    message: str
+    admin_access: bool = False
+
+class CreateTokenRequest(BaseModel):
+    token_type: UserType
+    token_value: str
+    max_uses: Optional[int] = None
+    description: Optional[str] = None
 
 class JobLogHandler(logging.Handler):
     """Custom logging handler that forwards log messages to job_logs_dict"""
@@ -728,6 +760,235 @@ async def process_part_one_uploaded(job_id: str, audio_file_path: str, artist: s
 
 # Removed setup_lyrics_review function - now using full KaraokePrep workflow
 
+# Authentication functions (must be defined before FastAPI routes)
+def generate_session_token(original_token: str) -> str:
+    """Generate a secure session token from the original access token."""
+    timestamp = str(int(time.time()))
+    combined = f"{original_token}:{timestamp}:{os.environ.get('AUTH_SECRET', 'default-secret')}"
+    return hashlib.sha256(combined.encode()).hexdigest()
+
+def validate_token(token: str) -> tuple[bool, UserType, int, str]:
+    """
+    Validate an access token and return (is_valid, user_type, remaining_uses, message).
+    """
+    if not token:
+        return False, UserType.LIMITED, 0, "No token provided"
+    
+    # Check for admin tokens (from environment variables)
+    admin_tokens = os.environ.get("ADMIN_TOKENS", "").split(",")
+    admin_tokens = [t.strip() for t in admin_tokens if t.strip()]
+    
+    if token in admin_tokens:
+        return True, UserType.ADMIN, -1, "Admin access granted"
+    
+    # Check stored tokens
+    stored_tokens = auth_tokens_dict.get("tokens", {})
+    
+    if token not in stored_tokens:
+        return False, UserType.LIMITED, 0, "Invalid token"
+    
+    token_data = stored_tokens[token]
+    token_type = UserType(token_data["type"])
+    max_uses = token_data.get("max_uses", -1)
+    
+    # Check if token is still active
+    if not token_data.get("active", True):
+        return False, token_type, 0, "Token has been revoked"
+    
+    # For unlimited tokens, no usage check needed
+    if token_type == UserType.UNLIMITED:
+        return True, token_type, -1, "Unlimited access granted"
+    
+    # For limited tokens, check usage
+    if token_type == UserType.LIMITED:
+        if max_uses <= 0:  # Unlimited uses
+            return True, token_type, -1, "Limited token with unlimited uses"
+        
+        usage_data = token_usage_dict.get(token, {"uses": 0})
+        remaining_uses = max_uses - usage_data["uses"]
+        
+        if remaining_uses <= 0:
+            return False, token_type, 0, "Token usage limit exceeded"
+        
+        return True, token_type, remaining_uses, f"Limited token: {remaining_uses} uses remaining"
+    
+    # For Stripe tokens, check expiration and usage
+    if token_type == UserType.STRIPE:
+        # Add Stripe-specific validation logic here
+        created_at = token_data.get("created_at", 0)
+        expires_at = token_data.get("expires_at", 0)
+        current_time = time.time()
+        
+        if expires_at > 0 and current_time > expires_at:
+            return False, token_type, 0, "Token has expired"
+        
+        if max_uses > 0:
+            usage_data = token_usage_dict.get(token, {"uses": 0})
+            remaining_uses = max_uses - usage_data["uses"]
+            
+            if remaining_uses <= 0:
+                return False, token_type, 0, "Token usage limit exceeded"
+            
+            return True, token_type, remaining_uses, f"Stripe token: {remaining_uses} uses remaining"
+        
+        return True, token_type, -1, "Stripe access granted"
+    
+    return False, UserType.LIMITED, 0, "Unknown token type"
+
+def increment_token_usage(token: str) -> bool:
+    """
+    Increment the usage count for a token. Returns True if successful.
+    """
+    # Don't track usage for admin or unlimited tokens
+    is_valid, user_type, remaining_uses, _ = validate_token(token)
+    
+    if not is_valid:
+        return False
+    
+    if user_type in [UserType.ADMIN, UserType.UNLIMITED]:
+        return True  # No usage tracking needed
+    
+    # Increment usage for limited and stripe tokens
+    usage_data = token_usage_dict.get(token, {"uses": 0, "last_used": 0})
+    usage_data["uses"] += 1
+    usage_data["last_used"] = time.time()
+    token_usage_dict[token] = usage_data
+    
+    return True
+
+def track_job_usage(token: str, job_id: str) -> bool:
+    """Track that a token was used to create a job."""
+    if not increment_token_usage(token):
+        return False
+    
+    # Store job creation record
+    usage_data = token_usage_dict.get(token, {})
+    if "jobs" not in usage_data:
+        usage_data["jobs"] = []
+    
+    usage_data["jobs"].append({
+        "job_id": job_id,
+        "created_at": time.time()
+    })
+    
+    token_usage_dict[token] = usage_data
+    return True
+
+# Authentication dependency for FastAPI
+security = HTTPBearer(auto_error=False)
+
+async def authenticate_user_or_token(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    """
+    FastAPI dependency to authenticate users via Authorization header OR token query parameter.
+    This enables direct download links with token in URL.
+    """
+    token = None
+    
+    # First try to get token from Authorization header
+    if credentials:
+        token = credentials.credentials
+    
+    # If no header token, try query parameter
+    if not token:
+        token = request.query_params.get('token')
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Check if this is a session token
+    session_data = user_sessions_dict.get(token)
+    if session_data:
+        # This is a session token - validate the original token
+        original_token = session_data["original_token"]
+        is_valid, user_type, remaining_uses, message = validate_token(original_token)
+        
+        if not is_valid:
+            # Original token is no longer valid - remove session
+            del user_sessions_dict[token]
+            raise HTTPException(status_code=401, detail=f"Authentication failed: {message}")
+        
+        # Update session last used time
+        session_data["last_used"] = time.time()
+        user_sessions_dict[token] = session_data
+        
+        return {
+            "token": original_token,  # Return original token for usage tracking
+            "user_type": user_type,
+            "remaining_uses": remaining_uses,
+            "admin_access": user_type == UserType.ADMIN,
+            "message": message
+        }
+    
+    # If not a session token, validate as direct access token
+    is_valid, user_type, remaining_uses, message = validate_token(token)
+    
+    if not is_valid:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {message}")
+    
+    return {
+        "token": token,
+        "user_type": user_type,
+        "remaining_uses": remaining_uses,
+        "admin_access": user_type == UserType.ADMIN,
+        "message": message
+    }
+
+async def authenticate_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    """
+    FastAPI dependency to authenticate users on protected endpoints.
+    """
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = credentials.credentials
+    
+    # First check if this is a session token
+    session_data = user_sessions_dict.get(token)
+    if session_data:
+        # This is a session token - validate the original token
+        original_token = session_data["original_token"]
+        is_valid, user_type, remaining_uses, message = validate_token(original_token)
+        
+        if not is_valid:
+            # Original token is no longer valid - remove session
+            del user_sessions_dict[token]
+            raise HTTPException(status_code=401, detail=f"Authentication failed: {message}")
+        
+        # Update session last used time
+        session_data["last_used"] = time.time()
+        user_sessions_dict[token] = session_data
+        
+        return {
+            "token": original_token,  # Return original token for usage tracking
+            "user_type": user_type,
+            "remaining_uses": remaining_uses,
+            "admin_access": user_type == UserType.ADMIN,
+            "message": message
+        }
+    
+    # If not a session token, validate as direct access token
+    is_valid, user_type, remaining_uses, message = validate_token(token)
+    
+    if not is_valid:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {message}")
+    
+    return {
+        "token": token,
+        "user_type": user_type,
+        "remaining_uses": remaining_uses,
+        "admin_access": user_type == UserType.ADMIN,
+        "message": message
+    }
+
+async def authenticate_admin(user: dict = Depends(authenticate_user)) -> dict:
+    """
+    FastAPI dependency to authenticate admin users only.
+    """
+    if user["user_type"] != UserType.ADMIN:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    return user
+
 # FastAPI Application for API endpoints
 api_app = FastAPI(title="Karaoke Generator API", version="1.0.0")
 
@@ -740,20 +1001,201 @@ api_app.add_middleware(
     allow_headers=["*"],
 )
 
-# API Routes
+# Authentication API Routes
+@api_app.post("/api/auth/login")
+async def login(auth_request: AuthRequest):
+    """Authenticate a user with their access token."""
+    try:
+        token = auth_request.token.strip()
+        is_valid, user_type, remaining_uses, message = validate_token(token)
+        
+        if not is_valid:
+            return JSONResponse({
+                "success": False,
+                "message": message
+            }, status_code=401)
+        
+        # Generate a session token for the frontend
+        session_token = generate_session_token(token)
+        
+        # Store session data
+        session_data = {
+            "original_token": token,
+            "user_type": user_type.value,
+            "remaining_uses": remaining_uses,
+            "created_at": time.time(),
+            "last_used": time.time()
+        }
+        user_sessions_dict[session_token] = session_data
+        
+        return JSONResponse({
+            "success": True,
+            "user_type": user_type.value,
+            "remaining_uses": remaining_uses,
+            "admin_access": user_type == UserType.ADMIN,
+            "message": message,
+            "access_token": session_token
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": f"Authentication error: {str(e)}"
+        }, status_code=500)
+
+@api_app.post("/api/auth/validate")
+async def validate_auth(user: dict = Depends(authenticate_user)):
+    """Validate the current user's authentication status."""
+    return JSONResponse({
+        "success": True,
+        "user_type": user["user_type"].value,
+        "remaining_uses": user["remaining_uses"],
+        "admin_access": user["admin_access"],
+        "message": user["message"]
+    })
+
+@api_app.post("/api/auth/logout")
+async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Logout the current user by invalidating their session."""
+    if credentials:
+        session_token = credentials.credentials
+        if session_token in user_sessions_dict:
+            del user_sessions_dict[session_token]
+    
+    return JSONResponse({
+        "success": True,
+        "message": "Logged out successfully"
+    })
+
+# Admin-only authentication management routes
+@api_app.post("/api/admin/tokens/create")
+async def create_token(request: CreateTokenRequest, admin: dict = Depends(authenticate_admin)):
+    """Create a new access token (admin only)."""
+    try:
+        stored_tokens = auth_tokens_dict.get("tokens", {})
+        
+        token_data = {
+            "type": request.token_type.value,
+            "max_uses": request.max_uses,
+            "description": request.description,
+            "created_at": time.time(),
+            "created_by": admin["token"][:8] + "...",
+            "active": True
+        }
+        
+        # For Stripe tokens, add expiration if needed
+        if request.token_type == UserType.STRIPE:
+            # Default 30 days expiration for Stripe tokens
+            token_data["expires_at"] = time.time() + (30 * 24 * 60 * 60)
+        
+        stored_tokens[request.token_value] = token_data
+        auth_tokens_dict["tokens"] = stored_tokens
+        
+        return JSONResponse({
+            "success": True,
+            "message": f"Token '{request.token_value}' created successfully",
+            "token_data": token_data
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": f"Error creating token: {str(e)}"
+        }, status_code=500)
+
+@api_app.get("/api/admin/tokens/list")
+async def list_tokens(admin: dict = Depends(authenticate_admin)):
+    """List all access tokens (admin only)."""
+    try:
+        stored_tokens = auth_tokens_dict.get("tokens", {})
+        
+        # Add usage information to each token
+        token_list = []
+        for token_value, token_data in stored_tokens.items():
+            usage_data = token_usage_dict.get(token_value, {"uses": 0})
+            
+            token_info = {
+                "token": token_value,
+                "type": token_data["type"],
+                "max_uses": token_data.get("max_uses", -1),
+                "current_uses": usage_data.get("uses", 0),
+                "description": token_data.get("description"),
+                "created_at": token_data.get("created_at"),
+                "active": token_data.get("active", True),
+                "last_used": usage_data.get("last_used"),
+                "jobs_created": len(usage_data.get("jobs", []))
+            }
+            
+            # Add expiration info for Stripe tokens
+            if token_data["type"] == "stripe":
+                token_info["expires_at"] = token_data.get("expires_at")
+                token_info["expired"] = token_data.get("expires_at", 0) < time.time()
+            
+            token_list.append(token_info)
+        
+        return JSONResponse({
+            "success": True,
+            "tokens": token_list
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": f"Error listing tokens: {str(e)}"
+        }, status_code=500)
+
+@api_app.post("/api/admin/tokens/{token_value}/revoke")
+async def revoke_token(token_value: str, admin: dict = Depends(authenticate_admin)):
+    """Revoke an access token (admin only)."""
+    try:
+        stored_tokens = auth_tokens_dict.get("tokens", {})
+        
+        if token_value not in stored_tokens:
+            return JSONResponse({
+                "success": False,
+                "message": "Token not found"
+            }, status_code=404)
+        
+        stored_tokens[token_value]["active"] = False
+        stored_tokens[token_value]["revoked_at"] = time.time()
+        stored_tokens[token_value]["revoked_by"] = admin["token"][:8] + "..."
+        
+        auth_tokens_dict["tokens"] = stored_tokens
+        
+        return JSONResponse({
+            "success": True,
+            "message": f"Token '{token_value}' revoked successfully"
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": f"Error revoking token: {str(e)}"
+        }, status_code=500)
+
+# Protected API Routes (now require authentication)
 @api_app.post("/api/submit")
-async def submit_job(request: JobSubmissionRequest):
+async def submit_job(request: JobSubmissionRequest, user: dict = Depends(authenticate_user)):
     """Submit a new karaoke generation job."""
     try:
         job_id = str(uuid.uuid4())[:8]
         
-        # Initialize job status with timeline
+        # Track token usage for this job
+        if not track_job_usage(user["token"], job_id):
+            return JSONResponse({
+                "status": "error",
+                "message": "Failed to track token usage"
+            }, status_code=500)
+        
+        # Initialize job status with timeline and user info
         update_job_status_with_timeline(
             job_id, 
             "queued", 
             progress=0,
             url=request.url,
-            created_at=datetime.datetime.now().isoformat()
+            created_at=datetime.datetime.now().isoformat(),
+            user_type=user["user_type"].value,
+            remaining_uses=user["remaining_uses"]
         )
         
         # Initialize job logs
@@ -765,7 +1207,8 @@ async def submit_job(request: JobSubmissionRequest):
         return JSONResponse({
             "status": "success", 
             "job_id": job_id,
-            "message": "Job submitted successfully"
+            "message": "Job submitted successfully",
+            "remaining_uses": user["remaining_uses"] - 1 if user["remaining_uses"] > 0 else user["remaining_uses"]
         }, status_code=202)
         
     except Exception as e:
@@ -775,21 +1218,50 @@ async def submit_job(request: JobSubmissionRequest):
         }, status_code=500)
 
 @api_app.get("/api/jobs")
-async def get_all_jobs():
-    """Get status of all jobs."""
+async def get_all_jobs(user: dict = Depends(authenticate_user)):
+    """Get status of all jobs for authenticated user."""
     try:
-        jobs = dict(job_status_dict.items())
-        return JSONResponse(jobs)
+        all_jobs = dict(job_status_dict.items())
+        
+        # For admin users, return all jobs
+        if user["user_type"] == UserType.ADMIN:
+            return JSONResponse(all_jobs)
+        
+        # For regular users, only return their jobs
+        user_jobs = {}
+        usage_data = token_usage_dict.get(user["token"], {"jobs": []})
+        user_job_ids = [job["job_id"] for job in usage_data.get("jobs", [])]
+        
+        for job_id, job_data in all_jobs.items():
+            if job_id in user_job_ids or job_data.get("user_type") == user["user_type"].value:
+                user_jobs[job_id] = job_data
+        
+        return JSONResponse(user_jobs)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+def check_job_access(job_id: str, user: dict) -> bool:
+    """Check if user has access to a specific job."""
+    if user["user_type"] == UserType.ADMIN:
+        return True
+    
+    # Check if user created this job
+    usage_data = token_usage_dict.get(user["token"], {"jobs": []})
+    user_job_ids = [job["job_id"] for job in usage_data.get("jobs", [])]
+    
+    return job_id in user_job_ids
+
 @api_app.get("/api/jobs/{job_id}")
-async def get_job_status(job_id: str):
+async def get_job_status(job_id: str, user: dict = Depends(authenticate_user)):
     """Get status of a specific job with timeline information."""
     try:
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
         
         # Add timeline summary to response
         timeline_summary = get_job_timeline_summary(job_data)
@@ -815,12 +1287,16 @@ async def get_job_status(job_id: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.get("/api/jobs/{job_id}/timeline")
-async def get_job_timeline(job_id: str):
+async def get_job_timeline(job_id: str, user: dict = Depends(authenticate_user)):
     """Get detailed timeline data for a specific job."""
     try:
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
         
         timeline = job_data.get("timeline", [])
         timeline_summary = get_job_timeline_summary(job_data)
@@ -956,11 +1432,15 @@ def _estimate_remaining_time(timeline: List[Dict], current_status: str) -> Optio
     return None
 
 @api_app.delete("/api/jobs/{job_id}")
-async def delete_job(job_id: str):
+async def delete_job(job_id: str, user: dict = Depends(authenticate_user)):
     """Delete a specific job."""
     try:
         if job_id not in job_status_dict:
             raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
         
         # Remove from status and logs
         del job_status_dict[job_id]
@@ -974,15 +1454,26 @@ async def delete_job(job_id: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.post("/api/jobs/{job_id}/retry")
-async def retry_job(job_id: str):
+async def retry_job(job_id: str, user: dict = Depends(authenticate_user)):
     """Retry a failed job."""
     try:
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
         
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
+        
         if job_data.get("status") != "error":
             raise HTTPException(status_code=400, detail="Job is not in error state")
+        
+        # Track token usage for the retry
+        if not track_job_usage(user["token"], job_id):
+            return JSONResponse({
+                "status": "error",
+                "message": "Failed to track token usage for retry"
+            }, status_code=500)
         
         # Reset job status with new timeline
         update_job_status_with_timeline(
@@ -990,7 +1481,9 @@ async def retry_job(job_id: str):
             "queued", 
             progress=0,
             url=job_data.get("url", ""),
-            created_at=datetime.datetime.now().isoformat()
+            created_at=datetime.datetime.now().isoformat(),
+            user_type=user["user_type"].value,
+            remaining_uses=user["remaining_uses"]
         )
         
         # Clear error logs and add retry log
@@ -1010,8 +1503,8 @@ async def retry_job(job_id: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.get("/api/logs")
-async def get_all_logs():
-    """Get logs for all jobs."""
+async def get_all_logs(user: dict = Depends(authenticate_admin)):
+    """Get logs for all jobs (admin only)."""
     try:
         logs = dict(job_logs_dict.items())
         return JSONResponse(logs)
@@ -1019,19 +1512,35 @@ async def get_all_logs():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.get("/api/logs/{job_id}")
-async def get_job_logs(job_id: str):
+async def get_job_logs(job_id: str, user: dict = Depends(authenticate_user)):
     """Get logs for a specific job."""
     try:
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
+        
         logs = job_logs_dict.get(job_id, [])
         return JSONResponse(logs)
+    except HTTPException:
+        raise
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.get("/api/stats")
-async def get_stats():
-    """Get statistics about all jobs."""
+async def get_stats(user: dict = Depends(authenticate_user)):
+    """Get statistics about jobs accessible to the user."""
     try:
-        jobs = dict(job_status_dict.items())
+        all_jobs = dict(job_status_dict.items())
+        
+        # For admin users, show stats for all jobs
+        if user["user_type"] == UserType.ADMIN:
+            jobs = all_jobs
+        else:
+            # For regular users, only show stats for their jobs
+            usage_data = token_usage_dict.get(user["token"], {"jobs": []})
+            user_job_ids = [job["job_id"] for job in usage_data.get("jobs", [])]
+            jobs = {job_id: job_data for job_id, job_data in all_jobs.items() 
+                   if job_id in user_job_ids}
         
         stats = {
             "total": len(jobs),
@@ -1040,6 +1549,10 @@ async def get_stats():
             "complete": len([j for j in jobs.values() if j.get("status") == "complete"]),
             "error": len([j for j in jobs.values() if j.get("status") == "error"])
         }
+        
+        # Add user-specific stats
+        stats["user_type"] = user["user_type"].value
+        stats["remaining_uses"] = user["remaining_uses"]
         
         return JSONResponse(stats)
     except Exception as e:
@@ -1138,12 +1651,16 @@ def get_base_api_url() -> str:
     return "https://nomadkaraoke--karaoke-generator-webapp-api-endpoint.modal.run"
 
 @api_app.get("/api/jobs/{job_id}/download")
-async def download_video(job_id: str):
+async def download_video(job_id: str, request: Request, user: dict = Depends(authenticate_user_or_token)):
     """Download the primary completed video."""
     try:
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
         
         if job_data.get("status") != "complete":
             raise HTTPException(status_code=400, detail="Job is not complete")
@@ -1502,7 +2019,7 @@ async def add_lyrics(job_id: str, request: Request):
 
 # Admin Routes
 @api_app.post("/api/admin/clear-errors")
-async def clear_error_jobs():
+async def clear_error_jobs(admin: dict = Depends(authenticate_admin)):
     """Clear all jobs with error status."""
     try:
         jobs_to_delete = []
@@ -1523,7 +2040,7 @@ async def clear_error_jobs():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.get("/api/admin/cache/stats")
-async def get_cache_stats():
+async def get_cache_stats(admin: dict = Depends(authenticate_admin)):
     """Get cache statistics and usage information."""
     try:
         cache_manager = CacheManager("/cache")
@@ -1584,7 +2101,7 @@ async def get_cache_stats():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.post("/api/admin/cache/clear")
-async def clear_cache():
+async def clear_cache(admin: dict = Depends(authenticate_admin)):
     """Clear old cache files."""
     try:
         cache_manager = CacheManager("/cache")
@@ -1600,7 +2117,7 @@ async def clear_cache():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.get("/api/admin/cache/audioshake")
-async def get_audioshake_cache():
+async def get_audioshake_cache(admin: dict = Depends(authenticate_admin)):
     """Get list of cached AudioShake responses."""
     try:
         cache_manager = CacheManager("/cache")
@@ -1662,7 +2179,7 @@ async def get_audioshake_cache():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.delete("/api/admin/cache/audioshake/{audio_hash}")
-async def delete_audioshake_cache(audio_hash: str):
+async def delete_audioshake_cache(audio_hash: str, admin: dict = Depends(authenticate_admin)):
     """Delete specific AudioShake cache entry."""
     try:
         cache_manager = CacheManager("/cache")
@@ -1694,7 +2211,7 @@ async def delete_audioshake_cache(audio_hash: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.get("/api/admin/export-logs")
-async def export_logs():
+async def export_logs(admin: dict = Depends(authenticate_admin)):
     """Export all logs as JSON file."""
     try:
         logs_data = {
@@ -1721,7 +2238,7 @@ async def export_logs():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.post("/api/admin/cache/warm")
-async def warm_cache_endpoint():
+async def warm_cache_endpoint(admin: dict = Depends(authenticate_admin)):
     """Trigger cache warming for commonly used models and data."""
     try:
         # Spawn the cache warming function
@@ -1974,12 +2491,20 @@ async def submit_file(
     artist: str = Form(...),
     title: str = Form(...),
     styles_file: Optional[UploadFile] = File(None),
-    styles_archive: Optional[UploadFile] = File(None)
+    styles_archive: Optional[UploadFile] = File(None),
+    user: dict = Depends(authenticate_user)
 ):
     """Handle file upload and start processing."""
     try:
         # Generate unique job ID
         job_id = str(random.randint(10000000, 99999999))
+        
+        # Track token usage for this job
+        if not track_job_usage(user["token"], job_id):
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Failed to track token usage"}
+            )
         
         # Create output directory
         output_dir = Path("/output") / job_id
@@ -2016,14 +2541,16 @@ async def submit_file(
             upload_msg += f", Styles archive uploaded: {styles_archive.filename} ({archive_size} bytes)"
         print(upload_msg)
         
-        # Initialize job status with timeline
+        # Initialize job status with timeline and user info
         update_job_status_with_timeline(
             job_id, 
             "queued", 
             progress=0,
             artist=artist,
             title=title,
-            created_at=datetime.datetime.now().isoformat()
+            created_at=datetime.datetime.now().isoformat(),
+            user_type=user["user_type"].value,
+            remaining_uses=user["remaining_uses"]
         )
         
         # Initialize job logs
@@ -2376,7 +2903,7 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         raise Exception(f"Failed to generate preview video: {error_msg}")
 
 @api_app.get("/api/jobs/{job_id}/files")
-async def list_job_files(job_id: str):
+async def list_job_files(job_id: str, user: dict = Depends(authenticate_user)):
     """List all available files for a job."""
     try:
         # Reload volume to see files from other containers
@@ -2385,6 +2912,10 @@ async def list_job_files(job_id: str):
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
         
         track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
         track_dir = Path(track_output_dir)
@@ -2516,7 +3047,7 @@ def get_mime_type(file_extension: str) -> str:
     return mime_types.get(file_extension.lower(), 'application/octet-stream')
 
 @api_app.get("/api/jobs/{job_id}/files/{file_path:path}")
-async def download_job_file(job_id: str, file_path: str):
+async def download_job_file(job_id: str, file_path: str, request: Request, user: dict = Depends(authenticate_user_or_token)):
     """Download a specific file from a job."""
     try:
         # Reload volume to see files from other containers
@@ -2525,6 +3056,10 @@ async def download_job_file(job_id: str, file_path: str):
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
         
         track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
         track_dir = Path(track_output_dir)
@@ -2569,7 +3104,7 @@ async def download_job_file(job_id: str, file_path: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.post("/api/jobs/{job_id}/create-zip")
-async def create_job_zip(job_id: str, request: Request):
+async def create_job_zip(job_id: str, request: Request, user: dict = Depends(authenticate_user)):
     """Create a ZIP file containing selected job files."""
     try:
         # Reload volume to see files from other containers
@@ -2578,6 +3113,10 @@ async def create_job_zip(job_id: str, request: Request):
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
         
         # Get selected file paths from request body
         try:
@@ -2649,13 +3188,17 @@ async def create_job_zip(job_id: str, request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @api_app.get("/api/jobs/{job_id}/download-all")
-async def download_all_files(job_id: str):
+async def download_all_files(job_id: str, request: Request, user: dict = Depends(authenticate_user_or_token)):
     """Create and download a ZIP of all job files."""
     try:
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
+        
         # Create zip with all files
         create_response = await create_job_zip(job_id, type('obj', (object,), {
             'json': lambda: {"files": [], "name": f"karaoke-{job_id}-complete.zip"}
-        })())
+        })(), user)
         
         if isinstance(create_response, JSONResponse):
             response_data = json.loads(create_response.body.decode())
@@ -2771,6 +3314,10 @@ def format_duration(seconds: int) -> str:
         hours = seconds // 3600
         remaining_minutes = (seconds % 3600) // 60
         return f"{hours}h {remaining_minutes}m"
+
+
+
+
 
 
 

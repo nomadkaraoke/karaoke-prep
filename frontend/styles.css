@@ -414,8 +414,6 @@ body {
     padding: 1rem;
 }
 
-
-
 .job-header {
     display: flex;
     justify-content: space-between;
@@ -492,8 +490,6 @@ body {
     font-size: 0.75rem;
     color: #666;
 }
-
-
 
 .status-badge {
     padding: 0.2rem 0.6rem;
@@ -930,8 +926,6 @@ body {
         align-items: stretch;
         gap: 0.75rem;
     }
-    
-
     
     .job-actions {
         flex-wrap: wrap;
@@ -2165,4 +2159,495 @@ html {
     color: var(--text-muted);
     font-style: italic;
     font-size: 0.85rem;
+}
+
+/* Authentication Section */
+.auth-section {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.auth-container {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 20px;
+    padding: 40px;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    color: #333;
+}
+
+.auth-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.auth-header h1 {
+    color: #667eea;
+    margin-bottom: 10px;
+}
+
+.auth-form {
+    margin-bottom: 30px;
+}
+
+.auth-form .form-group {
+    margin-bottom: 20px;
+}
+
+.auth-form label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #555;
+}
+
+.auth-form .form-control {
+    width: 100%;
+    padding: 12px 16px;
+    border: 2px solid #e1e5e9;
+    border-radius: 10px;
+    font-size: 16px;
+    transition: border-color 0.3s ease;
+}
+
+.auth-form .form-control:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.auth-btn {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.auth-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+}
+
+.auth-help {
+    text-align: center;
+    font-size: 14px;
+    color: #666;
+}
+
+.auth-help h3 {
+    color: #667eea;
+    margin-bottom: 15px;
+}
+
+.auth-help ul {
+    text-align: left;
+    margin: 15px 0;
+    padding-left: 20px;
+}
+
+.auth-help a {
+    color: #667eea;
+    text-decoration: none;
+}
+
+.auth-help a:hover {
+    text-decoration: underline;
+}
+
+/* User Status Bar */
+.user-status-bar {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-radius: 0 0 15px 15px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+}
+
+.user-info {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+}
+
+.user-type {
+    font-weight: 600;
+    padding: 4px 12px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 20px;
+    font-size: 14px;
+}
+
+.user-remaining {
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+.user-remaining.warning {
+    color: #ffd700;
+    font-weight: 600;
+}
+
+.user-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.user-actions .btn {
+    padding: 6px 12px;
+    font-size: 14px;
+    border-radius: 8px;
+}
+
+.user-actions .btn-link {
+    background: transparent;
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.user-actions .btn-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.user-actions .btn-secondary {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.user-actions .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* User Info Modal */
+.user-info-content {
+    padding: 20px;
+}
+
+.user-info-grid {
+    display: grid;
+    gap: 15px;
+}
+
+.user-info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #667eea;
+}
+
+.user-info-item label {
+    font-weight: 600;
+    color: #555;
+    margin: 0;
+}
+
+.user-info-item span {
+    color: #333;
+}
+
+/* Token Management Modal */
+.token-modal-content {
+    max-width: 900px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.token-management {
+    padding: 20px;
+}
+
+.token-create-section {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 10px;
+    margin-bottom: 30px;
+    border: 2px solid #e9ecef;
+}
+
+.token-create-section h4 {
+    color: #667eea;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr 1fr;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.token-list-section h4 {
+    color: #333;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.token-list {
+    display: grid;
+    gap: 15px;
+}
+
+.token-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    border: 2px solid #e9ecef;
+    border-radius: 10px;
+    background: white;
+    transition: all 0.3s ease;
+}
+
+.token-item.active {
+    border-color: #28a745;
+    background: #f8fff9;
+}
+
+.token-item.revoked {
+    border-color: #dc3545;
+    background: #fff8f8;
+    opacity: 0.7;
+}
+
+.token-info {
+    flex: 1;
+}
+
+.token-header {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.token-value {
+    font-family: 'Courier New', monospace;
+    background: #f1f3f4;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #333;
+    border: 1px solid #ddd;
+}
+
+.token-type {
+    background: #667eea;
+    color: white;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.token-status {
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.token-status.active {
+    background: #d4edda;
+    color: #155724;
+}
+
+.token-status.revoked {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.token-details {
+    display: flex;
+    gap: 15px;
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 5px;
+}
+
+.token-usage, .token-jobs {
+    background: #e9ecef;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.token-description {
+    font-style: italic;
+    color: #888;
+}
+
+.token-last-used {
+    font-size: 12px;
+    color: #999;
+}
+
+.token-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.no-tokens {
+    text-align: center;
+    color: #666;
+    font-style: italic;
+    padding: 40px;
+}
+
+.token-loading {
+    text-align: center;
+    color: #666;
+    padding: 40px;
+}
+
+/* Token Management Form Styling */
+.token-management .form-group {
+    margin-bottom: 1rem;
+}
+
+.token-management .form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    color: #333;
+}
+
+.token-management input[type="text"],
+.token-management input[type="number"],
+.token-management select {
+    width: 100%;
+    padding: 0.75rem;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    font-size: 1rem;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    background: white;
+}
+
+.token-management input[type="text"]:focus,
+.token-management input[type="number"]:focus,
+.token-management select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.token-management select {
+    background-image: url('data:image/svg+xml;charset=US-ASCII,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 5"><path fill="%23666" d="M2 0L0 2h4zm0 5L0 3h4z"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 0.75rem;
+    padding-right: 2.5rem;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+}
+
+.token-management .btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.token-management .btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.token-management .btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.token-management .btn-danger {
+    background: #dc3545;
+    color: white;
+}
+
+.token-management .btn-danger:hover {
+    background: #c82333;
+    transform: translateY(-1px);
+}
+
+/* Form row specific adjustments */
+.token-management .form-row .form-group {
+    margin-bottom: 0;
+}
+
+
+
+/* Responsive Design Enhancements */
+@media (max-width: 768px) {
+    .auth-container {
+        padding: 30px 20px;
+        margin: 20px;
+    }
+    
+    .user-status-bar {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+    }
+    
+    .user-info {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+    
+    .token-modal-content {
+        width: 95%;
+        max-height: 95vh;
+    }
+    
+    .token-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+    }
+    
+    .token-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .admin-panel {
+        bottom: 10px;
+        right: 10px;
+    }
+    
+    .admin-content {
+        right: -50px;
+        min-width: 200px;
+    }
 } 
