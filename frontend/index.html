@@ -67,28 +67,91 @@
             <section class="submit-section">
                 <h2>🎵 Submit a New Job</h2>
                 <form id="job-form" class="job-form">
-                    <!-- Primary Form Fields -->
-                    <div class="primary-fields">
-                        <div class="name-fields-row">
-                            <div class="form-group">
-                                <label for="artist">Artist Name</label>
-                                <input type="text" id="artist" class="form-control" placeholder="Enter artist name" required>
+                    <!-- Input Mode Selection -->
+                    <div class="input-mode-selection">
+                        <div class="input-mode-tabs">
+                            <button type="button" id="file-mode-tab" class="input-mode-tab active" onclick="switchInputMode('file')">
+                                📁 Upload File
+                            </button>
+                            <button type="button" id="youtube-mode-tab" class="input-mode-tab" onclick="switchInputMode('youtube')">
+                                📺 YouTube URL
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- File Upload Mode -->
+                    <div id="file-upload-mode" class="input-mode-section active">
+                        <div class="primary-fields">
+                            <div class="name-fields-row">
+                                <div class="form-group">
+                                    <label for="artist">Artist Name</label>
+                                    <input type="text" id="artist" class="form-control" placeholder="Enter artist name" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="title">Song Title</label>
+                                    <input type="text" id="title" class="form-control" placeholder="Enter song title" required>
+                                </div>
+                                <div class="example-actions">
+                                    <button type="button" onclick="loadExampleData()" class="example-btn">
+                                        🎵 Load Example<br><small>(ABBA - Waterloo)</small>
+                                    </button>
+                                </div>
                             </div>
-                            <div class="form-group">
-                                <label for="title">Song Title</label>
-                                <input type="text" id="title" class="form-control" placeholder="Enter song title" required>
-                            </div>
-                            <div class="example-actions">
-                                <button type="button" onclick="loadExampleData()" class="example-btn">
-                                    🎵 Load Example<br><small>(ABBA - Waterloo)</small>
-                                </button>
+                            
+                            <div class="file-upload">
+                                <label for="audio-file">Audio File (MP3, WAV, FLAC, etc.)</label>
+                                <input type="file" id="audio-file" accept="audio/*">
+                                <small>Upload the audio file you want to convert to karaoke</small>
                             </div>
                         </div>
-                        
-                        <div class="file-upload">
-                            <label for="audio-file">Audio File (MP3, WAV, FLAC, etc.)</label>
-                            <input type="file" id="audio-file" accept="audio/*" required>
-                            <small>Upload the audio file you want to convert to karaoke</small>
+                    </div>
+
+                    <!-- YouTube URL Mode -->
+                    <div id="youtube-url-mode" class="input-mode-section">
+                        <div class="primary-fields">
+                            <div class="url-input-section">
+                                <div class="form-group">
+                                    <label for="youtube-url">YouTube URL</label>
+                                    <input type="url" id="youtube-url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." pattern="https://.*youtube\.com/.*|https://.*youtu\.be/.*">
+                                    <small>Enter a YouTube URL - artist and title will be extracted automatically</small>
+                                </div>
+                            </div>
+                            
+                            <!-- Cookies Section -->
+                            <div class="cookies-section">
+                                <div class="cookies-header">
+                                    <h4>YouTube Access Enhancement (Optional)</h4>
+                                    <button type="button" id="toggle-cookies-btn" onclick="toggleCookiesSection()" class="btn btn-secondary">
+                                        🍪 Help with Access Issues
+                                    </button>
+                                </div>
+                                
+                                <div id="cookies-help-section" class="cookies-help" style="display: none;">
+                                    <div class="cookies-explanation">
+                                        <p><strong>Why might I need this?</strong></p>
+                                        <p>Sometimes YouTube blocks server requests. Providing your browser cookies helps bypass this restriction.</p>
+                                        
+                                        <p><strong>How to get cookies:</strong></p>
+                                        <ol>
+                                            <li>Visit <a href="https://www.youtube.com" target="_blank">YouTube</a> in your browser</li>
+                                            <li>Open Developer Tools (F12)</li>
+                                            <li>Go to Application → Cookies → https://www.youtube.com</li>
+                                            <li>Copy the cookie data below</li>
+                                        </ol>
+                                        
+                                        <div class="form-group">
+                                            <label for="youtube-cookies">Browser Cookies (Optional)</label>
+                                            <textarea id="youtube-cookies" class="form-control" rows="3" 
+                                                    placeholder="Paste your YouTube cookies here if you encounter access issues..."></textarea>
+                                            <small>These cookies will be stored securely for your session and help access YouTube content</small>
+                                        </div>
+                                        
+                                        <div class="cookies-privacy">
+                                            <p><small>🔒 <strong>Privacy:</strong> Cookies are only stored temporarily for your session and used exclusively for YouTube access.</small></p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     
@@ -155,10 +218,10 @@
                 </div>
             </section>
 
-            <!-- Job Status & Logs -->
+            <!-- Jobs -->
             <section class="jobs-section">
                 <div class="section-header">
-                    <h2>Job Status & Logs</h2>
+                    <h2>Jobs</h2>
                     <div class="auto-refresh-control">
                         <label>
                             <input type="checkbox" id="auto-refresh" checked>
@@ -273,6 +336,34 @@
             <div class="modal-body">
                 <div id="cache-stats-content" class="cache-stats-content">
                     <div class="cache-loading">Loading cache statistics...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Instrumental Selection Modal -->
+    <div id="instrumental-selection-modal" class="modal">
+        <div class="modal-content instrumental-modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">🎵 Choose Instrumental Track</h3>
+                <div class="modal-controls">
+                    <button onclick="closeInstrumentalSelectionModal()" class="modal-close">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="instrumental-selection-intro">
+                    <p>Select which instrumental version to use for your final karaoke video. You can preview each option before making your choice.</p>
+                </div>
+                <div id="instrumental-selection-content" class="instrumental-selection-content">
+                    <div class="instrumental-loading">Loading instrumental options...</div>
+                </div>
+                <div class="instrumental-selection-actions">
+                    <button id="confirm-instrumental-btn" onclick="confirmInstrumentalSelection()" class="btn btn-primary" disabled>
+                        ✅ Use Selected Instrumental & Complete
+                    </button>
+                    <button onclick="closeInstrumentalSelectionModal()" class="btn btn-secondary">
+                        Cancel
+                    </button>
                 </div>
             </div>
         </div>

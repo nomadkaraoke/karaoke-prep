@@ -93,10 +93,11 @@ cache_volume = modal.Volume.from_name("karaoke-cache", create_if_missing=True)
 job_status_dict = modal.Dict.from_name("karaoke-job-statuses", create_if_missing=True)
 job_logs_dict = modal.Dict.from_name("karaoke-job-logs", create_if_missing=True)
 
-# Add new Modal Dicts for authentication after the existing ones
+# Add new Modal Dicts for authentication and YouTube cookies
 auth_tokens_dict = modal.Dict.from_name("karaoke-auth-tokens", create_if_missing=True)
 token_usage_dict = modal.Dict.from_name("karaoke-token-usage", create_if_missing=True)
 user_sessions_dict = modal.Dict.from_name("karaoke-user-sessions", create_if_missing=True)
+user_youtube_cookies_dict = modal.Dict.from_name("karaoke-youtube-cookies", create_if_missing=True)
 
 # Mount volumes to specific paths inside the container
 VOLUME_CONFIG = {
@@ -115,6 +116,10 @@ class UserType(str, Enum):
 # Pydantic models for API requests
 class JobSubmissionRequest(BaseModel):
     url: str
+
+class YouTubeSubmissionRequest(BaseModel):
+    url: str
+    cookies: Optional[str] = None
 
 class LyricsReviewRequest(BaseModel):
     lyrics: str
@@ -339,7 +344,7 @@ def warm_cache():
     secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
 )
-async def process_part_one(job_id: str, youtube_url: str):
+async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[str] = None):
     """First phase: Download audio, separate, and transcribe lyrics."""
     import sys
     import traceback
@@ -366,7 +371,7 @@ async def process_part_one(job_id: str, youtube_url: str):
         
         # Process using the full KaraokePrep workflow (same as CLI)
         log_message(job_id, "INFO", "Starting full karaoke processing workflow...")
-        result = await processor.process_url(job_id, youtube_url)
+        result = await processor.process_url(job_id, youtube_url, cookies_str)
         
         # Update status to awaiting review
         update_job_status_with_timeline(
@@ -418,7 +423,7 @@ async def process_part_one(job_id: str, youtube_url: str):
     timeout=1800,
 )
 def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, Any]] = None):
-    """Second phase: Generate final video with corrected lyrics."""
+    """Second phase: Generate 'With Vocals' video with corrected lyrics (no finalization yet)."""
     import sys
     import traceback
     from pathlib import Path
@@ -432,7 +437,7 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
         from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
         from lyrics_transcriber_local.lyrics_transcriber.correction.operations import CorrectionOperations
         
-        log_message(job_id, "INFO", f"Starting phase 2 (video generation) for job {job_id}")
+        log_message(job_id, "INFO", f"Starting phase 2 (video generation only) for job {job_id}")
         
         # Update status
         job_data = job_status_dict.get(job_id, {})
@@ -469,13 +474,13 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
             log_message(job_id, "INFO", "Using original correction data (no updates from review)")
             correction_result = base_correction_result
         
-        # Set up output config for Phase 2 (video generation)
+        # Set up output config for Phase 2 (video generation only, no CDG yet)
         styles_file = job_data.get("styles_file_path") or str(Path(track_output_dir) / "styles_updated.json")
         output_config = OutputConfig(
             output_styles_json=styles_file,
             output_dir=str(Path(track_output_dir) / "lyrics"),
-            render_video=True,  # Now we DO want video generation
-            generate_cdg=True,  # Now we DO want CDG generation
+            render_video=True,  # Generate the "With Vocals" video
+            generate_cdg=False,  # Skip CDG for now - will do in phase 3
             video_resolution="4k",
             generate_plain_text=False,  # Already done in Phase 1
             generate_lrc=False,  # Already done in Phase 1
@@ -490,9 +495,9 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
         # Find the audio file
         audio_file_path = Path(track_output_dir) / f"{artist} - {title} (Original).wav"
         
-        log_message(job_id, "INFO", "Starting video and CDG generation with corrected lyrics...")
+        log_message(job_id, "INFO", "Starting video generation with corrected lyrics...")
         
-        # Generate final outputs (video and CDG)
+        # Generate "With Vocals" video only
         output_files = output_generator.generate_outputs(
             transcription_corrected=correction_result,
             lyrics_results={},  # Not needed for Phase 2
@@ -514,28 +519,31 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
             log_message(job_id, "INFO", f"Moving LRC from {output_files.lrc} to {parent_lrc_path}")
             shutil.copy2(output_files.lrc, parent_lrc_path)
         
-        log_message(job_id, "SUCCESS", f"Video and CDG generation completed")
+        log_message(job_id, "SUCCESS", f"Video generation completed - ready for instrumental selection")
         
-        # Update status to complete with file information
+        # Commit volume changes to persist the "With Vocals" video for Phase 3
+        log_message(job_id, "INFO", "Committing volume changes to persist Phase 2 video files...")
+        output_volume.commit()
+        log_message(job_id, "INFO", "Volume commit completed for Phase 2")
+        
+        # Update status to ready for instrumental selection and finalization
         update_job_status_with_timeline(
             job_id, 
-            "complete", 
-            progress=100,
+            "ready_for_finalization", 
+            progress=85,
             video_path=str(parent_video_path),
             lrc_path=str(parent_lrc_path),
-            video_url=f"/api/jobs/{job_id}/download",
-            files_url=f"/api/jobs/{job_id}/files",
-            download_all_url=f"/api/jobs/{job_id}/download-all",
-            **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated"]}
+            output_files_partial={"video": str(parent_video_path), "lrc": str(parent_lrc_path)},
+            **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated", "video_path", "lrc_path", "output_files_partial"]}
         )
         
-        log_message(job_id, "SUCCESS", f"Job {job_id} completed successfully!")
+        log_message(job_id, "SUCCESS", f"Phase 2 completed for job {job_id}! Ready for instrumental selection.")
         
         # Clean up logging handler
         root_logger = logging.getLogger()
         root_logger.removeHandler(log_handler)
         
-        return {"status": "success", "message": "Video generation completed", "video_path": str(parent_video_path)}
+        return {"status": "success", "message": "Video generation completed, ready for instrumental selection", "video_path": str(parent_video_path)}
         
     except Exception as e:
         error_msg = str(e)
@@ -562,6 +570,181 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
             pass
         
         raise Exception(f"Phase 2 failed: {error_msg}")
+
+@app.function(
+    image=karaoke_image,
+    gpu="any",  
+    volumes=VOLUME_CONFIG,
+    timeout=1800,
+)
+def process_part_three(job_id: str, selected_instrumental: Optional[str] = None):
+    """Third phase: Generate final video formats and packages with selected instrumental."""
+    import sys
+    import traceback
+    from pathlib import Path
+    
+    try:
+        # Set up logging to capture all messages
+        log_handler = setup_job_logging(job_id)
+        
+        log_message(job_id, "INFO", f"Starting phase 3 (finalization) for job {job_id}")
+        if selected_instrumental:
+            log_message(job_id, "INFO", f"Using selected instrumental: {selected_instrumental}")
+        
+        # Update status
+        job_data = job_status_dict.get(job_id, {})
+        update_job_status_with_timeline(job_id, "finalizing", progress=90, **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated"]})
+        
+        # Get job info
+        track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
+        artist = job_data.get("artist", "Unknown")
+        title = job_data.get("title", "Unknown")
+        
+        # Load CDG styles from the styles JSON file for KaraokeFinalise
+        log_message(job_id, "INFO", "Loading CDG styles from styles configuration")
+        
+        styles_file = job_data.get("styles_file_path") or str(Path(track_output_dir) / "styles_updated.json")
+        cdg_styles = None
+        
+        if Path(styles_file).exists():
+            try:
+                with open(styles_file, 'r') as f:
+                    style_params = json.load(f)
+                    cdg_styles = style_params.get("cdg")
+                    if cdg_styles:
+                        log_message(job_id, "INFO", f"Loaded CDG styles from {styles_file}")
+                    else:
+                        log_message(job_id, "WARNING", f"No CDG styles found in {styles_file}")
+            except Exception as e:
+                log_message(job_id, "ERROR", f"Error loading CDG styles from {styles_file}: {str(e)}")
+                raise Exception(f"Failed to load CDG styles: {str(e)}")
+        else:
+            log_message(job_id, "ERROR", f"Styles file not found: {styles_file}")
+            raise Exception(f"Styles file not found: {styles_file}")
+        
+        # Now do finalization using the existing KaraokeFinalise class
+        log_message(job_id, "INFO", "Starting finalization phase using KaraokeFinalise")
+        
+        # Import the existing finalization class
+        from karaoke_gen.karaoke_finalise.karaoke_finalise import KaraokeFinalise
+        
+        # Change to the track directory for processing
+        original_cwd = os.getcwd()
+        os.chdir(track_output_dir)
+        
+        try:
+            # Set up KaraokeFinalise with serverless-friendly settings
+            finalizer = KaraokeFinalise(
+                logger=logging.getLogger(__name__),
+                log_level=logging.INFO,
+                dry_run=False,
+                instrumental_format="flac",
+                enable_cdg=True,  # Enable CDG creation
+                enable_txt=True,  # Enable TXT creation  
+                cdg_styles=cdg_styles,  # Pass CDG styles configuration
+                non_interactive=True,  # Important: disable user prompts
+            )
+            
+            # Get the "With Vocals" video from phase 2
+            with_vocals_file = f"{artist} - {title} (With Vocals).mkv"
+            if not Path(with_vocals_file).exists():
+                raise Exception(f"With Vocals video not found: {with_vocals_file}")
+            
+            # Find instrumental files
+            base_name = f"{artist} - {title}"
+            
+            # If user selected a specific instrumental, create a symlink with expected name
+            if selected_instrumental:
+                log_message(job_id, "INFO", f"Using user-selected instrumental: {selected_instrumental}")
+                # Create a symlink so KaraokeFinalise can find it with the expected naming
+                expected_instrumental = f"{base_name} (Instrumental).flac"
+                if not Path(expected_instrumental).exists():
+                    Path(expected_instrumental).symlink_to(selected_instrumental)
+                    log_message(job_id, "INFO", f"Created symlink: {expected_instrumental} -> {selected_instrumental}")
+            
+            # Let KaraokeFinalise handle all the video format creation and packaging
+            log_message(job_id, "INFO", "Running KaraokeFinalise.process() for video formats and packages")
+            result = finalizer.process(replace_existing=False)
+            
+            # Extract the created files from the result
+            final_files = {
+                "lossless_4k": result.get("final_video"),
+                "lossy_4k": result.get("final_video_lossy"), 
+                "mkv_flac": result.get("final_video_mkv"),
+                "compressed_720p": result.get("final_video_720p")
+            }
+            
+            package_files = {}
+            if result.get("final_karaoke_cdg_zip"):
+                package_files["cdg_zip"] = result["final_karaoke_cdg_zip"]
+            if result.get("final_karaoke_txt_zip"):
+                package_files["txt_zip"] = result["final_karaoke_txt_zip"]
+            
+            log_message(job_id, "SUCCESS", f"KaraokeFinalise completed - created {len(final_files)} video formats and {len(package_files)} packages")
+            
+        finally:
+            # Always return to original directory
+            os.chdir(original_cwd)
+        
+        log_message(job_id, "SUCCESS", f"Finalization completed - created {len(final_files)} video formats and {len(package_files)} packages")
+        
+        # CRITICAL: Commit volume changes to persist final video files
+        log_message(job_id, "INFO", "Committing volume changes to persist final video files...")
+        output_volume.commit()
+        log_message(job_id, "INFO", "Volume commit completed - final files should now be persistent")
+        
+        # Update status to complete with all file information
+        best_video_path = final_files.get("lossless_4k") or final_files.get("lossy_4k") or ""
+        update_job_status_with_timeline(
+            job_id, 
+            "complete", 
+            progress=100,
+            video_path=str(best_video_path),
+            lrc_path=str(Path(track_output_dir) / f"{artist} - {title} (Karaoke).lrc"),
+            video_url=f"/api/jobs/{job_id}/download",
+            files_url=f"/api/jobs/{job_id}/files",
+            download_all_url=f"/api/jobs/{job_id}/download-all",
+            final_files=final_files,
+            package_files=package_files,
+            selected_instrumental=selected_instrumental,
+            **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated", "video_path", "lrc_path"]}
+        )
+        
+        log_message(job_id, "SUCCESS", f"Job {job_id} completed successfully!")
+        
+        # Clean up logging handler
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(log_handler)
+        
+        return {"status": "success", "message": "Finalization completed", "final_files": final_files}
+        
+    except Exception as e:
+        error_msg = str(e)
+        error_traceback = traceback.format_exc()
+        
+        log_message(job_id, "ERROR", f"Phase 3 failed: {error_msg}")
+        log_message(job_id, "ERROR", f"Traceback: {error_traceback}")
+        
+        job_data = job_status_dict.get(job_id, {})
+        update_job_status_with_timeline(
+            job_id, 
+            "error", 
+            progress=0,
+            error=error_msg,
+            traceback=error_traceback,
+            **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated"]}
+        )
+        
+        # Clean up logging handler
+        try:
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(log_handler)
+        except:
+            pass
+        
+        raise Exception(f"Phase 3 failed: {error_msg}")
+
+
 
 @app.function(
     image=karaoke_image,
@@ -913,6 +1096,7 @@ async def authenticate_user_or_token(request: Request, credentials: HTTPAuthoriz
         
         return {
             "token": original_token,  # Return original token for usage tracking
+            "session_token": token,  # Include session token for cookie association
             "user_type": user_type,
             "remaining_uses": remaining_uses,
             "admin_access": user_type == UserType.ADMIN,
@@ -960,6 +1144,7 @@ async def authenticate_user(credentials: HTTPAuthorizationCredentials = Depends(
         
         return {
             "token": original_token,  # Return original token for usage tracking
+            "session_token": token,  # Include session token for cookie association
             "user_type": user_type,
             "remaining_uses": remaining_uses,
             "admin_access": user_type == UserType.ADMIN,
@@ -1217,6 +1402,63 @@ async def submit_job(request: JobSubmissionRequest, user: dict = Depends(authent
             "message": str(e)
         }, status_code=500)
 
+@api_app.post("/api/submit-youtube")
+async def submit_youtube_job(request: YouTubeSubmissionRequest, user: dict = Depends(authenticate_user)):
+    """Submit a new YouTube karaoke generation job with optional cookies."""
+    try:
+        job_id = str(uuid.uuid4())[:8]
+        
+        # Track token usage for this job
+        if not track_job_usage(user["token"], job_id):
+            return JSONResponse({
+                "status": "error",
+                "message": "Failed to track token usage"
+            }, status_code=500)
+        
+        # Store user cookies if provided
+        cookies_str = None
+        if request.cookies:
+            # Store cookies associated with the user's session token
+            session_token = user.get("session_token")  # We'll need to pass this in auth
+            if session_token:
+                user_youtube_cookies_dict[session_token] = {
+                    "cookies": request.cookies,
+                    "updated_at": time.time()
+                }
+                cookies_str = request.cookies
+                print(f"Stored YouTube cookies for user session {session_token[:8]}...")
+        
+        # Initialize job status with timeline and user info
+        update_job_status_with_timeline(
+            job_id, 
+            "queued", 
+            progress=0,
+            url=request.url,
+            created_at=datetime.datetime.now().isoformat(),
+            user_type=user["user_type"].value,
+            remaining_uses=user["remaining_uses"],
+            has_cookies=bool(cookies_str)
+        )
+        
+        # Initialize job logs
+        job_logs_dict[job_id] = []
+        
+        # Spawn the background job with cookies
+        process_part_one.spawn(job_id, request.url, cookies_str)
+        
+        return JSONResponse({
+            "status": "success", 
+            "job_id": job_id,
+            "message": "YouTube job submitted successfully" + (" with cookies" if cookies_str else ""),
+            "remaining_uses": user["remaining_uses"] - 1 if user["remaining_uses"] > 0 else user["remaining_uses"]
+        }, status_code=202)
+        
+    except Exception as e:
+        return JSONResponse({
+            "status": "error",
+            "message": str(e)
+        }, status_code=500)
+
 @api_app.get("/api/jobs")
 async def get_all_jobs(user: dict = Depends(authenticate_user)):
     """Get status of all jobs for authenticated user."""
@@ -1456,6 +1698,7 @@ async def delete_job(job_id: str, user: dict = Depends(authenticate_user)):
 @api_app.post("/api/jobs/{job_id}/retry")
 async def retry_job(job_id: str, user: dict = Depends(authenticate_user)):
     """Retry a failed job."""
+    from pathlib import Path
     try:
         job_data = job_status_dict.get(job_id)
         if not job_data:
@@ -1493,8 +1736,29 @@ async def retry_job(job_id: str, user: dict = Depends(authenticate_user)):
             "message": "Job retry initiated"
         }]
         
-        # Respawn the job
-        process_part_one.spawn(job_id, job_data.get("url", ""))
+        # Determine job type and spawn the appropriate processing function
+        if job_data.get("filename"):
+            # This was a file upload job - use process_part_one_uploaded
+            artist = job_data.get("artist", "Unknown")
+            title = job_data.get("title", "Unknown")
+            audio_file_path = f"/output/{job_id}/uploaded.flac"  # Standard upload path
+            styles_file_path = job_data.get("styles_file_path")
+            styles_archive_path = f"/output/{job_id}/styles_archive.zip" if Path(f"/output/{job_id}/styles_archive.zip").exists() else None
+            
+            process_part_one_uploaded.spawn(
+                job_id, 
+                audio_file_path, 
+                artist, 
+                title, 
+                styles_file_path, 
+                styles_archive_path
+            )
+        else:
+            # This was a URL job - use process_part_one
+            youtube_url = job_data.get("url", "")
+            if not youtube_url:
+                raise HTTPException(status_code=400, detail="No URL found for retry")
+            process_part_one.spawn(job_id, youtube_url)
         
         return JSONResponse({"status": "success", "message": f"Job {job_id} retry initiated"})
     except HTTPException:
@@ -1665,25 +1929,36 @@ async def download_video(job_id: str, request: Request, user: dict = Depends(aut
         if job_data.get("status") != "complete":
             raise HTTPException(status_code=400, detail="Job is not complete")
         
-        # First try the stored video path
+        # First try the stored video path (should be the best quality final file)
         video_path = job_data.get("video_path")
         if video_path and Path(video_path).exists():
+            # Determine appropriate filename and media type
+            video_file = Path(video_path)
+            if video_file.suffix.lower() == '.mkv':
+                media_type = "video/x-matroska"
+                filename = f"karaoke-{job_id}.mkv"
+            else:
+                media_type = "video/mp4"
+                filename = f"karaoke-{job_id}.mp4"
+                
             return FileResponse(
                 path=video_path,
-                filename=f"karaoke-{job_id}.mkv",
-                media_type="video/x-matroska"
+                filename=filename,
+                media_type=media_type
             )
         
-        # Fallback: look for any final video file
+        # Fallback: look for final video files in order of preference
         track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
         track_dir = Path(track_output_dir)
         
-        # Look for final videos in order of preference
+        # Look for final videos in order of preference (best quality first)
         video_patterns = [
+            "*Final Karaoke Lossy 4k*.mp4",
+            "*Final Karaoke Lossless 4k*.mp4",
+            "*Final Karaoke*.mkv",
             "*With Vocals*.mkv",
-            "*With Vocals*.mp4", 
-            "*Final Karaoke*.mp4",
-            "*Final Karaoke*.mkv"
+            "*With Vocals*.mp4",
+            "*Final Karaoke*.mp4"
         ]
         
         for pattern in video_patterns:
@@ -2446,7 +2721,7 @@ async def get_correction_data(job_id: str):
 
 @api_app.post("/api/corrections/{job_id}/complete")
 async def complete_review(job_id: str, request: Request):
-    """Complete the review process with corrected lyrics data."""
+    """Complete the review process with corrected lyrics data (Phase 2 - video generation only)."""
     try:
         job_data = job_status_dict.get(job_id)
         if not job_data:
@@ -2455,20 +2730,13 @@ async def complete_review(job_id: str, request: Request):
         if job_data.get("status") != "reviewing":
             raise HTTPException(status_code=400, detail="Job is not in reviewing state")
         
-        # Get the corrected data from the request
-        corrected_data = await request.json()
+        # Get the corrected lyrics data from request
+        request_data = await request.json()
+        corrected_data = request_data.get("corrected_data", {})
         
-        log_message(job_id, "INFO", "Review completed, starting Phase 2 video generation")
+        log_message(job_id, "INFO", "Review completed, starting Phase 2 (video generation only)")
         
-        # Update job status to rendering
-        update_job_status_with_timeline(
-            job_id, 
-            "rendering", 
-            progress=80,
-            **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated"]}
-        )
-        
-        # Spawn Phase 2 to generate the final video with corrected lyrics
+        # Spawn Phase 2 to generate the "With Vocals" video only
         process_part_two.spawn(job_id, corrected_data)
         
         return JSONResponse({
@@ -2480,6 +2748,39 @@ async def complete_review(job_id: str, request: Request):
         raise
     except Exception as e:
         log_message(job_id, "ERROR", f"Error completing review: {str(e)}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@api_app.post("/api/corrections/{job_id}/finalize")
+async def finalize_with_instrumental(job_id: str, request: Request):
+    """Complete Phase 3 (finalization) with selected instrumental."""
+    try:
+        job_data = job_status_dict.get(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job_data.get("status") != "ready_for_finalization":
+            raise HTTPException(status_code=400, detail="Job is not ready for finalization")
+        
+        # Get the selected instrumental from request
+        request_data = await request.json()
+        selected_instrumental = request_data.get("selected_instrumental")
+        
+        log_message(job_id, "INFO", "Starting Phase 3 (finalization) with instrumental selection")
+        if selected_instrumental:
+            log_message(job_id, "INFO", f"Using selected instrumental: {selected_instrumental}")
+        
+        # Spawn Phase 3 to generate final formats with selected instrumental
+        process_part_three.spawn(job_id, selected_instrumental)
+        
+        return JSONResponse({
+            "status": "success",
+            "message": "Finalization started with selected instrumental"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_message(job_id, "ERROR", f"Error starting finalization: {str(e)}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 # Note: Additional review endpoints (preview video, audio, handlers) can be added here if needed
@@ -2650,6 +2951,10 @@ def add_lyrics_source(job_id: str, source: str, lyrics_text: str):
         with open(corrections_json_path, 'w') as f:
             json.dump(updated_result.to_dict(), f, indent=2)
         
+        # Commit volume changes to persist updated corrections file
+        output_volume.commit()
+        log_message(job_id, "INFO", "Volume committed after updating corrections")
+        
         log_message(job_id, "SUCCESS", f"Successfully added lyrics source '{source}' and updated corrections")
         
         # Clean up logging handler
@@ -2738,6 +3043,10 @@ def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
         # Save updated correction data
         with open(corrections_json_path, 'w') as f:
             json.dump(updated_result.to_dict(), f, indent=2)
+        
+        # Commit volume changes to persist updated corrections file
+        output_volume.commit()
+        log_message(job_id, "INFO", "Volume committed after updating handlers")
         
         log_message(job_id, "SUCCESS", f"Successfully updated handlers: {enabled_handlers}")
         
@@ -3204,7 +3513,7 @@ async def download_all_files(job_id: str, request: Request, user: dict = Depends
             response_data = json.loads(create_response.body.decode())
             if "zip_path" in response_data:
                 # Download the created zip
-                return await download_job_file(job_id, response_data["zip_path"])
+                return await download_job_file(job_id, response_data["zip_path"], request, user)
         
         raise HTTPException(status_code=500, detail="Failed to create zip file")
         
@@ -3314,6 +3623,142 @@ def format_duration(seconds: int) -> str:
         hours = seconds // 3600
         remaining_minutes = (seconds % 3600) // 60
         return f"{hours}h {remaining_minutes}m"
+
+# Add new endpoints after the existing review endpoints
+
+@api_app.get("/api/corrections/{job_id}/instrumentals")
+async def get_available_instrumentals(job_id: str):
+    """Get list of available instrumental files for a job."""
+    try:
+        # Reload volume to see files from other containers
+        output_volume.reload()
+        
+        job_data = job_status_dict.get(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job_data.get("status") not in ["reviewing", "awaiting_review", "ready_for_finalization"]:
+            raise HTTPException(status_code=400, detail="Job is not ready for instrumental selection")
+        
+        # Get job details
+        track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
+        track_dir = Path(track_output_dir)
+        
+        # Find all instrumental files
+        instrumental_files = list(track_dir.glob(f"*Instrumental*.flac"))
+        
+        if not instrumental_files:
+            raise HTTPException(status_code=404, detail="No instrumental files found")
+        
+        # Create list of instrumental options with metadata
+        instrumentals = []
+        for inst_file in instrumental_files:
+            try:
+                file_stat = inst_file.stat()
+                file_size_mb = round(file_stat.st_size / 1024 / 1024, 1)
+                
+                # Determine instrumental type based on filename
+                filename = inst_file.name
+                instrumental_type = "Unknown"
+                recommended = False
+                description = ""
+                
+                if "model_bs_roformer" in filename:
+                    if "+BV" in filename:
+                        instrumental_type = "With Backing Vocals"
+                        description = "Includes background vocals and harmonies"
+                    else:
+                        instrumental_type = "Clean Instrumental"
+                        description = "Pure instrumental without any vocals"
+                        recommended = True  # Clean instrumental is typically preferred
+                elif "htdemucs" in filename:
+                    instrumental_type = "Other Stems"
+                    description = "Alternative separation model"
+                elif "mel_band_roformer" in filename:
+                    instrumental_type = "Karaoke Model"
+                    description = "Optimized for karaoke backing tracks"
+                
+                instrumentals.append({
+                    "filename": inst_file.name,
+                    "path": str(inst_file.relative_to(track_dir)),
+                    "size_mb": file_size_mb,
+                    "type": instrumental_type,
+                    "description": description,
+                    "recommended": recommended,
+                    "audio_url": f"/corrections/{job_id}/instrumental-preview/{inst_file.name}"
+                })
+                
+            except Exception as e:
+                log_message(job_id, "WARNING", f"Error processing instrumental file {inst_file}: {e}")
+                continue
+        
+        # Sort instrumentals with recommended first
+        instrumentals.sort(key=lambda x: (not x["recommended"], x["filename"]))
+        
+        log_message(job_id, "INFO", f"Found {len(instrumentals)} instrumental options")
+        
+        return JSONResponse({
+            "job_id": job_id,
+            "instrumentals": instrumentals,
+            "total_count": len(instrumentals)
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_message(job_id, "ERROR", f"Error getting instrumentals: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting instrumentals: {str(e)}")
+
+@api_app.get("/api/corrections/{job_id}/instrumental-preview/{filename}")
+async def get_instrumental_preview(job_id: str, filename: str):
+    """Get instrumental audio file for preview."""
+    try:
+        # Reload volume to see files from other containers
+        output_volume.reload()
+        
+        job_data = job_status_dict.get(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job_data.get("status") not in ["reviewing", "awaiting_review", "ready_for_finalization"]:
+            raise HTTPException(status_code=400, detail="Job is not ready for instrumental selection")
+        
+        # Get job details and find the specific instrumental file
+        track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
+        track_dir = Path(track_output_dir)
+        
+        # Security: only allow files that match the expected instrumental pattern
+        if not filename.endswith('.flac') or 'Instrumental' not in filename:
+            raise HTTPException(status_code=403, detail="Invalid file requested")
+        
+        instrumental_file = track_dir / filename
+        
+        if not instrumental_file.exists() or not instrumental_file.is_file():
+            raise HTTPException(status_code=404, detail="Instrumental file not found")
+        
+        # Verify it's actually in the track directory (security check)
+        try:
+            instrumental_file.resolve().relative_to(track_dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        log_message(job_id, "DEBUG", f"Serving instrumental preview: {filename}")
+        
+        return FileResponse(
+            path=str(instrumental_file),
+            filename=f"instrumental-{job_id}-{filename}",
+            media_type="audio/flac",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_message(job_id, "ERROR", f"Error serving instrumental preview: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving instrumental preview: {str(e)}")
 
 
 

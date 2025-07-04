@@ -23,7 +23,7 @@
     "background_image": "/tmp/karaoke-background-image-nomad-4k.png",
     "background_color": "#000000",
     "font_path": "/tmp/AvenirNext-Bold.ttf",
-    "font": "Avenir Next Bold",
+    "font": "Avenir Next",
     "ass_name": "Nomad",
     "primary_color": "112, 112, 247, 255",
     "secondary_color": "255, 255, 255, 255",

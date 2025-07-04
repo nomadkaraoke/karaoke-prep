@@ -325,7 +325,7 @@ function displayTokenManagement(tokens) {
                             <span class="token-jobs">${token.jobs_created} jobs</span>
                             ${token.description ? `<span class="token-description">${token.description}</span>` : ''}
                         </div>
-                        ${token.last_used ? `<div class="token-last-used">Last used: ${new Date(token.last_used * 1000).toLocaleString()}</div>` : ''}
+                        ${token.last_used ? `<div class="token-last-used">Last used: ${formatTimestamp(new Date(token.last_used * 1000).toISOString())}</div>` : ''}
                     </div>
                     <div class="token-actions">
                         ${token.active ? `<button onclick="revokeToken('${token.token}')" class="btn btn-danger btn-sm">Revoke</button>` : ''}
@@ -460,12 +460,16 @@ async function authenticatedFetch(url, options = {}) {
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
-    // Debug timezone information
+    // Debug timezone information for troubleshooting timestamp issues
     console.log('🌍 Timezone Debug Info:', {
         userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timezoneOffset: new Date().getTimezoneOffset(),
+        timezoneOffsetHours: new Date().getTimezoneOffset() / 60,
         localTime: new Date().toISOString(),
         localTimeString: new Date().toString(),
-        timezoneOffset: new Date().getTimezoneOffset(),
+        localDateString: new Date().toLocaleDateString(),
+        localTimeStringFormatted: new Date().toLocaleString(),
+        sampleUTCParsing: parseServerTime('2024-01-01T12:00:00').toString(),
         userAgent: navigator.userAgent.substring(0, 100)
     });
     
@@ -561,6 +565,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    const instrumentalModal = document.getElementById('instrumental-selection-modal');
+    if (instrumentalModal) {
+        instrumentalModal.addEventListener('click', function(e) {
+            if (e.target === instrumentalModal) {
+                closeInstrumentalSelectionModal();
+            }
+        });
+    }
+    
     // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
         // Escape key closes modals
@@ -573,6 +586,7 @@ document.addEventListener('DOMContentLoaded', function() {
             closeTimelineModal();
             closeUserInfoModal();
             closeTokenManagementModal();
+            closeInstrumentalSelectionModal();
         }
     });
 });
@@ -796,32 +810,54 @@ function createJobHTML(jobId, job) {
 }
 
 function formatSubmittedTime(job) {
-    // Try timeline data first
-    if (job.timeline && job.timeline.length > 0) {
-        const submitTime = parseServerTime(job.timeline[0].started_at);
-        const now = new Date();
-        const diffHours = (now - submitTime) / (1000 * 60 * 60);
-        
-        if (diffHours < 24) {
-            return submitTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-        } else {
-            return submitTime.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' + 
-                   submitTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    // Helper function to format a timestamp in user's local timezone
+    const formatLocalTime = (timestamp) => {
+        try {
+            const submitTime = parseServerTime(timestamp);
+            
+            // Validate the parsed time
+            if (isNaN(submitTime.getTime())) {
+                console.warn('Invalid submit time:', timestamp);
+                return 'Invalid Time';
+            }
+            
+            const now = new Date();
+            const diffHours = (now - submitTime) / (1000 * 60 * 60);
+            
+            // Format options for consistent local timezone display
+            const timeOptions = {
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: false  // Use 24-hour format for consistency
+            };
+            
+            const dateOptions = {
+                month: 'short', 
+                day: 'numeric'
+            };
+            
+            if (diffHours < 24 && diffHours >= 0) {
+                // Same day - show just time
+                return submitTime.toLocaleTimeString([], timeOptions);
+            } else {
+                // Different day - show date and time
+                return submitTime.toLocaleDateString([], dateOptions) + ' ' + 
+                       submitTime.toLocaleTimeString([], timeOptions);
+            }
+        } catch (error) {
+            console.error('Error formatting submit time:', timestamp, error);
+            return 'Error';
         }
+    };
+    
+    // Try timeline data first (most accurate submission time)
+    if (job.timeline && job.timeline.length > 0 && job.timeline[0].started_at) {
+        return formatLocalTime(job.timeline[0].started_at);
     }
     
     // Fallback to created_at
     if (job.created_at) {
-        const submitTime = parseServerTime(job.created_at);
-        const now = new Date();
-        const diffHours = (now - submitTime) / (1000 * 60 * 60);
-        
-        if (diffHours < 24) {
-            return submitTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-        } else {
-            return submitTime.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' + 
-                   submitTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-        }
+        return formatLocalTime(job.created_at);
     }
     
     return 'Unknown';
@@ -941,7 +977,9 @@ function createMultiStageProgressBar(job) {
         { key: 'processing', label: 'Processing', shortLabel: 'Process' },
         { key: 'awaiting_review', label: 'Review', shortLabel: 'Review' },
         { key: 'reviewing', label: 'Reviewing', shortLabel: 'Review' },
+        { key: 'ready_for_finalization', label: 'Ready for Finalization', shortLabel: 'Ready' },
         { key: 'rendering', label: 'Rendering', shortLabel: 'Render' },
+        { key: 'finalizing', label: 'Finalizing', shortLabel: 'Final' },
         { key: 'complete', label: 'Complete', shortLabel: 'Done' }
     ];
     
@@ -1040,7 +1078,7 @@ function createMultiStageProgressBar(job) {
 }
 
 function shouldShowPhase(phaseKey, currentStatus) {
-    const phaseOrder = ['queued', 'processing', 'awaiting_review', 'reviewing', 'rendering', 'complete'];
+    const phaseOrder = ['queued', 'processing', 'awaiting_review', 'reviewing', 'ready_for_finalization', 'rendering', 'finalizing', 'complete'];
     const currentIndex = phaseOrder.indexOf(currentStatus);
     const phaseIndex = phaseOrder.indexOf(phaseKey);
     
@@ -1049,7 +1087,7 @@ function shouldShowPhase(phaseKey, currentStatus) {
 }
 
 function isNextPhase(phaseKey, currentStatus) {
-    const phaseOrder = ['queued', 'processing', 'awaiting_review', 'reviewing', 'rendering', 'complete'];
+    const phaseOrder = ['queued', 'processing', 'awaiting_review', 'reviewing', 'ready_for_finalization', 'rendering', 'finalizing', 'complete'];
     const currentIndex = phaseOrder.indexOf(currentStatus);
     const phaseIndex = phaseOrder.indexOf(phaseKey);
     
@@ -1062,7 +1100,9 @@ function getPhaseColor(phase, isUpcoming = false) {
         'processing': isUpcoming ? '#66a3ff' : '#007bff', 
         'awaiting_review': isUpcoming ? '#ffdf88' : '#ffc107',
         'reviewing': isUpcoming ? '#ff9f5c' : '#fd7e14',
+        'ready_for_finalization': isUpcoming ? '#a0c4ff' : '#6c5ce7',
         'rendering': isUpcoming ? '#66d9a3' : '#28a745',
+        'finalizing': isUpcoming ? '#74b9ff' : '#0984e3',
         'complete': isUpcoming ? '#66d9a3' : '#28a745',
         'error': isUpcoming ? '#ff8a9a' : '#dc3545'
     };
@@ -1117,7 +1157,9 @@ function getPhaseIcon(phase) {
         'transcribing': '📝',
         'awaiting_review': '⏸️',
         'reviewing': '👁️',
+        'ready_for_finalization': '🎵',
         'rendering': '🎬',
+        'finalizing': '📦',
         'complete': '✅',
         'error': '❌'
     };
@@ -1132,7 +1174,9 @@ function getShortPhaseLabel(phase) {
         'transcribing': 'Lyrics',
         'awaiting_review': 'Review',
         'reviewing': 'Editing',
+        'ready_for_finalization': 'Ready',
         'rendering': 'Render',
+        'finalizing': 'Final',
         'complete': 'Done',
         'error': 'Error'
     };
@@ -1500,14 +1544,28 @@ function createTimelineVisualizationHtml(timelineData) {
 }
 
 function formatDetailedTimestamp(isoString) {
-    const date = parseServerTime(isoString);
-    return date.toLocaleString([], {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
+    try {
+        const date = parseServerTime(isoString);
+        
+        // Validate the parsed date
+        if (isNaN(date.getTime())) {
+            console.warn('Invalid detailed timestamp:', isoString);
+            return 'Invalid Time';
+        }
+        
+        // Format with consistent local timezone display
+        return date.toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false  // Use 24-hour format for consistency
+        });
+    } catch (error) {
+        console.error('Error formatting detailed timestamp:', isoString, error);
+        return 'Error';
+    }
 }
 
 function formatDuration(seconds) {
@@ -1545,14 +1603,22 @@ function createJobActions(jobId, job) {
     }
     
     if (status === 'reviewing') {
-        // For reviewing status, go directly to the review URL
+        // For reviewing status, show option to complete review (no instrumental selection yet)
+        actions.push(`<button onclick="completeReview('${jobId}')" class="btn btn-success">✅ Complete Review</button>`);
+        // Also allow continuing the review
         const reviewUrl = `https://lyrics.nomadkaraoke.com/?baseApiUrl=${API_BASE_URL}/corrections/${jobId}`;
-        actions.push(`<a href="${reviewUrl}" target="_blank" class="btn btn-success">📝 Continue Review</a>`);
+        actions.push(`<a href="${reviewUrl}" target="_blank" class="btn btn-secondary">📝 Continue Review</a>`);
+    }
+    
+    if (status === 'ready_for_finalization') {
+        // For ready_for_finalization status, show option to choose instrumental and finalize
+        actions.push(`<button onclick="showInstrumentalSelectionForJob('${jobId}')" class="btn btn-success">🎵 Choose Instrumental & Finalize</button>`);
     }
     
     if (status === 'complete') {
-        actions.push(`<button onclick="downloadVideo('${jobId}')" class="btn btn-primary">📥 Download Video</button>`);
-        actions.push(`<button onclick="showFilesModal('${jobId}')" class="btn btn-info">📁 All Files</button>`);
+        actions.push(`<button onclick="downloadVideo('${jobId}')" class="btn btn-primary">📥 Download MP4 Video</button>`);
+        actions.push(`<button onclick="downloadAll('${jobId}')" class="btn btn-success">📦 Download All Zip</button>`);
+        actions.push(`<button onclick="showFilesModal('${jobId}')" class="btn btn-info">📁 View All Files</button>`);
     }
     
     if (status === 'error') {
@@ -1737,7 +1803,12 @@ async function loadLogTailData(jobId) {
         }
         
         const logsHTML = logs.map(log => {
-            const timestamp = parseServerTime(log.timestamp).toLocaleTimeString();
+            const timestamp = parseServerTime(log.timestamp).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
             const levelClass = log.level.toLowerCase();
             return `<div class="log-entry log-${levelClass}">
                 <span class="log-timestamp">${timestamp}</span>
@@ -2002,7 +2073,7 @@ async function updateCacheStatsContent(stats) {
         `;
         
         audioShakeCache.forEach(item => {
-            const timestamp = parseServerTime(item.timestamp).toLocaleString();
+            const timestamp = formatTimestamp(item.timestamp);
             const shortHash = item.audio_hash.substring(0, 12) + '...';
             
             html += `
@@ -2150,6 +2221,37 @@ async function reviewLyrics(jobId) {
     }
 }
 
+async function completeReview(jobId) {
+    if (!confirm('Complete the review without additional corrections? This will generate the video and move to instrumental selection.')) {
+        return;
+    }
+    
+    try {
+        showInfo('Completing review and generating video...');
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/corrections/${jobId}/complete`, {
+            method: 'POST',
+            body: JSON.stringify({
+                corrected_data: {} // Empty object indicates no additional corrections
+            })
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        if (response.ok) {
+            const result = await response.json();
+            showSuccess(result.message);
+            await loadJobs(); // Refresh to show updated status
+        } else {
+            const error = await response.json();
+            showError('Error completing review: ' + error.detail);
+        }
+    } catch (error) {
+        console.error('Error completing review:', error);
+        showError('Error completing review: ' + error.message);
+    }
+}
+
 function downloadVideo(jobId) {
     const token = getAuthToken();
     if (!token) {
@@ -2160,6 +2262,11 @@ function downloadVideo(jobId) {
     // Create download URL with authentication token
     const url = `${API_BASE_URL}/jobs/${jobId}/download?token=${encodeURIComponent(token)}`;
     window.open(url, '_blank');
+}
+
+function downloadAll(jobId) {
+    // Use the existing downloadAllFiles function
+    downloadAllFiles(jobId);
 }
 
 // Form submission
@@ -2174,6 +2281,121 @@ async function submitJob() {
         showError('You have no remaining uses. Please contact support or purchase additional access.');
         return;
     }
+    
+    // Determine which input mode is active
+    const fileMode = document.getElementById('file-upload-mode');
+    const youtubeMode = document.getElementById('youtube-url-mode');
+    const isYouTubeMode = youtubeMode.classList.contains('active');
+    
+    const submitBtn = document.querySelector('.submit-btn');
+    const originalText = submitBtn.textContent;
+    
+    try {
+        submitBtn.disabled = true;
+        
+        if (isYouTubeMode) {
+            // Handle YouTube URL submission
+            await submitYouTubeJob(submitBtn);
+        } else {
+            // Handle file upload submission
+            await submitFileJob(submitBtn);
+        }
+        
+    } catch (error) {
+        console.error('Error submitting job:', error);
+        showError('Failed to submit job: ' + error.message);
+    } finally {
+        submitBtn.textContent = originalText;
+        submitBtn.disabled = false;
+    }
+}
+
+async function submitYouTubeJob(submitBtn) {
+    submitBtn.textContent = 'Processing URL...';
+    
+    // Get YouTube URL and validate
+    const youtubeUrl = document.getElementById('youtube-url').value.trim();
+    if (!youtubeUrl) {
+        showError('Please enter a YouTube URL');
+        return;
+    }
+    
+    // Validate YouTube URL format
+    const youtubePattern = /^https:\/\/(www\.)?(youtube\.com\/(watch\?v=|embed\/)|youtu\.be\/).+/;
+    if (!youtubePattern.test(youtubeUrl)) {
+        showError('Please enter a valid YouTube URL (e.g., https://www.youtube.com/watch?v=...)');
+        return;
+    }
+    
+    // Get optional cookies
+    const cookies = document.getElementById('youtube-cookies').value.trim();
+    
+    // Prepare request data
+    const requestData = {
+        url: youtubeUrl
+    };
+    
+    if (cookies) {
+        requestData.cookies = cookies;
+    }
+    
+    const response = await fetch(`${API_BASE_URL}/submit-youtube`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(requestData)
+    });
+    
+    if (!response.ok) {
+        if (response.status === 401) {
+            setAuthToken(null);
+            currentUser = null;
+            showAuthSection();
+            showError('Session expired. Please log in again.');
+            return;
+        }
+    }
+    
+    const result = await response.json();
+    
+    if (response.status === 200) {
+        showSuccess(`YouTube job submitted successfully! Job ID: ${result.job_id}`);
+        
+        // Update user's remaining uses if provided
+        if (result.remaining_uses !== undefined) {
+            currentUser.remaining_uses = result.remaining_uses;
+            updateUserStatusBar(currentUser);
+        }
+        
+        // Clear form
+        document.getElementById('youtube-url').value = '';
+        document.getElementById('youtube-cookies').value = '';
+        
+        // Hide cookies section
+        const cookiesSection = document.getElementById('cookies-help-section');
+        if (cookiesSection.style.display !== 'none') {
+            toggleCookiesSection();
+        }
+        
+        // Refresh jobs list and handle post-submission tasks
+        await handlePostSubmission();
+        
+    } else {
+        // Handle specific error messages for YouTube issues
+        if (result.message && result.message.includes('blocked') || result.message.includes('bot')) {
+            showError(`${result.message}\n\nTip: Try providing browser cookies to help bypass YouTube restrictions.`);
+            // Auto-show cookies section to help user
+            const cookiesSection = document.getElementById('cookies-help-section');
+            if (cookiesSection.style.display === 'none') {
+                toggleCookiesSection();
+            }
+        } else {
+            showError(result.message || 'Failed to submit YouTube job');
+        }
+    }
+}
+
+async function submitFileJob(submitBtn) {
+    submitBtn.textContent = 'Uploading...';
     
     // Prepare form data
     const formData = new FormData();
@@ -2225,113 +2447,153 @@ async function submitJob() {
         }
     }
     
-    const submitBtn = document.querySelector('.submit-btn');
-    const originalText = submitBtn.textContent;
+    // Create authenticated request headers for form data
+    const authHeaders = {};
+    const token = getAuthToken();
+    if (token) {
+        authHeaders['Authorization'] = `Bearer ${token}`;
+    }
     
-    try {
-        submitBtn.textContent = 'Uploading...';
-        submitBtn.disabled = true;
+    const response = await fetch(`${API_BASE_URL}/submit-file`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: formData
+    });
+    
+    if (!response.ok) {
+        if (response.status === 401) {
+            setAuthToken(null);
+            currentUser = null;
+            showAuthSection();
+            showError('Session expired. Please log in again.');
+            return;
+        }
+    }
+    
+    const result = await response.json();
+    
+    if (response.status === 200) {
+        const usingCustomStyles = customStylesVisible && (stylesFile || stylesArchive);
+        const stylesMessage = usingCustomStyles ? ' with custom styles' : ' with default Nomad styles';
+        showSuccess(`Job submitted successfully${stylesMessage}! Job ID: ${result.job_id}`);
         
-        // Create authenticated request headers for form data
-        const authHeaders = {};
-        const token = getAuthToken();
-        if (token) {
-            authHeaders['Authorization'] = `Bearer ${token}`;
+        // Update user's remaining uses if provided
+        if (result.remaining_uses !== undefined) {
+            currentUser.remaining_uses = result.remaining_uses;
+            updateUserStatusBar(currentUser);
         }
         
-        const response = await fetch(`${API_BASE_URL}/submit-file`, {
-            method: 'POST',
-            headers: authHeaders,
-            body: formData
-        });
-        console.log('submitJob response from /submit-file submission');
-        console.log(response);
+        // Clear form
+        document.getElementById('audio-file').value = '';
+        document.getElementById('artist').value = '';
+        document.getElementById('title').value = '';
         
-        if (!response.ok) {
-            if (response.status === 401) {
-                setAuthToken(null);
-                currentUser = null;
-                showAuthSection();
-                showError('Session expired. Please log in again.');
-                return;
-            }
+        // Only clear custom styles if they were visible
+        if (customStylesVisible) {
+            document.getElementById('styles-file').value = '';
+            document.getElementById('styles-archive').value = '';
         }
         
-        const result = await response.json();
-        console.log('submitJob JSON result from /submit-file submission');
-        console.log(result);
+        // Refresh jobs list and handle post-submission tasks
+        await handlePostSubmission();
         
-        if (response.status === 200) {
-            const usingCustomStyles = customStylesVisible && (stylesFile || stylesArchive);
-            const stylesMessage = usingCustomStyles ? ' with custom styles' : ' with default Nomad styles';
-            showSuccess(`Job submitted successfully${stylesMessage}! Job ID: ${result.job_id}`);
-            
-            // Update user's remaining uses if provided
-            if (result.remaining_uses !== undefined) {
-                currentUser.remaining_uses = result.remaining_uses;
-                updateUserStatusBar(currentUser);
-            }
-            
-            // Clear form
-            document.getElementById('audio-file').value = '';
-            document.getElementById('artist').value = '';
-            document.getElementById('title').value = '';
-            
-            // Only clear custom styles if they were visible
-            if (customStylesVisible) {
-                document.getElementById('styles-file').value = '';
-                document.getElementById('styles-archive').value = '';
-            }
-            
-            // Refresh jobs list immediately and scroll to it
-            showInfo('Refreshing job list...');
-            const jobs = await loadJobs();
-            
-            if (jobs) {
-                // Scroll to jobs section to show the new job
-                const jobsSection = document.querySelector('.jobs-section');
-                if (jobsSection) {
-                    jobsSection.scrollIntoView({ behavior: 'smooth' });
-                }
-                
-                // Auto-refresh job data after 2, 5, and 10 seconds to ensure the new job shows up
-                setTimeout(async () => {
-                    await loadJobs();
-                }, 2000);
-                
-                setTimeout(async () => {
-                    await loadJobs();
-                }, 5000);
-                
-                setTimeout(async () => {
-                    await loadJobs();
-                }, 10000);
-                
-                // Show info about what happens next
-                setTimeout(() => {
-                    showInfo('Your job is now processing. The status will update automatically as it progresses.');
-                }, 2000);
-                
-                // Enable auto-refresh if not already enabled
-                const autoRefreshCheckbox = document.getElementById('auto-refresh');
-                if (autoRefreshCheckbox && !autoRefreshCheckbox.checked) {
-                    autoRefreshCheckbox.checked = true;
-                    startAutoRefresh();
-                    setTimeout(() => {
-                        showInfo('Auto-refresh enabled to track your job progress.');
-                    }, 4000);
-                }
-            }
-        } else {
-            showError(result.message || 'Failed to submit job');
+    } else {
+        showError(result.message || 'Failed to submit job');
+    }
+}
+
+async function handlePostSubmission() {
+    // Refresh jobs list immediately and scroll to it
+    showInfo('Refreshing job list...');
+    const jobs = await loadJobs();
+    
+    if (jobs) {
+        // Scroll to jobs section to show the new job
+        const jobsSection = document.querySelector('.jobs-section');
+        if (jobsSection) {
+            jobsSection.scrollIntoView({ behavior: 'smooth' });
         }
         
-    } catch (error) {
-        console.error('Error submitting job:', error);
-        showError('Failed to submit job: ' + error.message);
-    } finally {
-        submitBtn.textContent = originalText;
-        submitBtn.disabled = false;
+        // Auto-refresh job data after 2, 5, and 10 seconds to ensure the new job shows up
+        setTimeout(async () => {
+            await loadJobs();
+        }, 2000);
+        
+        setTimeout(async () => {
+            await loadJobs();
+        }, 5000);
+        
+        setTimeout(async () => {
+            await loadJobs();
+        }, 10000);
+        
+        // Show info about what happens next
+        setTimeout(() => {
+            showInfo('Your job is now processing. The status will update automatically as it progresses.');
+        }, 2000);
+        
+        // Enable auto-refresh if not already enabled
+        const autoRefreshCheckbox = document.getElementById('auto-refresh');
+        if (autoRefreshCheckbox && !autoRefreshCheckbox.checked) {
+            autoRefreshCheckbox.checked = true;
+            startAutoRefresh();
+            setTimeout(() => {
+                showInfo('Auto-refresh enabled to track your job progress.');
+            }, 4000);
+        }
+    }
+}
+
+// Input mode switching functions
+function switchInputMode(mode) {
+    const fileTab = document.getElementById('file-mode-tab');
+    const youtubeTab = document.getElementById('youtube-mode-tab');
+    const fileSection = document.getElementById('file-upload-mode');
+    const youtubeSection = document.getElementById('youtube-url-mode');
+    
+    if (mode === 'file') {
+        // Switch to file upload mode
+        fileTab.classList.add('active');
+        youtubeTab.classList.remove('active');
+        fileSection.classList.add('active');
+        youtubeSection.classList.remove('active');
+        
+        // Clear YouTube form
+        document.getElementById('youtube-url').value = '';
+        document.getElementById('youtube-cookies').value = '';
+        
+        // Hide cookies section if visible
+        const cookiesSection = document.getElementById('cookies-help-section');
+        if (cookiesSection.style.display !== 'none') {
+            cookiesSection.style.display = 'none';
+            document.getElementById('toggle-cookies-btn').textContent = '🍪 Help with Access Issues';
+        }
+        
+    } else if (mode === 'youtube') {
+        // Switch to YouTube URL mode
+        youtubeTab.classList.add('active');
+        fileTab.classList.remove('active');
+        youtubeSection.classList.add('active');
+        fileSection.classList.remove('active');
+        
+        // Clear file upload form
+        document.getElementById('audio-file').value = '';
+        document.getElementById('artist').value = '';
+        document.getElementById('title').value = '';
+    }
+}
+
+// Cookies section toggle function
+function toggleCookiesSection() {
+    const cookiesSection = document.getElementById('cookies-help-section');
+    const toggleBtn = document.getElementById('toggle-cookies-btn');
+    
+    if (cookiesSection.style.display === 'none') {
+        cookiesSection.style.display = 'block';
+        toggleBtn.textContent = '🍪 Hide Cookie Help';
+    } else {
+        cookiesSection.style.display = 'none';
+        toggleBtn.textContent = '🍪 Help with Access Issues';
     }
 }
 
@@ -2431,20 +2693,36 @@ async function loadExampleData() {
 
 // Utility functions
 function parseServerTime(timestamp) {
-    // Assume server timestamps are in UTC, ensure proper parsing
+    // Properly parse server timestamps that are in UTC and convert to local time
     if (!timestamp) return new Date();
     
     // Convert to string if it's not already
     const timestampStr = String(timestamp);
     
-    // If timestamp doesn't end with 'Z' or have timezone info, treat as UTC
-    if (!timestampStr.includes('Z') && !timestampStr.includes('+') && !timestampStr.includes('-')) {
-        // Add 'Z' to explicitly mark as UTC
-        return new Date(timestampStr + 'Z');
+    try {
+        // Handle various timestamp formats
+        let date;
+        
+        // If timestamp already has timezone info (Z, +, or -), parse directly
+        if (timestampStr.includes('Z') || timestampStr.includes('+') || 
+            (timestampStr.includes('-') && timestampStr.lastIndexOf('-') > 10)) {
+            date = new Date(timestampStr);
+        } else {
+            // No timezone info - assume UTC and add 'Z'
+            date = new Date(timestampStr + 'Z');
+        }
+        
+        // Validate the parsed date
+        if (isNaN(date.getTime())) {
+            console.warn('Invalid timestamp parsed:', timestampStr);
+            return new Date(); // Return current time as fallback
+        }
+        
+        return date;
+    } catch (error) {
+        console.error('Error parsing timestamp:', timestampStr, error);
+        return new Date(); // Return current time as fallback
     }
-    
-    // If it already has timezone info, parse normally
-    return new Date(timestampStr);
 }
 
 function formatStatus(status) {
@@ -2455,7 +2733,9 @@ function formatStatus(status) {
         'transcribing': 'Transcribing Lyrics',
         'awaiting_review': 'Awaiting Review',
         'reviewing': 'Reviewing',
+        'ready_for_finalization': 'Ready for Finalization',
         'rendering': 'Rendering Video',
+        'finalizing': 'Finalizing',
         'complete': 'Complete',
         'error': 'Error'
     };
@@ -2463,7 +2743,29 @@ function formatStatus(status) {
 }
 
 function formatTimestamp(timestamp) {
-    return parseServerTime(timestamp).toLocaleString();
+    try {
+        const date = parseServerTime(timestamp);
+        
+        // Validate the parsed date
+        if (isNaN(date.getTime())) {
+            console.warn('Invalid timestamp for formatting:', timestamp);
+            return 'Invalid Time';
+        }
+        
+        // Format with explicit local timezone display options
+        return date.toLocaleString([], {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+    } catch (error) {
+        console.error('Error formatting timestamp:', timestamp, error);
+        return 'Error';
+    }
 }
 
 function calculateDuration(createdAt) {
@@ -2926,8 +3228,27 @@ function getFileIcon(mimeType) {
 }
 
 function formatFileDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    try {
+        const date = parseServerTime(dateString);
+        
+        if (isNaN(date.getTime())) {
+            console.warn('Invalid file date:', dateString);
+            return 'Invalid Date';
+        }
+        
+        return date.toLocaleDateString([], {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+        }) + ' ' + date.toLocaleTimeString([], {
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false
+        });
+    } catch (error) {
+        console.error('Error formatting file date:', dateString, error);
+        return 'Error';
+    }
 }
 
 function closeFilesModal() {
@@ -3111,6 +3432,274 @@ function closeAudioPreview() {
     }
 }
 
+// Instrumental Selection Modal Functions
+let selectedInstrumental = null;
+let currentReviewData = null;
+
+async function showInstrumentalSelectionModal(jobId, correctedData) {
+    try {
+        // Store the corrected data for later use
+        currentReviewData = correctedData;
+        
+        const modal = document.getElementById('instrumental-selection-modal');
+        const content = document.getElementById('instrumental-selection-content');
+        
+        modal.style.display = 'flex';
+        content.innerHTML = '<div class="instrumental-loading">Loading instrumental options...</div>';
+        
+        // Fetch available instrumentals
+        const response = await authenticatedFetch(`${API_BASE_URL}/corrections/${jobId}/instrumentals`);
+        
+        if (!response) return; // Auth failed, already handled
+        
+        if (response.ok) {
+            const result = await response.json();
+            displayInstrumentalOptions(result.instrumentals);
+        } else {
+            const error = await response.json();
+            content.innerHTML = `<div class="no-instrumentals">Error loading instrumentals: ${error.detail}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading instrumentals:', error);
+        const content = document.getElementById('instrumental-selection-content');
+        content.innerHTML = `<div class="no-instrumentals">Error loading instrumentals: ${error.message}</div>`;
+    }
+}
+
+function displayInstrumentalOptions(instrumentals) {
+    const content = document.getElementById('instrumental-selection-content');
+    
+    if (!instrumentals || instrumentals.length === 0) {
+        content.innerHTML = `
+            <div class="no-instrumentals">
+                No instrumental files found. This might indicate an issue with the audio separation process.
+            </div>
+        `;
+        return;
+    }
+    
+    let html = '<div class="instrumental-options">';
+    
+    instrumentals.forEach((instrumental, index) => {
+        const isRecommended = instrumental.recommended;
+        const optionClasses = ['instrumental-option'];
+        
+        if (isRecommended) {
+            optionClasses.push('recommended');
+            // Auto-select the recommended option
+            if (!selectedInstrumental) {
+                selectedInstrumental = instrumental.filename;
+                optionClasses.push('selected');
+            }
+        }
+        
+        html += `
+            <div class="${optionClasses.join(' ')}" onclick="selectInstrumental('${escapeHtml(instrumental.filename)}', this)" data-filename="${escapeHtml(instrumental.filename)}">
+                <div class="instrumental-header">
+                    <div class="instrumental-title">
+                        <div class="instrumental-type">${instrumental.type}</div>
+                        <div class="instrumental-filename">${instrumental.filename}</div>
+                    </div>
+                    <div class="instrumental-controls">
+                        <div class="audio-preview-controls">
+                            <audio class="audio-preview-player" controls preload="none">
+                                <source src="${API_BASE_URL}${instrumental.audio_url}" type="audio/flac">
+                                Your browser does not support the audio element.
+                            </audio>
+                        </div>
+                    </div>
+                </div>
+                <div class="instrumental-description">${instrumental.description}</div>
+                <div class="instrumental-metadata">
+                    <div class="instrumental-size">${instrumental.size_mb} MB</div>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += '</div>';
+    content.innerHTML = html;
+    
+    // Update confirmation button state
+    updateConfirmInstrumentalButton();
+}
+
+function selectInstrumental(filename, element) {
+    // Remove selection from all options
+    const allOptions = document.querySelectorAll('.instrumental-option');
+    allOptions.forEach(option => option.classList.remove('selected'));
+    
+    // Add selection to clicked option
+    element.classList.add('selected');
+    
+    // Store selected instrumental
+    selectedInstrumental = filename;
+    
+    // Update confirmation button
+    updateConfirmInstrumentalButton();
+    
+    showInfo(`Selected: ${filename}`);
+}
+
+function updateConfirmInstrumentalButton() {
+    const confirmBtn = document.getElementById('confirm-instrumental-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = !selectedInstrumental;
+        if (selectedInstrumental) {
+            confirmBtn.textContent = `✅ Use "${selectedInstrumental.substring(0, 30)}${selectedInstrumental.length > 30 ? '...' : ''}" & Complete`;
+        } else {
+            confirmBtn.textContent = '✅ Use Selected Instrumental & Complete';
+        }
+    }
+}
+
+async function confirmInstrumentalSelection() {
+    if (!selectedInstrumental) {
+        showError('Please select an instrumental track first');
+        return;
+    }
+    
+    try {
+        // Get the current job ID from the stored value
+        const jobId = window.currentInstrumentalJobId || getCurrentJobIdFromUrl();
+        
+        if (!jobId) {
+            showError('Unable to determine job ID. Please refresh and try again.');
+            return;
+        }
+        
+        // Determine the current job status to know which endpoint to call
+        const jobResponse = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}`);
+        if (!jobResponse) return; // Auth failed, already handled
+        
+        const jobData = await jobResponse.json();
+        const jobStatus = jobData.status;
+        
+        let endpoint, requestData, infoMessage, successMessage;
+        
+        if (jobStatus === 'reviewing') {
+            // For reviewing status: complete the review with instrumental selection
+            endpoint = `/corrections/${jobId}/complete`;
+            requestData = {
+                corrected_data: currentReviewData || {},
+                selected_instrumental: selectedInstrumental
+            };
+            infoMessage = 'Completing review with selected instrumental...';
+            successMessage = 'Review completed with instrumental selection';
+        } else if (jobStatus === 'ready_for_finalization') {
+            // For ready_for_finalization status: finalize with instrumental selection
+            endpoint = `/corrections/${jobId}/finalize`;
+            requestData = {
+                selected_instrumental: selectedInstrumental
+            };
+            infoMessage = 'Finalizing with selected instrumental...';
+            successMessage = 'Finalization started with selected instrumental';
+        } else {
+            showError(`Cannot select instrumental for job in status: ${jobStatus}`);
+            return;
+        }
+        
+        showInfo(infoMessage);
+        
+        // Send request to the appropriate endpoint
+        const response = await authenticatedFetch(`${API_BASE_URL}${endpoint}`, {
+            method: 'POST',
+            body: JSON.stringify(requestData)
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        if (response.ok) {
+            const result = await response.json();
+            showSuccess(result.message || successMessage);
+            closeInstrumentalSelectionModal();
+            
+            // Refresh jobs to show updated status
+            await loadJobs();
+        } else {
+            const error = await response.json();
+            showError('Error processing request: ' + error.detail);
+        }
+        
+    } catch (error) {
+        console.error('Error confirming instrumental selection:', error);
+        showError('Error processing request: ' + error.message);
+    }
+}
+
+function closeInstrumentalSelectionModal() {
+    const modal = document.getElementById('instrumental-selection-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+    
+    // Reset state
+    selectedInstrumental = null;
+    currentReviewData = null;
+    window.currentInstrumentalJobId = null;
+    
+    // Clear modal content
+    const content = document.getElementById('instrumental-selection-content');
+    if (content) {
+        content.innerHTML = '<div class="instrumental-loading">Loading instrumental options...</div>';
+    }
+    
+    // Reset confirmation button
+    const confirmBtn = document.getElementById('confirm-instrumental-btn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '✅ Use Selected Instrumental & Complete';
+    }
+}
+
+function getCurrentJobIdFromUrl() {
+    // This is a placeholder - you may need to implement this based on how job ID is available in your context
+    // For now, we'll look for it in various places
+    
+    // Try to get from modal title
+    const modalJobId = document.getElementById('modal-job-id');
+    if (modalJobId && modalJobId.textContent) {
+        return modalJobId.textContent.trim();
+    }
+    
+    // Try to get from URL params if it's there
+    const urlParams = new URLSearchParams(window.location.search);
+    const jobId = urlParams.get('job_id');
+    if (jobId) {
+        return jobId;
+    }
+    
+    // Try to get from the most recent job in the list that's in review state
+    const jobs = Array.from(document.querySelectorAll('.job[data-job-id]'));
+    for (const jobElement of jobs) {
+        const statusBadge = jobElement.querySelector('.status-badge');
+        if (statusBadge && statusBadge.textContent.toLowerCase().includes('review')) {
+            return jobElement.getAttribute('data-job-id');
+        }
+    }
+    
+    return null;
+}
+
+async function showInstrumentalSelectionForJob(jobId) {
+    try {
+        showInfo('Loading instrumental options for job...');
+        
+        // For jobs in "reviewing" state, we assume lyrics review is complete
+        // and we just need to select an instrumental and complete the job
+        const correctedData = {}; // Empty object since review is assumed complete
+        
+        // Store the job ID for later use
+        window.currentInstrumentalJobId = jobId;
+        
+        await showInstrumentalSelectionModal(jobId, correctedData);
+        
+    } catch (error) {
+        console.error('Error showing instrumental selection:', error);
+        showError('Error loading instrumental options: ' + error.message);
+    }
+}
+
 // Debug helper function for testing timestamp parsing
 window.debugTimestamp = function(timestamp) {
     console.group('🕐 Debug Timestamp Parsing:', timestamp);
@@ -3120,16 +3709,24 @@ window.debugTimestamp = function(timestamp) {
         const diff = now - parsed;
         
         console.log('Original timestamp:', timestamp);
-        console.log('Parsed as:', parsed.toISOString());
-        console.log('Parsed local string:', parsed.toString());
-        console.log('Current time:', now.toISOString());
-        console.log('Current local string:', now.toString());
+        console.log('Parsed as UTC:', parsed.toISOString());
+        console.log('Parsed as local string:', parsed.toString());
+        console.log('Formatted submitted time:', formatSubmittedTime({ created_at: timestamp }));
+        console.log('Formatted timestamp:', formatTimestamp(timestamp));
+        console.log('User timezone:', Intl.DateTimeFormat().resolvedOptions().timeZone);
+        console.log('Timezone offset (minutes):', new Date().getTimezoneOffset());
+        console.log('Current time UTC:', now.toISOString());
+        console.log('Current time local:', now.toString());
         console.log('Difference (ms):', diff);
         console.log('Difference (seconds):', Math.floor(diff / 1000));
         console.log('Formatted duration:', formatDuration(Math.floor(Math.max(0, diff) / 1000)));
         
         if (diff < 0) {
             console.warn('⚠️ NEGATIVE DURATION DETECTED - This will show as 0s');
+        }
+        
+        if (isNaN(parsed.getTime())) {
+            console.error('⚠️ INVALID DATE DETECTED');
         }
     } catch (error) {
         console.error('Error parsing timestamp:', error);
@@ -3138,4 +3735,5 @@ window.debugTimestamp = function(timestamp) {
 };
 
 console.log('🎤 Karaoke Generator Frontend Ready!');
-console.log('💡 Use debugTimestamp("your-timestamp-here") to test timestamp parsing'); 
+console.log('💡 Use debugTimestamp("your-timestamp-here") to test timestamp parsing');
+console.log('🕐 Timestamps now display in your local timezone with improved error handling'); 
