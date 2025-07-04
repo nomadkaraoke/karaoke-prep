@@ -49,7 +49,6 @@ karaoke_image = (
         "numpy>=2",
         "audio-separator[cpu]>=0.34.0",
         "lyrics-converter>=0.2.1",
-        "lyrics-transcriber>=0.54",
         "kbputils>=0.0.12",
         "fuzzywuzzy>=0.18",
         "ffmpeg-python>=0.2.0",
@@ -65,19 +64,33 @@ karaoke_image = (
         "uvicorn>=0.24.0",
         "python-multipart>=0.0.6",
         "requests>=2.31.0",
+        # Uncomment this line to use the lyrics-transcriber package from PyPI
+        "lyrics-transcriber>=0.58",
+        # To use the local version of lyrics-transcriber, comment out the line above and 
+        # uncomment the lyrics_transcriber_local "add_local_dir" and "run_commands" lines below
     ])
     .apt_install([
         "ffmpeg",
         "libsndfile1",
         "libsox-dev",
         "sox",
+        "fontconfig",  # For font management
     ])
     .env({
         "LYRICS_TRANSCRIBER_CACHE_DIR": "/cache",
         "AUDIO_SEPARATOR_MODEL_DIR": "/models"
     })
+    # ----- lyrics_transcriber_local -----
+    # Uncomment this section to use the local version of lyrics-transcriber
+    # If using the PyPI version, comment out this section and 
+    # uncomment the normal lyrics-transcriber line above
+    # .add_local_dir("lyrics_transcriber_local", "/root/lyrics_transcriber_local", copy=True)
+    # .run_commands([
+    #     "cd /root/lyrics_transcriber_local && pip install -e .",  # Install lyrics-transcriber from local first
+    #     "python -c 'import lyrics_transcriber; print(f\"✓ lyrics-transcriber installed from: {lyrics_transcriber.__file__}\")'",  # Verify installation
+    # ])
+    # ----- lyrics_transcriber_local -----
     .add_local_dir("karaoke_gen", "/root/karaoke_gen")
-    .add_local_dir("lyrics_transcriber_local", "/root/lyrics_transcriber_local")
     .add_local_file("core.py", "/root/core.py")
 )
 
@@ -432,10 +445,10 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
         # Set up logging to capture all messages
         log_handler = setup_job_logging(job_id)
         
-        from lyrics_transcriber_local.lyrics_transcriber.output.generator import OutputGenerator
-        from lyrics_transcriber_local.lyrics_transcriber.core.config import OutputConfig
-        from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
-        from lyrics_transcriber_local.lyrics_transcriber.correction.operations import CorrectionOperations
+        from lyrics_transcriber.output.generator import OutputGenerator
+        from lyrics_transcriber.core.config import OutputConfig
+        from lyrics_transcriber.types import CorrectionResult
+        from lyrics_transcriber.correction.operations import CorrectionOperations
         
         log_message(job_id, "INFO", f"Starting phase 2 (video generation only) for job {job_id}")
         
@@ -2903,8 +2916,8 @@ def add_lyrics_source(job_id: str, source: str, lyrics_text: str):
     """Add new lyrics source and rerun correction."""
     import json
     from pathlib import Path
-    from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
-    from lyrics_transcriber_local.lyrics_transcriber.correction.operations import CorrectionOperations
+    from lyrics_transcriber.types import CorrectionResult
+    from lyrics_transcriber.correction.operations import CorrectionOperations
     
     try:
         # Set up logging
@@ -2997,8 +3010,8 @@ def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
     """Update enabled correction handlers and rerun correction."""
     import json
     from pathlib import Path
-    from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
-    from lyrics_transcriber_local.lyrics_transcriber.correction.operations import CorrectionOperations
+    from lyrics_transcriber.types import CorrectionResult
+    from lyrics_transcriber.correction.operations import CorrectionOperations
     
     try:
         # Set up logging
@@ -3078,9 +3091,9 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
     """Generate a preview video with current corrections."""
     import json
     from pathlib import Path
-    from lyrics_transcriber_local.lyrics_transcriber.types import CorrectionResult
-    from lyrics_transcriber_local.lyrics_transcriber.core.config import OutputConfig
-    from lyrics_transcriber_local.lyrics_transcriber.correction.operations import CorrectionOperations
+    from lyrics_transcriber.types import CorrectionResult
+    from lyrics_transcriber.core.config import OutputConfig
+    from lyrics_transcriber.correction.operations import CorrectionOperations
     
     try:
         # Set up logging
@@ -3766,4 +3779,3 @@ async def get_instrumental_preview(job_id: str, filename: str):
 
 
 
- 

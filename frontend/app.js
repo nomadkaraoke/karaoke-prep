@@ -6,7 +6,7 @@ let autoRefreshInterval = null;
 let logTailInterval = null;
 let currentTailJobId = null;
 let logFontSizeIndex = 2; // Default to 'font-md'
-let autoScrollEnabled = true;
+let autoScrollEnabled = false;
 let currentUser = null; // Store current user authentication data
 
 // Authentication functions
@@ -1685,18 +1685,22 @@ function showLogTailModal(jobId) {
         updateLogsFontSize();
         
         // Reset auto-scroll state
-        autoScrollEnabled = true;
+        autoScrollEnabled = false;
         const autoScrollBtn = document.getElementById('auto-scroll-btn');
         if (autoScrollBtn) {
-            autoScrollBtn.classList.add('toggle-active');
-            autoScrollBtn.textContent = '🔄 Auto';
-            autoScrollBtn.title = 'Auto-scroll enabled - click to disable';
+            autoScrollBtn.classList.remove('toggle-active');
+            autoScrollBtn.textContent = '⏸️ Manual';
+            autoScrollBtn.title = 'Auto-scroll disabled - click to enable';
         }
         
         // Force reflow and show modal
         modal.offsetHeight; // Trigger reflow
         modal.style.display = 'flex';
         
+        setTimeout(async () => {
+            scrollToBottom();
+        }, 1000);
+
         return true;
     } else {
         console.error('Modal elements not found:', { modal: !!modal, modalJobId: !!modalJobId, modalLogs: !!modalLogs });
@@ -1714,12 +1718,12 @@ function closeLogTailModal() {
     stopLogTail();
     
     // Reset auto-scroll to enabled for next time
-    autoScrollEnabled = true;
+    autoScrollEnabled = false;
     const autoScrollBtn = document.getElementById('auto-scroll-btn');
     if (autoScrollBtn) {
-        autoScrollBtn.classList.add('toggle-active');
-        autoScrollBtn.textContent = '🔄 Auto';
-        autoScrollBtn.title = 'Auto-scroll enabled - click to disable';
+        autoScrollBtn.classList.remove('toggle-active');
+        autoScrollBtn.textContent = '⏸️ Manual';
+        autoScrollBtn.title = 'Auto-scroll disabled - click to enable';
     }
     
     // Clear modal content to ensure fresh state
