@@ -1568,55 +1568,64 @@ html {
 
 /* Timeline Summary Cards */
 .timeline-summary {
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
 
 .timeline-summary-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 1rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
 }
 
 .timeline-card {
-    background: var(--surface-color);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+    border: 1px solid #e1e5e9;
+    border-radius: 10px;
     padding: 1rem;
     text-align: center;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.timeline-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
 }
 
 .timeline-card-value {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: var(--primary-color);
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #667eea;
     margin-bottom: 0.25rem;
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
 }
 
 .timeline-card-label {
-    font-size: 0.875rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 0.8rem;
+    color: #6c757d;
+    font-weight: 500;
 }
 
 /* Timeline Visualization */
 .timeline-visualization {
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
 
 .timeline-visualization h4 {
-    margin-bottom: 1rem;
-    color: var(--text-primary);
+    margin-bottom: 0.75rem;
+    color: #333;
+    font-size: 1.1rem;
+    font-weight: 600;
 }
 
 .timeline-chart {
     display: flex;
-    height: 60px;
+    height: 50px;
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     margin-bottom: 1rem;
+    border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .timeline-phase-bar {
@@ -1625,87 +1634,103 @@ html {
     align-items: center;
     justify-content: center;
     color: white;
-    font-weight: 500;
-    font-size: 0.875rem;
+    font-weight: 600;
+    font-size: 0.75rem;
     transition: all 0.3s ease;
-    min-width: 40px;
+    min-width: 35px;
+    cursor: pointer;
 }
 
 .timeline-phase-bar:hover {
-    opacity: 0.8;
-    transform: scaleY(1.1);
+    opacity: 0.85;
+    transform: scaleY(1.05);
     z-index: 1;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .timeline-phase-bar.active {
     animation: pulse 2s infinite;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
 }
 
 @keyframes pulse {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
+    50% { opacity: 0.75; }
 }
 
 .timeline-phase-info {
     text-align: center;
-    padding: 0.25rem;
+    padding: 0.2rem 0.15rem;
+    width: 100%;
 }
 
 .timeline-phase-name {
-    font-weight: 600;
-    margin-bottom: 0.125rem;
+    font-weight: 700;
+    margin-bottom: 0.1rem;
+    font-size: 0.65rem;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .timeline-phase-duration {
-    font-size: 0.75rem;
+    font-size: 0.55rem;
     opacity: 0.9;
+    font-weight: 500;
+    white-space: nowrap;
 }
 
 /* Timeline Details Table */
 .timeline-details {
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
 
 .timeline-details h4 {
-    margin-bottom: 1rem;
-    color: var(--text-primary);
+    margin-bottom: 0.75rem;
+    color: #333;
+    font-size: 1.1rem;
+    font-weight: 600;
 }
 
 .timeline-table {
-    background: var(--surface-color);
-    border-radius: 8px;
+    background: white;
+    border-radius: 10px;
     overflow: hidden;
-    border: 1px solid var(--border-color);
+    border: 1px solid #e1e5e9;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .timeline-table-header {
     display: grid;
-    grid-template-columns: 2fr 1.5fr 1.5fr 1fr 1fr;
+    grid-template-columns: 2fr 1.5fr 1.5fr 1fr;
     gap: 1rem;
-    padding: 1rem;
-    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    padding: 0.875rem 1rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     font-weight: 600;
-    font-size: 0.875rem;
+    font-size: 0.8rem;
 }
 
 .timeline-table-row {
     display: grid;
-    grid-template-columns: 2fr 1.5fr 1.5fr 1fr 1fr;
+    grid-template-columns: 2fr 1.5fr 1.5fr 1fr;
     gap: 1rem;
-    padding: 1rem;
-    border-bottom: 1px solid var(--border-color);
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid #f1f3f4;
     align-items: center;
     transition: background-color 0.2s ease;
+    font-size: 0.875rem;
 }
 
 .timeline-table-row:hover {
-    background: var(--hover-color);
+    background: #f8f9fa;
 }
 
 .timeline-table-row.active {
-    background: linear-gradient(90deg, rgba(40, 167, 69, 0.1), rgba(40, 167, 69, 0.05));
-    border-left: 4px solid #28a745;
+    background: linear-gradient(90deg, rgba(40, 167, 69, 0.08), rgba(40, 167, 69, 0.03));
+    border-left: 3px solid #28a745;
+    padding-left: calc(1rem - 3px);
 }
 
 .timeline-table-row:last-child {
@@ -1717,6 +1742,7 @@ html {
     align-items: center;
     gap: 0.5rem;
     font-weight: 500;
+    color: #333;
 }
 
 .status-indicator {
@@ -1727,42 +1753,7 @@ html {
     margin-right: 0.5rem;
 }
 
-/* Timeline Transitions */
-.timeline-transitions {
-    margin-bottom: 2rem;
-}
 
-.timeline-transitions h4 {
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-}
-
-.transitions-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.transition-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem;
-    background: var(--surface-color);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    font-size: 0.875rem;
-}
-
-.transition-phases {
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.transition-duration {
-    color: var(--text-muted);
-    font-weight: 500;
-}
 
 /* Responsive Design for Timeline */
 @media (max-width: 768px) {
@@ -1804,12 +1795,6 @@ html {
         border-bottom: 1px solid var(--border-color);
         padding-bottom: 0.5rem;
         margin-bottom: 0.5rem;
-    }
-    
-    .transition-item {
-        flex-direction: column;
-        gap: 0.5rem;
-        text-align: center;
     }
 }
 

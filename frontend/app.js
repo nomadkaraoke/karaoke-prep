@@ -1113,6 +1113,8 @@ function getPhaseIcon(phase) {
     const icons = {
         'queued': '⏳',
         'processing': '⚙️',
+        'processing_audio': '🎵',
+        'transcribing': '📝',
         'awaiting_review': '⏸️',
         'reviewing': '👁️',
         'rendering': '🎬',
@@ -1120,6 +1122,21 @@ function getPhaseIcon(phase) {
         'error': '❌'
     };
     return icons[phase] || '📋';
+}
+
+function getShortPhaseLabel(phase) {
+    const shortLabels = {
+        'queued': 'Queue',
+        'processing': 'Process',
+        'processing_audio': 'Audio',
+        'transcribing': 'Lyrics',
+        'awaiting_review': 'Review',
+        'reviewing': 'Editing',
+        'rendering': 'Render',
+        'complete': 'Done',
+        'error': 'Error'
+    };
+    return shortLabels[phase] || phase;
 }
 
 // Timeline Modal Functions
@@ -1256,6 +1273,33 @@ function createTimelineModal(timelineData) {
     });
 }
 
+function calculateCorrectTimelineDuration(timelineData) {
+    // Use the same corrected duration logic as the main job list
+    const timeline = timelineData.timeline || [];
+    
+    if (timeline.length === 0) {
+        return '0s';
+    }
+    
+    try {
+        const startTime = parseServerTime(timeline[0].started_at);
+        const endTime = getJobEndTime({
+            status: timelineData.current_status,
+            timeline: timeline,
+            completed_at: timelineData.completed_at,
+            finished_at: timelineData.finished_at,
+            updated_at: timelineData.updated_at
+        });
+        
+        const durationMs = endTime - startTime;
+        const durationSeconds = Math.floor(Math.max(0, durationMs) / 1000);
+        return formatDuration(durationSeconds);
+    } catch (error) {
+        console.error('Error calculating timeline duration:', error);
+        return '0s';
+    }
+}
+
 function createTimelineVisualizationHtml(timelineData) {
     const timeline = timelineData.timeline || [];
     const summary = timelineData.timeline_summary || {};
@@ -1263,28 +1307,25 @@ function createTimelineVisualizationHtml(timelineData) {
     
     let html = '';
     
+    // Calculate corrected total duration using the same logic as job list
+    const correctedTotalDuration = calculateCorrectTimelineDuration(timelineData);
+    
     // Summary cards
     html += `
         <div class="timeline-summary">
             <div class="timeline-summary-cards">
                 <div class="timeline-card">
-                    <div class="timeline-card-value">${metrics.total_processing_time || '0s'}</div>
-                    <div class="timeline-card-label">Total Time</div>
+                    <div class="timeline-card-value">${correctedTotalDuration}</div>
+                    <div class="timeline-card-label">Total time</div>
                 </div>
                 <div class="timeline-card">
-                    <div class="timeline-card-value">${metrics.phases_completed || 0}</div>
-                    <div class="timeline-card-label">Phases Complete</div>
+                    <div class="timeline-card-value">${timeline.length}</div>
+                    <div class="timeline-card-label">Phases complete</div>
                 </div>
                 <div class="timeline-card">
                     <div class="timeline-card-value">${formatStatus(timelineData.current_status)}</div>
-                    <div class="timeline-card-label">Current Status</div>
+                    <div class="timeline-card-label">Current status</div>
                 </div>
-                ${metrics.estimated_remaining ? `
-                    <div class="timeline-card">
-                        <div class="timeline-card-value">${metrics.estimated_remaining}</div>
-                        <div class="timeline-card-label">Est. Remaining</div>
-                    </div>
-                ` : ''}
             </div>
         </div>
     `;
@@ -1295,9 +1336,8 @@ function createTimelineVisualizationHtml(timelineData) {
         html += '<h4>Phase Timeline</h4>';
         html += '<div class="timeline-chart">';
         
-        const totalDuration = summary.total_duration_seconds || 1;
-        
-        timeline.forEach((phase, index) => {
+        // Calculate all phase data first, but filter out "complete" status phases for the timeline bar
+        const allPhaseData = timeline.map((phase, index) => {
             const startTime = parseServerTime(phase.started_at);
             
             // Check if this is the last phase of a finished job
@@ -1305,7 +1345,7 @@ function createTimelineVisualizationHtml(timelineData) {
             const jobFinished = ['complete', 'error', 'cancelled', 'failed'].includes(timelineData.current_status);
             const shouldInferEndTime = isLastPhase && jobFinished && !phase.ended_at;
             
-            let duration, endTime, isActive, widthPercent;
+            let duration, endTime, isActive;
             
             if (phase.ended_at) {
                 // Phase has explicit end time
@@ -1332,22 +1372,50 @@ function createTimelineVisualizationHtml(timelineData) {
             } else {
                 // Phase is genuinely in progress
                 endTime = new Date();
-                duration = phase.duration_seconds;
+                duration = phase.duration_seconds || Math.floor((new Date() - startTime) / 1000);
                 isActive = true;
             }
             
-            // Calculate width percentage for visualization
-            widthPercent = duration ? (duration / totalDuration) * 100 : (isActive ? 10 : 0);
+            return { phase, duration, isActive };
+        });
+        
+        // Filter out "complete" phases for the timeline bar (they're just end states)
+        const phaseData = allPhaseData.filter(({ phase }) => phase.status !== 'complete');
+        
+        // Calculate proper widths based on actual durations
+        const totalDuration = phaseData.reduce((total, { duration }) => total + (duration || 0), 0);
+        
+        if (totalDuration === 0) {
+            // If all phases have 0 duration, give them equal small widths
+            var normalizedWidths = new Array(phaseData.length).fill(100 / phaseData.length);
+        } else {
+            // Calculate proportional widths, but give 0-duration phases a tiny fixed width
+            const meaningfulDuration = phaseData.reduce((total, { duration }) => total + (duration >= 1 ? duration : 0), 0);
+            const tinyPhases = phaseData.filter(({ duration }) => !duration || duration < 1);
+            const tinyPhaseWidth = 0.5; // 0.5% each for tiny phases
+            const availableWidth = 100 - (tinyPhases.length * tinyPhaseWidth);
+            
+            var normalizedWidths = phaseData.map(({ duration }) => {
+                if (!duration || duration < 1) {
+                    return tinyPhaseWidth; // Tiny width for 0-duration phases
+                }
+                return meaningfulDuration > 0 ? (duration / meaningfulDuration) * availableWidth : availableWidth / phaseData.length;
+            });
+        }
+        
+        // Generate HTML for each phase
+        phaseData.forEach(({ phase, duration, isActive }, index) => {
+            const widthPercent = normalizedWidths[index] || 0.5;
             
             html += `
                 <div class="timeline-phase-bar ${isActive ? 'active' : ''}" 
-                     style="width: ${Math.max(widthPercent, 5)}%; background-color: ${getPhaseColor(phase.status)}">
+                     style="width: ${widthPercent}%; background-color: ${getPhaseColor(phase.status)}">
                     <div class="timeline-phase-info">
                         <div class="timeline-phase-name">
-                            ${getPhaseIcon(phase.status)} ${formatStatus(phase.status)}
+                            ${getPhaseIcon(phase.status)} ${getShortPhaseLabel(phase.status)}
                         </div>
                         <div class="timeline-phase-duration">
-                            ${duration ? formatDuration(duration) : (isActive ? 'In Progress' : 'Unknown')}
+                            ${duration !== undefined && duration !== null ? formatDuration(duration) : (isActive ? 'Active' : 'Unknown')}
                         </div>
                     </div>
                 </div>
@@ -1367,7 +1435,6 @@ function createTimelineVisualizationHtml(timelineData) {
                 <div>Started</div>
                 <div>Ended</div>
                 <div>Duration</div>
-                <div>Status</div>
             </div>
         `;
         
@@ -1421,37 +1488,8 @@ function createTimelineVisualizationHtml(timelineData) {
                     <div>${startTime}</div>
                     <div>${endTime}</div>
                     <div>${duration}</div>
-                    <div>
-                        <span class="status-indicator" style="background-color: ${getPhaseColor(phase.status)}"></span>
-                        ${isActive ? 'Active' : 'Complete'}
-                    </div>
                 </div>
             `;
-        });
-        
-        html += '</div>';
-        html += '</div>';
-    }
-    
-    // Phase transitions (if any gaps between phases)
-    if (timelineData.phase_transitions && timelineData.phase_transitions.length > 0) {
-        html += '<div class="timeline-transitions">';
-        html += '<h4>Phase Transitions</h4>';
-        html += '<div class="transitions-list">';
-        
-        timelineData.phase_transitions.forEach(transition => {
-            if (transition.transition_duration_seconds > 1) { // Only show significant gaps
-                html += `
-                    <div class="transition-item">
-                        <span class="transition-phases">
-                            ${formatStatus(transition.from_status)} → ${formatStatus(transition.to_status)}
-                        </span>
-                        <span class="transition-duration">
-                            Gap: ${formatDuration(transition.transition_duration_seconds)}
-                        </span>
-                    </div>
-                `;
-            }
         });
         
         html += '</div>';
@@ -2412,9 +2450,11 @@ function parseServerTime(timestamp) {
 function formatStatus(status) {
     const statusMap = {
         'queued': 'Queued',
+        'processing': 'Processing',
         'processing_audio': 'Processing Audio',
         'transcribing': 'Transcribing Lyrics',
         'awaiting_review': 'Awaiting Review',
+        'reviewing': 'Reviewing',
         'rendering': 'Rendering Video',
         'complete': 'Complete',
         'error': 'Error'
