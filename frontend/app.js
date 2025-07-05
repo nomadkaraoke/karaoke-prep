@@ -963,10 +963,10 @@ function createJobHTML(jobId, job) {
         : (job.url ? 'URL Processing' : 'Unknown Track');
     
     // Get timeline information
-    const timelineInfo = createTimelineInfoHtml(job);
+    const timelineInfo = createTimelineInfoHtml({ ...job, job_id: jobId });
     const submittedTime = formatSubmittedTime(job);
     const totalDuration = getTotalJobDuration(job);
-    const multiStageProgressBar = createMultiStageProgressBar(job);
+    const multiStageProgressBar = createMultiStageProgressBar(job, jobId);
     
     return `
         <div class="job" data-job-id="${jobId}">
@@ -1002,9 +1002,6 @@ function createJobHTML(jobId, job) {
                 
                 <div class="job-actions">
                     ${createJobActions(jobId, job)}
-                    <button onclick="showTimelineModal('${jobId}')" class="btn btn-secondary" title="View detailed timeline">
-                        ⏱️ Timeline
-                    </button>
                     <button onclick="tailJobLogs('${jobId}')" class="btn btn-info">
                         📜 View Logs
                     </button>
@@ -1199,10 +1196,12 @@ function getTotalJobDuration(job) {
     return 'Unknown';
 }
 
-function createMultiStageProgressBar(job) {
+function createMultiStageProgressBar(job, jobId) {
     const timeline_summary = job.timeline_summary;
     const currentStatus = job.status || 'unknown';
     const timeline = job.timeline || [];
+    
+    console.log('🔍 Creating clickable progress bar for jobId:', jobId);
     
     // Define all possible phases in order with cleaner labels
     const allPhases = [
@@ -1220,7 +1219,7 @@ function createMultiStageProgressBar(job) {
     const processingPhases = ['queued', 'processing', 'rendering', 'finalizing'];
     
     let html = '<div class="job-progress-enhanced">';
-    html += '<div class="multi-stage-progress-bar">';
+    html += `<div class="multi-stage-progress-bar clickable-progress-bar" onclick="console.log('🔍 Progress bar clicked for job:', '${jobId}'); showTimelineModal('${jobId}')" title="Click to view detailed timeline">`;
     
     if (timeline_summary && timeline_summary.phase_durations) {
         const phaseDurations = timeline_summary.phase_durations;
@@ -1439,6 +1438,8 @@ function getShortPhaseLabel(phase) {
 
 // Timeline Modal Functions
 async function showTimelineModal(jobId) {
+    console.log('🔍 showTimelineModal called with jobId:', jobId);
+    
     try {
         showInfo('Loading timeline data...');
         

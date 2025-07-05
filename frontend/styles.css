@@ -1675,22 +1675,6 @@ html {
 }
 
 /* Timeline Styles */
-.job-timeline-mini {
-    margin-top: 0.5rem;
-    padding: 0.5rem;
-    background: linear-gradient(135deg, var(--surface-color), rgba(255, 255, 255, 0.5));
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-    font-size: 0.875rem;
-}
-
-.timeline-total {
-    color: var(--text-muted);
-    margin-bottom: 0.5rem;
-    font-weight: 600;
-    text-align: center;
-}
-
 .timeline-phases {
     display: flex;
     gap: 0.375rem;
@@ -1973,17 +1957,7 @@ html {
     }
 }
 
-/* Timeline Button Styles */
-.btn[onclick*="showTimelineModal"] {
-    background: linear-gradient(135deg, #6c757d, #495057);
-    border: none;
-    color: white;
-}
 
-.btn[onclick*="showTimelineModal"]:hover {
-    background: linear-gradient(135deg, #495057, #343a40);
-    transform: translateY(-1px);
-}
 
 /* Multi-Stage Progress Bar - Fixed Layout */
 .job-progress-enhanced {
@@ -2000,6 +1974,17 @@ html {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
     border: 1px solid rgba(0, 0, 0, 0.08);
     background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+}
+
+.multi-stage-progress-bar.clickable-progress-bar {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.multi-stage-progress-bar.clickable-progress-bar:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    border-color: #667eea;
 }
 
 .progress-segment {
