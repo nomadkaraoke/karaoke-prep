@@ -905,15 +905,42 @@ function getJobEndTime(job) {
 }
 
 function getTotalJobDuration(job) {
-    // Try timeline summary first
+    // Define phases where server-side processing is actually happening
+    const processingPhases = ['queued', 'processing', 'rendering', 'finalizing'];
+    
+    // Try timeline summary first - sum only processing phases
     const timeline_summary = job.timeline_summary;
-    if (timeline_summary && timeline_summary.total_duration_formatted) {
-        return timeline_summary.total_duration_formatted;
+    if (timeline_summary && timeline_summary.phase_durations) {
+        let processingDurationSeconds = 0;
+        
+        processingPhases.forEach(phase => {
+            const phaseDuration = timeline_summary.phase_durations[phase];
+            if (phaseDuration && phaseDuration > 0) {
+                processingDurationSeconds += phaseDuration;
+            }
+        });
+        
+        if (processingDurationSeconds > 0) {
+            return formatDuration(processingDurationSeconds);
+        }
     }
     
-    // Try calculating from timeline data directly
+    // Try calculating from timeline data directly - sum only processing phases
     if (job.timeline && job.timeline.length > 0) {
         try {
+            let processingDurationSeconds = 0;
+            
+            job.timeline.forEach(timelineEntry => {
+                if (processingPhases.includes(timelineEntry.status) && timelineEntry.duration_seconds) {
+                    processingDurationSeconds += timelineEntry.duration_seconds;
+                }
+            });
+            
+            if (processingDurationSeconds > 0) {
+                return formatDuration(processingDurationSeconds);
+            }
+            
+            // Fallback: calculate total duration but note it may include waiting time
             const startTime = parseServerTime(job.timeline[0].started_at);
             const endTime = getJobEndTime(job);
             const durationMs = endTime - startTime;
@@ -931,13 +958,14 @@ function getTotalJobDuration(job) {
             }
             
             const durationSeconds = Math.floor(Math.max(0, durationMs) / 1000);
-            return formatDuration(durationSeconds);
+            return formatDuration(durationSeconds) + '*'; // Add asterisk to indicate it includes waiting time
         } catch (error) {
             console.error('Error calculating timeline duration:', error, job.timeline[0]);
         }
     }
     
     // Fallback to calculating from created_at if no timeline data
+    // Note: This will include waiting time
     if (job.created_at) {
         try {
             const startTime = parseServerTime(job.created_at);
@@ -957,7 +985,7 @@ function getTotalJobDuration(job) {
             }
             
             const durationSeconds = Math.floor(Math.max(0, durationMs) / 1000);
-            return formatDuration(durationSeconds);
+            return formatDuration(durationSeconds) + '*'; // Add asterisk to indicate it includes waiting time
         } catch (error) {
             console.error('Error calculating created_at duration:', error, job.created_at);
         }
@@ -983,12 +1011,25 @@ function createMultiStageProgressBar(job) {
         { key: 'complete', label: 'Complete', shortLabel: 'Done' }
     ];
     
+    // Define phases where server-side processing is actually happening
+    const processingPhases = ['queued', 'processing', 'rendering', 'finalizing'];
+    
     let html = '<div class="job-progress-enhanced">';
     html += '<div class="multi-stage-progress-bar">';
     
     if (timeline_summary && timeline_summary.phase_durations) {
         const phaseDurations = timeline_summary.phase_durations;
-        const totalDuration = timeline_summary.total_duration_seconds || 1;
+        
+        // Calculate processing-only duration for width calculations
+        let processingDurationSeconds = 0;
+        processingPhases.forEach(phase => {
+            const phaseDuration = phaseDurations[phase];
+            if (phaseDuration && phaseDuration > 0) {
+                processingDurationSeconds += phaseDuration;
+            }
+        });
+        
+        const totalDuration = processingDurationSeconds || 1;
         
         // Create segments for each phase that has occurred or is occurring
         let accumulatedWidth = 0;
@@ -996,7 +1037,15 @@ function createMultiStageProgressBar(job) {
         allPhases.forEach((phase) => {
             const duration = phaseDurations[phase.key];
             if (duration !== undefined && duration > 0) {
-                const widthPercent = Math.max((duration / totalDuration) * 100, 8); // Minimum 8% width
+                // For processing phases, use proportional width based on processing duration
+                // For non-processing phases, use fixed small width
+                let widthPercent;
+                if (processingPhases.includes(phase.key)) {
+                    widthPercent = Math.max((duration / totalDuration) * 100, 8); // Minimum 8% width
+                } else {
+                    widthPercent = 5; // Fixed small width for non-processing phases (waiting phases)
+                }
+                
                 const isActive = currentStatus === phase.key;
                 const isCompleted = timeline.find(t => t.status === phase.key && t.ended_at);
                 

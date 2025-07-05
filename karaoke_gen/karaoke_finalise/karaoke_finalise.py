@@ -636,7 +636,13 @@ class KaraokeFinalise:
             self.logger.info(f"DRY RUN: Would run command: {command}")
         else:
             self.logger.info(f"Running command: {command}")
-            os.system(command)
+            exit_code = os.system(command)
+            
+            # Check if command failed (non-zero exit code)
+            if exit_code != 0:
+                error_msg = f"Command failed with exit code {exit_code}: {command}"
+                self.logger.error(error_msg)
+                raise Exception(error_msg)
 
     def remux_with_instrumental(self, with_vocals_file, instrumental_audio, output_file):
         """Remux the video with instrumental audio to create karaoke version"""
