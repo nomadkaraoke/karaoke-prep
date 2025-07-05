@@ -2,9 +2,9 @@ name: Test and Publish
 
 on: [push, pull_request, workflow_dispatch]
 
-# Add permissions for GitHub Pages deployment
+# Add permissions for GitHub Pages deployment and git operations
 permissions:
-  contents: read
+  contents: write  # Changed from 'read' to 'write' to allow creating git tags
   pages: write
   id-token: write
 
