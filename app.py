@@ -372,7 +372,7 @@ def warm_cache():
     secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
 )
-async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[str] = None, override_artist: Optional[str] = None, override_title: Optional[str] = None):
+async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[str] = None, override_artist: Optional[str] = None, override_title: Optional[str] = None, styles_file_path: Optional[str] = None, styles_archive_path: Optional[str] = None):
     """First phase: Download audio, separate, and transcribe lyrics."""
     import sys
     import traceback
@@ -385,15 +385,39 @@ async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[
 
         log_message(job_id, "INFO", f"Starting job {job_id} for URL: {youtube_url}")
 
+        # CRITICAL: Reload volume to see files written by other containers
+        output_volume.reload()
+        log_message(job_id, "DEBUG", "Output volume reloaded to fetch latest files")
+
         # Update status
         update_job_status_with_timeline(job_id, "processing", progress=10, url=youtube_url, created_at=datetime.datetime.now().isoformat())
 
         # Initialize processor - this now uses the same code path as the CLI
         processor = ServerlessKaraokeProcessor(model_dir="/models", output_dir="/output")
 
+        # Verify styles files exist before processing
+        verified_styles_file = None
+        verified_styles_archive = None
+        
+        if styles_file_path:
+            if Path(styles_file_path).exists():
+                verified_styles_file = styles_file_path
+                file_size = Path(styles_file_path).stat().st_size
+                log_message(job_id, "INFO", f"Using styles file: {styles_file_path} ({file_size} bytes)")
+            else:
+                log_message(job_id, "WARNING", f"Styles file not found: {styles_file_path}")
+                
+        if styles_archive_path:
+            if Path(styles_archive_path).exists():
+                verified_styles_archive = styles_archive_path
+                archive_size = Path(styles_archive_path).stat().st_size
+                log_message(job_id, "INFO", f"Using styles archive: {styles_archive_path} ({archive_size} bytes)")
+            else:
+                log_message(job_id, "WARNING", f"Styles archive not found: {styles_archive_path}")
+        
         # Process using the full KaraokePrep workflow (same as CLI)
         log_message(job_id, "INFO", "Starting full karaoke processing workflow...")
-        result = await processor.process_url(job_id, youtube_url, cookies_str, override_artist, override_title)
+        result = await processor.process_url(job_id, youtube_url, cookies_str, override_artist, override_title, verified_styles_file, verified_styles_archive)
 
         # Update status to awaiting review
         update_job_status_with_timeline(
@@ -403,6 +427,8 @@ async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[
             url=youtube_url,
             track_data=result["track_data"],
             track_output_dir=result["track_output_dir"],
+            corrections_file=result.get("corrections_file"),
+            styles_file_path=result.get("styles_file_path"),
         )
 
         log_message(job_id, "SUCCESS", f"Processing completed for job {job_id}. Ready for review.")
@@ -510,8 +536,14 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
         # Initialize output generator
         output_generator = OutputGenerator(config=output_config, logger=logging.getLogger(__name__))
 
-        # Find the audio file
-        audio_file_path = Path(track_output_dir) / f"{artist} - {title} (Original).wav"
+        # Find the audio file - look for the actual downloaded file
+        track_dir = Path(track_output_dir)
+        audio_files = list(track_dir.glob(f"{artist} - {title}*.wav"))
+        if not audio_files:
+            raise Exception(f"No audio file found matching pattern: {artist} - {title}*.wav in {track_output_dir}")
+        
+        audio_file_path = audio_files[0]  # Use the first match
+        log_message(job_id, "INFO", f"Found audio file: {audio_file_path}")
 
         log_message(job_id, "INFO", "Starting video generation with corrected lyrics...")
 
@@ -819,28 +851,81 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
 def prepare_review_data(job_id: str):
     """Prepare correction data for external review interface."""
     from pathlib import Path
+    import json
 
     try:
         log_message(job_id, "INFO", f"Preparing review data for job {job_id}")
+
+        # CRITICAL: Reload the volume to see files written by other containers
+        output_volume.reload()
 
         # Check if job data exists
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise Exception(f"Job {job_id} not found")
 
+        # Debug logging to see what job_data contains
+        log_message(job_id, "DEBUG", f"Job data keys: {list(job_data.keys())}")
+        log_message(job_id, "DEBUG", f"Artist from job_data: {job_data.get('artist')}")
+        log_message(job_id, "DEBUG", f"Title from job_data: {job_data.get('title')}")
+
+        # Try to extract artist/title from track_data if main job_data doesn't have them
+        artist = job_data.get("artist")
+        title = job_data.get("title")
+        
+        if not artist or not title:
+            track_data = job_data.get("track_data", {})
+            if track_data:
+                artist = artist or track_data.get("artist")
+                title = title or track_data.get("title")
+                log_message(job_id, "DEBUG", f"Extracted from track_data - Artist: {artist}, Title: {title}")
+
         # Get the corrections file path from job data
         corrections_file_path = job_data.get("corrections_file")
+        
         if not corrections_file_path:
             # Fallback to constructing the path
             track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
-            corrections_file_path = str(
-                Path(track_output_dir)
-                / "lyrics"
-                / f"{job_data.get('artist', 'Unknown')} - {job_data.get('title', 'Unknown')} (Lyrics Corrections).json"
-            )
+            
+            if artist and title:
+                corrections_file_path = str(
+                    Path(track_output_dir) / "lyrics" / f"{artist} - {title} (Lyrics Corrections).json"
+                )
+                log_message(job_id, "DEBUG", f"Constructed path with artist/title: {corrections_file_path}")
+            else:
+                # Last resort: scan the lyrics directory for any corrections file
+                lyrics_dir = Path(track_output_dir) / "lyrics"
+                if lyrics_dir.exists():
+                    corrections_files = list(lyrics_dir.glob("*Lyrics Corrections*.json"))
+                    if corrections_files:
+                        corrections_file_path = str(corrections_files[0])
+                        log_message(job_id, "INFO", f"Found corrections file by scanning: {corrections_file_path}")
+                        
+                        # Try to extract artist/title from the filename
+                        filename = corrections_files[0].stem
+                        if " (Lyrics Corrections)" in filename:
+                            artist_title = filename.replace(" (Lyrics Corrections)", "")
+                            if " - " in artist_title:
+                                artist, title = artist_title.split(" - ", 1)
+                                log_message(job_id, "INFO", f"Extracted from filename - Artist: {artist}, Title: {title}")
+                    else:
+                        log_message(job_id, "ERROR", f"No corrections files found in {lyrics_dir}")
+                        corrections_file_path = str(lyrics_dir / "Unknown - Unknown (Lyrics Corrections).json")
+                else:
+                    log_message(job_id, "ERROR", f"Lyrics directory not found: {lyrics_dir}")
+                    corrections_file_path = str(Path(track_output_dir) / "lyrics" / "Unknown - Unknown (Lyrics Corrections).json")
 
         corrections_json_path = Path(corrections_file_path)
+        log_message(job_id, "DEBUG", f"Final corrections file path: {corrections_json_path}")
+        log_message(job_id, "DEBUG", f"File exists: {corrections_json_path.exists()}")
+
         if not corrections_json_path.exists():
+            # List files in the lyrics directory for debugging
+            lyrics_dir = corrections_json_path.parent
+            if lyrics_dir.exists():
+                all_files = list(lyrics_dir.glob("*"))
+                log_message(job_id, "ERROR", f"Files in lyrics directory: {[f.name for f in all_files]}")
+            
             raise Exception(f"Corrections data not found at {corrections_json_path}")
 
         # Load the correction data
@@ -849,20 +934,23 @@ def prepare_review_data(job_id: str):
 
         log_message(job_id, "INFO", f"Review data prepared for job {job_id}")
 
-        # Update job status to indicate review is active
+        # Update job status to indicate review is active, preserving artist/title
         update_job_status_with_timeline(
             job_id,
             "reviewing",
             progress=77,
-            **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated"]},
+            artist=artist,
+            title=title,
+            corrections_file=str(corrections_json_path),
+            **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated", "artist", "title", "corrections_file"]},
         )
 
         return {
             "status": "success",
             "corrections_data": corrections_data,
             "job_id": job_id,
-            "artist": job_data.get("artist"),
-            "title": job_data.get("title"),
+            "artist": artist,
+            "title": title,
         }
 
     except Exception as e:
@@ -1721,14 +1809,25 @@ async def submit_job(request: JobSubmissionRequest, user: dict = Depends(authent
 
 
 @api_app.post("/api/submit-youtube")
-async def submit_youtube_job(request: YouTubeSubmissionRequest, user: dict = Depends(authenticate_user)):
-    """Submit a new YouTube karaoke generation job using stored admin cookies."""
+async def submit_youtube_job(
+    url: str = Form(...),
+    artist: str = Form(...),
+    title: str = Form(...),
+    styles_file: Optional[UploadFile] = File(None),
+    styles_archive: Optional[UploadFile] = File(None),
+    user: dict = Depends(authenticate_user),
+):
+    """Submit a new YouTube karaoke generation job with styles support."""
     try:
         job_id = str(uuid.uuid4())[:8]
 
         # Track token usage for this job
         if not track_job_usage(user["token"], job_id):
             return JSONResponse({"status": "error", "message": "Failed to track token usage"}, status_code=500)
+
+        # Create output directory
+        output_dir = Path("/output") / job_id
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # Get stored admin cookies from the cookies dict
         stored_cookies = None
@@ -1737,16 +1836,80 @@ async def submit_youtube_job(request: YouTubeSubmissionRequest, user: dict = Dep
             stored_cookies = cookie_data["cookies"]
             print(f"Using stored admin YouTube cookies for job {job_id}")
 
+        # Handle styles files if provided
+        styles_file_path = None
+        if styles_file:
+            print(f"Processing styles file: {styles_file.filename}, content_type: {styles_file.content_type}")
+            styles_file_path = output_dir / "styles.json"
+            
+            # Reset file pointer to beginning
+            await styles_file.seek(0)
+            file_content = await styles_file.read()
+            print(f"Read {len(file_content)} bytes from styles file")
+            
+            # Write the content to disk
+            with open(styles_file_path, "wb") as f:
+                f.write(file_content)
+            
+            # Verify the file was saved and has content
+            if not styles_file_path.exists():
+                raise Exception(f"Styles file was not created at {styles_file_path}")
+            
+            file_size = styles_file_path.stat().st_size
+            if file_size == 0:
+                raise Exception(f"Styles file is empty at {styles_file_path}")
+            
+            print(f"Successfully saved styles file: {file_size} bytes at {styles_file_path}")
+
+        # Handle styles archive if provided
+        styles_archive_path = None
+        if styles_archive:
+            print(f"Processing styles archive: {styles_archive.filename}, content_type: {styles_archive.content_type}")
+            styles_archive_path = output_dir / "styles_archive.zip"
+            
+            # Reset file pointer to beginning
+            await styles_archive.seek(0)
+            archive_content = await styles_archive.read()
+            print(f"Read {len(archive_content)} bytes from styles archive")
+            
+            # Write the content to disk
+            with open(styles_archive_path, "wb") as f:
+                f.write(archive_content)
+            
+            # Verify the archive was saved and has content
+            if not styles_archive_path.exists():
+                raise Exception(f"Styles archive was not created at {styles_archive_path}")
+            
+            archive_size = styles_archive_path.stat().st_size
+            if archive_size == 0:
+                raise Exception(f"Styles archive is empty at {styles_archive_path}")
+                
+            print(f"Successfully saved styles archive: {archive_size} bytes at {styles_archive_path}")
+
+        # Log the submission with styles info
+        styles_info = []
+        if styles_file and styles_file_path and styles_file_path.exists():
+            styles_size = styles_file_path.stat().st_size
+            styles_info.append(f"Styles file: {styles_file.filename} ({styles_size} bytes)")
+        if styles_archive and styles_archive_path and styles_archive_path.exists():
+            archive_size = styles_archive_path.stat().st_size
+            styles_info.append(f"Styles archive: {styles_archive.filename} ({archive_size} bytes)")
+        
+        styles_message = f" with {', '.join(styles_info)}" if styles_info else " with default styles"
+        print(f"YouTube job submitted: {url}{styles_message}")
+
         # Get optional override artist and title
-        override_artist = request.artist.strip() if request.artist else None
-        override_title = request.title.strip() if request.title else None
+        override_artist = artist.strip() if artist else None
+        override_title = title.strip() if title else None
         
         # Initialize job status with timeline and user info
         update_job_status_with_timeline(
             job_id,
             "queued",
             progress=0,
-            url=request.url,
+            url=url,
+            artist=override_artist,  # Store the artist from form submission
+            title=override_title,    # Store the title from form submission
             created_at=datetime.datetime.now().isoformat(),
             user_type=user["user_type"].value,
             remaining_uses=user["remaining_uses"],
@@ -1758,17 +1921,28 @@ async def submit_youtube_job(request: YouTubeSubmissionRequest, user: dict = Dep
         # Initialize job logs
         job_logs_dict[job_id] = []
         
-        # Spawn the background job with stored cookies and override values
-        process_part_one.spawn(job_id, request.url, stored_cookies, override_artist, override_title)
+        # Ensure files are committed to volume before spawning GPU function
+        if styles_file_path or styles_archive_path:
+            output_volume.commit()
+            print(f"Volume committed for job {job_id} after file upload")
+            
+            # Give a small delay for Modal volume sync
+            import time
+            time.sleep(1)
+        
+        # Only pass file paths for files that actually exist
+        styles_file_passed = str(styles_file_path) if styles_file_path and styles_file_path.exists() else None
+        styles_archive_passed = str(styles_archive_path) if styles_archive_path and styles_archive_path.exists() else None
+        process_part_one.spawn(job_id, url, stored_cookies, override_artist, override_title, styles_file_passed, styles_archive_passed)
 
         return JSONResponse(
             {
                 "status": "success",
                 "job_id": job_id,
-                "message": "YouTube job submitted successfully" + (" with stored cookies" if stored_cookies else " (no cookies available)"),
+                "message": "YouTube job submitted successfully" + (" with stored cookies" if stored_cookies else " (no cookies available)") + styles_message,
                 "remaining_uses": user["remaining_uses"] - 1 if user["remaining_uses"] > 0 else user["remaining_uses"],
             },
-            status_code=202,
+            status_code=200,
         )
 
     except Exception as e:
@@ -2083,7 +2257,11 @@ async def retry_job(job_id: str, user: dict = Depends(authenticate_user)):
             override_artist = job_data.get("override_artist")
             override_title = job_data.get("override_title")
             
-            process_part_one.spawn(job_id, youtube_url, stored_cookies, override_artist, override_title)
+            # Extract styles file paths from original job if they exist
+            styles_file_path = job_data.get("styles_file_path")
+            styles_archive_path = f"/output/{job_id}/styles_archive.zip" if Path(f"/output/{job_id}/styles_archive.zip").exists() else None
+            
+            process_part_one.spawn(job_id, youtube_url, stored_cookies, override_artist, override_title, styles_file_path, styles_archive_path)
 
         return JSONResponse({"status": "success", "message": f"Job {job_id} retry initiated"})
     except HTTPException:
@@ -2305,7 +2483,7 @@ async def get_audio_file(job_id: str):
         track_dir = Path(track_output_dir)
 
         # Try different possible vocals file patterns
-        vocals_patterns = [f"{artist} - {title} (Original).wav"]  # Fallback to original audio
+        vocals_patterns = [f"{artist} - {title}*.wav"]
 
         vocals_file = None
         for pattern in vocals_patterns:
@@ -2399,13 +2577,7 @@ async def get_audio_by_hash(job_id: str, audio_hash: str):
         track_dir = Path(track_output_dir)
 
         # Try different possible vocals file patterns
-        vocals_patterns = [
-            f"*Vocals*.flac",
-            f"*Vocals*.FLAC",
-            f"*vocals*.flac",
-            f"*vocals*.wav",
-            f"{artist} - {title} (Original).wav",  # Fallback to original audio
-        ]
+        vocals_patterns = [f"{artist} - {title}*.wav"]
 
         vocals_file = None
         for pattern in vocals_patterns:
@@ -2939,7 +3111,7 @@ async def get_correction_data(job_id: str):
             f"*Vocals*.FLAC",
             f"*vocals*.flac",
             f"*vocals*.wav",
-            f"{artist} - {title} (Original).wav",  # Fallback to original audio
+            f"{artist} - {title}*.wav",  # Any audio file for this track (including YouTube ID)
         ]
 
         audio_hash = None
@@ -3102,6 +3274,14 @@ async def submit_file(
 
         # Initialize job logs
         job_logs_dict[job_id] = []
+
+        # Ensure files are committed to volume before spawning GPU function
+        output_volume.commit()
+        print(f"Volume committed for job {job_id} after file upload")
+        
+        # Give a small delay for Modal volume sync
+        import time
+        time.sleep(1)
 
         # Start processing job
         job = process_part_one_uploaded.spawn(
@@ -3367,18 +3547,16 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         # Ensure the base directory exists
         track_dir.mkdir(parents=True, exist_ok=True)
 
-        audio_file = track_dir / f"{artist} - {title} (Original).wav"
+        # Find audio file using flexible pattern matching
+        audio_file = None
+        audio_patterns = [f"{artist} - {title}*.wav", "*.wav", "*.flac", "*.mp3"]
+        for pattern in audio_patterns:
+            audio_files = list(track_dir.glob(pattern))
+            if audio_files:
+                audio_file = audio_files[0]
+                break
 
-        if not audio_file.exists():
-            # Try to find any audio file
-            audio_patterns = ["*.wav", "*.flac", "*.mp3"]
-            for pattern in audio_patterns:
-                audio_files = list(track_dir.glob(pattern))
-                if audio_files:
-                    audio_file = audio_files[0]
-                    break
-
-        if not audio_file.exists():
+        if not audio_file or not audio_file.exists():
             raise Exception("Audio file not found for preview")
 
         # Set up preview config

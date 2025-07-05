@@ -389,6 +389,26 @@ body {
     transform: none;
 }
 
+/* Enhanced disabled state for YouTube mode when waiting for metadata */
+.youtube-url-mode.active .submit-btn:disabled {
+    background: linear-gradient(135deg, #adb5bd 0%, #6c757d 100%);
+    color: #fff;
+    opacity: 0.8;
+    position: relative;
+    overflow: hidden;
+}
+
+.youtube-url-mode.active .submit-btn:disabled::before {
+    content: '⏳ Waiting for metadata extraction...';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.9rem;
+    white-space: nowrap;
+    z-index: 1;
+}
+
 .example-btn {
     padding: 0.75rem 1rem;
     background: rgba(102, 126, 234, 0.1);
@@ -3439,14 +3459,46 @@ html {
 }
 
 /* Enhanced input styling for auto-populated fields */
-.youtube-url-mode input[placeholder*="auto-populated"] {
+.youtube-url-mode input[placeholder*="auto-populated"],
+.youtube-url-mode input[placeholder*="Auto-extracted"] {
     border-color: #28a745;
     background: linear-gradient(135deg, #f8fff9 0%, #f0f8f0 100%);
 }
 
-.youtube-url-mode input[placeholder*="auto-populated"]:focus {
+.youtube-url-mode input[placeholder*="auto-populated"]:focus,
+.youtube-url-mode input[placeholder*="Auto-extracted"]:focus {
     border-color: #20c997;
     box-shadow: 0 0 0 0.2rem rgba(32, 201, 151, 0.25);
+}
+
+/* Disabled field styling for YouTube mode */
+.youtube-url-mode input:disabled {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-color: #dee2e6;
+    color: #6c757d;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.youtube-url-mode input:disabled::placeholder {
+    color: #6c757d;
+    font-style: italic;
+}
+
+/* Loading state styling */
+.youtube-url-mode input[placeholder*="Extracting"] {
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+    border-color: #ffc107;
+    animation: field-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes field-pulse {
+    0%, 100% {
+        opacity: 0.8;
+    }
+    50% {
+        opacity: 1;
+    }
 }
 
 /* Loading animation */

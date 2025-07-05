@@ -192,7 +192,7 @@ class ServerlessKaraokeProcessor:
             self.logger.error(f"Error processing uploaded file {job_id}: {str(e)}")
             raise
 
-    async def process_url(self, job_id: str, url: str, stored_cookies: Optional[str] = None, override_artist: Optional[str] = None, override_title: Optional[str] = None) -> Dict[str, Any]:
+    async def process_url(self, job_id: str, url: str, stored_cookies: Optional[str] = None, override_artist: Optional[str] = None, override_title: Optional[str] = None, styles_file_path: Optional[str] = None, styles_archive_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Process a URL through the complete karaoke generation pipeline.
         Uses the same KaraokePrep workflow as the CLI.
@@ -210,6 +210,62 @@ class ServerlessKaraokeProcessor:
             job_output_dir.mkdir(parents=True, exist_ok=True)
             
             self.logger.info(f"Processing URL: {url}")
+            if override_artist:
+                self.logger.info(f"Artist override: {override_artist}")
+            if override_title:
+                self.logger.info(f"Title override: {override_title}")
+            
+            # Handle styles files the same way as uploaded files
+            if styles_file_path:
+                self.logger.info(f"Using custom styles: {styles_file_path}")
+            
+            # Handle styles archive extraction
+            if styles_archive_path:
+                self.logger.info(f"Using styles archive: {styles_archive_path}")
+                
+                # Extract archive to the job output directory
+                styles_assets_dir = job_output_dir / "styles_assets"
+                styles_assets_dir.mkdir(exist_ok=True)
+                
+                with zipfile.ZipFile(styles_archive_path, 'r') as zip_ref:
+                    zip_ref.extractall(styles_assets_dir)
+                
+                self.logger.info(f"Extracted styles archive to {styles_assets_dir}")
+                
+                # List extracted files for debugging
+                extracted_files = []
+                for root, dirs, files in os.walk(styles_assets_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        extracted_files.append(file_path)
+                        
+                        # Check if file is readable
+                        try:
+                            file_stat = os.stat(file_path)
+                            self.logger.info(f"Extracted file: {file_path} (size: {file_stat.st_size} bytes)")
+                        except Exception as e:
+                            self.logger.warning(f"Could not stat file {file_path}: {e}")
+                
+                # Update styles JSON to use the extracted files
+                if styles_file_path:
+                    updated_styles_path = job_output_dir / "styles_updated.json"
+                    self._update_styles_paths(styles_file_path, str(updated_styles_path), str(styles_assets_dir))
+                    styles_file_path = str(updated_styles_path)
+                    self.logger.info(f"Updated styles file paths: {styles_file_path}")
+            
+            # Ensure styles file was provided - frontend should always upload one
+            if not styles_file_path:
+                raise Exception("No styles file provided. The frontend should upload default styles for all jobs.")
+            
+            # Validate that style-referenced files exist (do this after archive extraction)
+            if styles_file_path:
+                self.logger.info("Starting styles file validation...")
+                missing_files = self._validate_styles_files(styles_file_path)
+                if missing_files:
+                    self.logger.error(f"Validation failed. Missing files: {missing_files}")
+                    raise Exception(f"Missing style files - please ensure these files are included in the styles archive: {', '.join(missing_files)}")
+                else:
+                    self.logger.info("Styles file validation passed - all files found")
             
             if stored_cookies:
                 self.logger.info("Using stored admin cookies for enhanced access")
@@ -271,7 +327,7 @@ class ServerlessKaraokeProcessor:
                     skip_transcription=False,
                     skip_transcription_review=False,  # Enable review step - will be intercepted for web interface
                     subtitle_offset_ms=0,
-                    style_params_json=None,  # No styles support for URL processing yet
+                    style_params_json=styles_file_path,  # Use processed styles file (default or custom)
                     cookies_str=stored_cookies,  # Pass stored admin cookies
                 )
                 
@@ -301,7 +357,7 @@ class ServerlessKaraokeProcessor:
                         "track_data": track,
                         "track_output_dir": track_output_dir,
                         "corrections_file": str(corrections_file),
-                        "styles_file_path": None,  # URL processing doesn't support custom styles yet
+                        "styles_file_path": styles_file_path,  # Return the processed styles file path
                     }
                 else:
                     self.logger.info("No lyrics correction data found, job completed successfully")
@@ -310,7 +366,7 @@ class ServerlessKaraokeProcessor:
                         "status": "complete",
                         "track_data": track,
                         "track_output_dir": track_output_dir,
-                        "styles_file_path": None,  # URL processing doesn't support custom styles yet
+                        "styles_file_path": styles_file_path,  # Return the processed styles file path
                     }
                     
             finally:
@@ -435,6 +491,8 @@ class ServerlessKaraokeProcessor:
                 options['cookiefile'] = f.name
         
         return options
+
+
 
     def _validate_styles_files(self, styles_file_path: str) -> List[str]:
         """

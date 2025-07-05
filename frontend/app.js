@@ -2593,17 +2593,79 @@ async function submitYouTubeJob(submitBtn) {
         return;
     }
     
-    // Prepare request data
-    const requestData = {
-        url: youtubeUrl,
-        artist: artist,
-        title: title
-    };
+    // Prepare form data (same as file upload jobs)
+    const formData = new FormData();
+    const stylesFile = document.getElementById('styles-file').files[0];
+    const stylesArchive = document.getElementById('styles-archive').files[0];
+    const customStylesVisible = document.getElementById('custom-styles-section').style.display !== 'none';
+    
+    formData.append('url', youtubeUrl);
+    formData.append('artist', artist);
+    formData.append('title', title);
+    
+    // Handle styles the same way as file upload jobs
+    if (!customStylesVisible || (!stylesFile && !stylesArchive)) {
+        try {
+            console.log('Loading default Nomad styles for YouTube job...');
+            // Load default styles automatically
+            const [defaultStylesResponse, defaultArchiveResponse] = await Promise.all([
+                fetch('./karaoke-prep-styles-nomad.json'),
+                fetch('./nomadstyles.zip')
+            ]);
+            
+            console.log('Default styles fetch results:', {
+                stylesOk: defaultStylesResponse.ok,
+                stylesStatus: defaultStylesResponse.status,
+                archiveOk: defaultArchiveResponse.ok, 
+                archiveStatus: defaultArchiveResponse.status
+            });
+            
+            if (defaultStylesResponse.ok && defaultArchiveResponse.ok) {
+                const defaultStylesJson = await defaultStylesResponse.text();
+                const defaultArchiveBlob = await defaultArchiveResponse.blob();
+                
+                console.log('Default styles loaded:', {
+                    stylesSize: defaultStylesJson.length,
+                    archiveSize: defaultArchiveBlob.size
+                });
+                
+                // Create default style files
+                const defaultStylesFile = new File([new Blob([defaultStylesJson], { type: 'application/json' })], 'karaoke-prep-styles-nomad.json', { type: 'application/json' });
+                const defaultArchiveFile = new File([defaultArchiveBlob], 'nomadstyles.zip', { type: 'application/zip' });
+                
+                formData.append('styles_file', defaultStylesFile);
+                formData.append('styles_archive', defaultArchiveFile);
+                console.log('✅ Default styles appended to form data for YouTube job');
+            } else {
+                throw new Error(`Failed to fetch default styles: styles=${defaultStylesResponse.status}, archive=${defaultArchiveResponse.status}`);
+            }
+        } catch (error) {
+            console.error('Failed to load default styles:', error);
+            showError('Failed to load default Nomad styles. Please check your internet connection and try again.');
+            throw error; // Don't proceed without styles since backend now requires them
+        }
+    } else {
+        // Use custom styles if provided
+        if (stylesFile) {
+            formData.append('styles_file', stylesFile);
+        }
+        
+        if (stylesArchive) {
+            formData.append('styles_archive', stylesArchive);
+        }
+    }
+    
+    // Create authenticated request headers for form data
+    const authHeaders = {};
+    const token = getAuthToken();
+    if (token) {
+        authHeaders['Authorization'] = `Bearer ${token}`;
+    }
     
     const response = await fetch(`${API_BASE_URL}/submit-youtube`, {
         method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify(requestData)
+        headers: authHeaders,
+        body: formData
     });
     
     if (!response.ok) {
@@ -2618,8 +2680,10 @@ async function submitYouTubeJob(submitBtn) {
     
     const result = await response.json();
     
-    if (response.status >= 200 && response.status < 300) {
-        showSuccess(`YouTube job submitted successfully! Job ID: ${result.job_id}`);
+    if (response.status === 200) {
+        const usingCustomStyles = customStylesVisible && (stylesFile || stylesArchive);
+        const stylesMessage = usingCustomStyles ? ' with custom styles' : ' with default Nomad styles';
+        showSuccess(`YouTube job submitted successfully${stylesMessage}! Job ID: ${result.job_id}`);
         
         // Update user's remaining uses if provided
         if (result.remaining_uses !== undefined) {
@@ -2631,6 +2695,24 @@ async function submitYouTubeJob(submitBtn) {
         document.getElementById('youtube-url').value = '';
         document.getElementById('youtube-artist').value = '';
         document.getElementById('youtube-title').value = '';
+        
+        // Only clear custom styles if they were visible
+        if (customStylesVisible) {
+            document.getElementById('styles-file').value = '';
+            document.getElementById('styles-archive').value = '';
+        }
+        
+        // Reset fields to disabled state for next submission
+        const artistField = document.getElementById('youtube-artist');
+        const titleField = document.getElementById('youtube-title');
+        if (artistField) {
+            artistField.disabled = true;
+            artistField.placeholder = 'Enter YouTube URL first to auto-populate';
+        }
+        if (titleField) {
+            titleField.disabled = true;
+            titleField.placeholder = 'Enter YouTube URL first to auto-populate';
+        }
         
         // Refresh jobs list and handle post-submission tasks
         await handlePostSubmission();
@@ -2667,15 +2749,28 @@ async function submitFileJob(submitBtn) {
     // If custom styles section is hidden or no custom styles are provided, use default styles
     if (!customStylesVisible || (!stylesFile && !stylesArchive)) {
         try {
+            console.log('Loading default Nomad styles for file upload job...');
             // Load default styles automatically
             const [defaultStylesResponse, defaultArchiveResponse] = await Promise.all([
                 fetch('./karaoke-prep-styles-nomad.json'),
                 fetch('./nomadstyles.zip')
             ]);
             
+            console.log('Default styles fetch results:', {
+                stylesOk: defaultStylesResponse.ok,
+                stylesStatus: defaultStylesResponse.status,
+                archiveOk: defaultArchiveResponse.ok, 
+                archiveStatus: defaultArchiveResponse.status
+            });
+            
             if (defaultStylesResponse.ok && defaultArchiveResponse.ok) {
                 const defaultStylesJson = await defaultStylesResponse.text();
                 const defaultArchiveBlob = await defaultArchiveResponse.blob();
+                
+                console.log('Default styles loaded:', {
+                    stylesSize: defaultStylesJson.length,
+                    archiveSize: defaultArchiveBlob.size
+                });
                 
                 // Create default style files
                 const defaultStylesFile = new File([new Blob([defaultStylesJson], { type: 'application/json' })], 'karaoke-prep-styles-nomad.json', { type: 'application/json' });
@@ -2683,9 +2778,14 @@ async function submitFileJob(submitBtn) {
                 
                 formData.append('styles_file', defaultStylesFile);
                 formData.append('styles_archive', defaultArchiveFile);
+                console.log('✅ Default styles appended to form data for file upload job');
+            } else {
+                throw new Error(`Failed to fetch default styles: styles=${defaultStylesResponse.status}, archive=${defaultArchiveResponse.status}`);
             }
         } catch (error) {
-            console.warn('Could not load default styles, proceeding without them:', error);
+            console.error('Failed to load default styles:', error);
+            showError('Failed to load default Nomad styles. Please check your internet connection and try again.');
+            throw error; // Don't proceed without styles since backend now requires them
         }
     } else {
         // Use custom styles if provided
@@ -2832,6 +2932,14 @@ function switchInputMode(mode) {
         document.getElementById('youtube-artist').value = '';
         document.getElementById('youtube-title').value = '';
         
+        // Re-enable all fields and submit button when switching to file mode
+        const artistField = document.getElementById('youtube-artist');
+        const titleField = document.getElementById('youtube-title');
+        const submitBtn = document.querySelector('.submit-btn');
+        if (artistField) artistField.disabled = false;
+        if (titleField) titleField.disabled = false;
+        if (submitBtn) submitBtn.disabled = false;
+        
         // Clear metadata status
         const metadataStatus = document.getElementById('metadata-status');
         if (metadataStatus) {
@@ -2855,6 +2963,22 @@ function switchInputMode(mode) {
         if (youtubeUrlField) youtubeUrlField.required = true;
         if (youtubeArtistField) youtubeArtistField.required = true;
         if (youtubeTitleField) youtubeTitleField.required = true;
+        
+        // Initially disable artist/title fields and submit button until metadata is extracted
+        if (youtubeArtistField) {
+            youtubeArtistField.disabled = true;
+            youtubeArtistField.placeholder = 'Enter YouTube URL first to auto-populate';
+        }
+        if (youtubeTitleField) {
+            youtubeTitleField.disabled = true;
+            youtubeTitleField.placeholder = 'Enter YouTube URL first to auto-populate';
+        }
+        
+        // Disable submit button
+        const submitBtn = document.querySelector('.submit-btn');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+        }
         
         // Clear file upload form
         document.getElementById('audio-file').value = '';
@@ -2897,18 +3021,35 @@ function handleYouTubeUrlChange() {
         clearTimeout(metadataExtractionTimeout);
     }
     
-    // Clear artist/title fields and status when URL changes
-    document.getElementById('youtube-artist').value = '';
-    document.getElementById('youtube-title').value = '';
+    // Get field references
+    const artistField = document.getElementById('youtube-artist');
+    const titleField = document.getElementById('youtube-title');
     const metadataStatus = document.getElementById('metadata-status');
+    const submitBtn = document.querySelector('.submit-btn');
+    
+    // Clear artist/title fields and status when URL changes
+    artistField.value = '';
+    titleField.value = '';
     metadataStatus.textContent = '';
     metadataStatus.className = 'metadata-status';
+    
+    // Disable fields and submit button when URL changes
+    artistField.disabled = true;
+    titleField.disabled = true;
+    if (submitBtn) submitBtn.disabled = true;
     
     // Only proceed if URL looks like YouTube
     const youtubePattern = /^https:\/\/(www\.)?(youtube\.com\/(watch\?v=|embed\/)|youtu\.be\/).+/;
     if (!url || !youtubePattern.test(url)) {
+        // If URL is empty or invalid, update placeholders
+        artistField.placeholder = url ? 'Invalid YouTube URL' : 'Enter YouTube URL first to auto-populate';
+        titleField.placeholder = url ? 'Invalid YouTube URL' : 'Enter YouTube URL first to auto-populate';
         return;
     }
+    
+    // Update placeholders to show loading state
+    artistField.placeholder = 'Extracting from YouTube...';
+    titleField.placeholder = 'Extracting from YouTube...';
     
     // Debounce the API call - wait 1 second after user stops typing
     metadataExtractionTimeout = setTimeout(() => {
@@ -2921,6 +3062,7 @@ async function extractYouTubeMetadata(url) {
     const metadataStatus = document.getElementById('metadata-status');
     const artistField = document.getElementById('youtube-artist');
     const titleField = document.getElementById('youtube-title');
+    const submitBtn = document.querySelector('.submit-btn');
     
     try {
         // Show loading indicator
@@ -2935,6 +3077,7 @@ async function extractYouTubeMetadata(url) {
         if (!response) {
             // Auth failed, already handled by authenticatedFetch
             loadingIndicator.style.display = 'none';
+            enableFieldsAfterExtraction(artistField, titleField, submitBtn);
             return;
         }
         
@@ -2944,6 +3087,10 @@ async function extractYouTubeMetadata(url) {
             // Populate the fields with extracted metadata
             artistField.value = result.artist || '';
             titleField.value = result.title || '';
+            
+            // Update placeholders to show they can be edited
+            artistField.placeholder = 'Auto-extracted from YouTube - edit if needed';
+            titleField.placeholder = 'Auto-extracted from YouTube - edit if needed';
             
             // Show success status
             metadataStatus.textContent = '✅ Metadata extracted successfully';
@@ -2985,7 +3132,18 @@ async function extractYouTubeMetadata(url) {
         
     } finally {
         loadingIndicator.style.display = 'none';
+        // Always enable fields after extraction completes (success or failure)
+        enableFieldsAfterExtraction(artistField, titleField, submitBtn);
     }
+}
+
+function enableFieldsAfterExtraction(artistField, titleField, submitBtn) {
+    // Enable the artist and title fields
+    if (artistField) artistField.disabled = false;
+    if (titleField) titleField.disabled = false;
+    
+    // Enable submit button
+    if (submitBtn) submitBtn.disabled = false;
 }
 
 // Load default styles function
