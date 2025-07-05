@@ -83,7 +83,7 @@ karaoke_image = (
             "python-multipart>=0.0.6",
             "requests>=2.31.0",
             # Uncomment this line to use the lyrics-transcriber package from PyPI
-            "lyrics-transcriber>=0.58",
+            "lyrics-transcriber>=0.60",
             # To use the local version of lyrics-transcriber, comment out the line above and
             # uncomment the lyrics_transcriber_local "add_local_dir" and "run_commands" lines below
         ]

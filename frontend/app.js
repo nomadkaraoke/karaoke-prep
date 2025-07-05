@@ -655,6 +655,9 @@ async function authenticatedFetch(url, options = {}) {
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize the form to file upload mode (ensures proper required field setup)
+    switchInputMode('file');
+    
     // Debug timezone information for troubleshooting timestamp issues
     console.log('🌍 Timezone Debug Info:', {
         userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -2934,11 +2937,11 @@ function switchInputMode(mode) {
         document.getElementById('youtube-title').value = '';
         
         // Re-enable all fields and submit button when switching to file mode
-        const artistField = document.getElementById('youtube-artist');
-        const titleField = document.getElementById('youtube-title');
+        const youtubeArtistFieldForReset = document.getElementById('youtube-artist');
+        const youtubeTitleFieldForReset = document.getElementById('youtube-title');
         const submitBtn = document.querySelector('.submit-btn');
-        if (artistField) artistField.disabled = false;
-        if (titleField) titleField.disabled = false;
+        if (youtubeArtistFieldForReset) youtubeArtistFieldForReset.disabled = false;
+        if (youtubeTitleFieldForReset) youtubeTitleFieldForReset.disabled = false;
         if (submitBtn) submitBtn.disabled = false;
         
         // Clear metadata status
