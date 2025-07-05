@@ -65,7 +65,7 @@ karaoke_image = (
             "google-auth-httplib2",
             "thefuzz>=0.22",
             "numpy>=2",
-            "audio-separator[cpu]>=0.34.0",
+            "audio-separator[gpu]>=0.34.0",
             "lyrics-converter>=0.2.1",
             "kbputils>=0.0.12",
             "fuzzywuzzy>=0.18",

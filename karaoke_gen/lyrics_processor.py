@@ -174,6 +174,7 @@ class LyricsProcessor:
             "spotify_cookie": os.getenv("SPOTIFY_COOKIE_SP_DC"),
             "runpod_api_key": os.getenv("RUNPOD_API_KEY"),
             "whisper_runpod_id": os.getenv("WHISPER_RUNPOD_ID"),
+            "rapidapi_key": os.getenv("RAPIDAPI_KEY"),  # Add missing RAPIDAPI_KEY
         }
 
         # Create config objects for LyricsTranscriber
@@ -184,8 +185,16 @@ class LyricsProcessor:
         lyrics_config = LyricsConfig(
             genius_api_token=env_config.get("genius_api_token"),
             spotify_cookie=env_config.get("spotify_cookie"),
+            rapidapi_key=env_config.get("rapidapi_key"),
             lyrics_file=self.lyrics_file,
         )
+        
+        # Debug logging for lyrics_config
+        self.logger.info(f"LyricsConfig created with:")
+        self.logger.info(f"  genius_api_token: {env_config.get('genius_api_token')[:3] + '...' if env_config.get('genius_api_token') else 'None'}")
+        self.logger.info(f"  spotify_cookie: {env_config.get('spotify_cookie')[:3] + '...' if env_config.get('spotify_cookie') else 'None'}")
+        self.logger.info(f"  rapidapi_key: {env_config.get('rapidapi_key')[:3] + '...' if env_config.get('rapidapi_key') else 'None'}")
+        self.logger.info(f"  lyrics_file: {self.lyrics_file}")
 
         # Detect if we're running in a serverless environment (Modal)
         # Modal sets specific environment variables we can check for
