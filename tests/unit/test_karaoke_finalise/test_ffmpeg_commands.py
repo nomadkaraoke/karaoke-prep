@@ -40,7 +40,7 @@ def finaliser_with_aac_at(mock_logger):
 
 # --- execute_command Tests ---
 
-@patch('os.system')
+@patch('os.system', return_value=0)
 def test_execute_command_runs_command(mock_system, finaliser_with_aac):
     """Test execute_command calls os.system."""
     command = "echo 'test'"
@@ -273,13 +273,22 @@ def test_remux_and_encode_all_steps_mov_input(
 @patch('os.remove')
 @patch.object(KaraokeFinalise, 'remux_with_instrumental')
 @patch.object(KaraokeFinalise, 'convert_mov_to_mp4')
+@patch.object(KaraokeFinalise, 'prepare_concat_filter')
+@patch.object(KaraokeFinalise, 'encode_lossless_mp4')
+@patch.object(KaraokeFinalise, 'encode_lossy_mp4')
+@patch.object(KaraokeFinalise, 'encode_lossless_mkv')
+@patch.object(KaraokeFinalise, 'encode_720p_version')
 @patch.object(KaraokeFinalise, 'prompt_user_bool', return_value=True) # Auto-confirm overwrite/checks
 @patch.object(KaraokeFinalise, 'prompt_user_confirmation_or_raise_exception') # Mock final check
 def test_remux_and_encode_mp4_input(
-    mock_prompt_confirm, mock_prompt_bool, mock_convert_mov, mock_remux,
+    mock_prompt_confirm, mock_prompt_bool, mock_encode_720p, mock_encode_mkv, mock_encode_lossy,
+    mock_encode_lossless, mock_prepare_filter, mock_convert_mov, mock_remux,
     mock_remove, mock_isfile, finaliser_with_aac):
     """Test the remux/encode process skips conversion for .mp4 input."""
     mock_isfile.return_value = False # Output files don't exist
+    
+    # Mock prepare_concat_filter to return basic values
+    mock_prepare_filter.return_value = ("", '-filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]"')
 
     # Use MP4 as input
     with_vocals_mp4 = f"{BASE_NAME} (With Vocals).mp4"

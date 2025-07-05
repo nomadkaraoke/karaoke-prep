@@ -80,7 +80,21 @@ class TestFileOperations:
                 "quiet": True,
                 "format": "bv*+ba/b",
                 "outtmpl": f"{output_filename}.%(ext)s",
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "referer": "https://www.youtube.com/",
+                "sleep_interval": 1,
+                "max_sleep_interval": 3,
+                "fragment_retries": 3,
+                "extractor_retries": 3,
+                "retries": 3,
+                "http_headers": {
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-us,en;q=0.5",
+                    "Accept-Encoding": "gzip, deflate",
+                    "DNT": "1",
+                    "Connection": "keep-alive",
+                    "Upgrade-Insecure-Requests": "1",
+                },
             }
             mock_ydl_context.assert_called_once_with(expected_ydl_opts)
             

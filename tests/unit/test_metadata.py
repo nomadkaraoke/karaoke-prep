@@ -30,7 +30,25 @@ class TestMetadata:
             basic_karaoke_gen.extract_info_for_online_media(input_url=url)
             
             # Verify ydl was instantiated (implicitly checks context manager usage)
-            mock_ydl_context.assert_called_once_with({"quiet": True})
+            expected_ydl_opts = {
+                "quiet": True,
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "referer": "https://www.youtube.com/",
+                "sleep_interval": 1,
+                "max_sleep_interval": 3,
+                "fragment_retries": 3,
+                "extractor_retries": 3,
+                "retries": 3,
+                "http_headers": {
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-us,en;q=0.5",
+                    "Accept-Encoding": "gzip, deflate",
+                    "DNT": "1",
+                    "Connection": "keep-alive",
+                    "Upgrade-Insecure-Requests": "1",
+                },
+            }
+            mock_ydl_context.assert_called_once_with(expected_ydl_opts)
             
             # Verify extract_info was called on the instance
             mock_ydl_instance.extract_info.assert_called_once_with(url, download=False)
@@ -68,7 +86,27 @@ class TestMetadata:
             basic_karaoke_gen.extract_info_for_online_media(input_artist=artist, input_title=title)
             
             # Verify ydl was instantiated with correct options
-            expected_ydl_opts = {"quiet": "True", "format": "bestaudio", "noplaylist": "True", "extract_flat": True}
+            expected_ydl_opts = {
+                "quiet": True,
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "referer": "https://www.youtube.com/",
+                "sleep_interval": 1,
+                "max_sleep_interval": 3,
+                "fragment_retries": 3,
+                "extractor_retries": 3,
+                "retries": 3,
+                "http_headers": {
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-us,en;q=0.5",
+                    "Accept-Encoding": "gzip, deflate",
+                    "DNT": "1",
+                    "Connection": "keep-alive",
+                    "Upgrade-Insecure-Requests": "1",
+                },
+                "format": "bestaudio", 
+                "noplaylist": "True", 
+                "extract_flat": True
+            }
             mock_ydl_context.assert_called_once_with(expected_ydl_opts)
             
             # Verify extract_info was called with the correct arguments
@@ -100,7 +138,27 @@ class TestMetadata:
                 basic_karaoke_gen.extract_info_for_online_media(input_artist=artist, input_title=title)
 
             # Verify ydl was instantiated with correct options
-            expected_ydl_opts = {"quiet": "True", "format": "bestaudio", "noplaylist": "True", "extract_flat": True}
+            expected_ydl_opts = {
+                "quiet": True,
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "referer": "https://www.youtube.com/",
+                "sleep_interval": 1,
+                "max_sleep_interval": 3,
+                "fragment_retries": 3,
+                "extractor_retries": 3,
+                "retries": 3,
+                "http_headers": {
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-us,en;q=0.5",
+                    "Accept-Encoding": "gzip, deflate",
+                    "DNT": "1",
+                    "Connection": "keep-alive",
+                    "Upgrade-Insecure-Requests": "1",
+                },
+                "format": "bestaudio", 
+                "noplaylist": "True", 
+                "extract_flat": True
+            }
             mock_ydl_context.assert_called_once_with(expected_ydl_opts)
 
             # Verify extract_info was called with the correct arguments
