@@ -39,28 +39,64 @@ class FileHandler:
 
         return copied_file_name
 
-    def download_video(self, url, output_filename_no_extension):
+    def download_video(self, url, output_filename_no_extension, cookies_str=None):
         self.logger.debug(f"Downloading media from URL {url} to filename {output_filename_no_extension} + (as yet) unknown extension")
 
         ydl_opts = {
             "quiet": True,
             "format": "bv*+ba/b",  # if a combined video + audio format is better than the best video-only format use the combined format
             "outtmpl": f"{output_filename_no_extension}.%(ext)s",
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36",
+            # Enhanced anti-detection options
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "referer": "https://www.youtube.com/",
+            "sleep_interval": 1,
+            "max_sleep_interval": 3,
+            "fragment_retries": 3,
+            "extractor_retries": 3,
+            "retries": 3,
+            # Headers to appear more human
+            "http_headers": {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-us,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+            },
         }
 
-        with ydl(ydl_opts) as ydl_instance:
-            ydl_instance.download([url])
+        # Add cookies if provided
+        if cookies_str:
+            self.logger.info("Using provided cookies for enhanced YouTube download access")
+            # Save cookies to a temporary file
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                f.write(cookies_str)
+                ydl_opts['cookiefile'] = f.name
+        else:
+            self.logger.info("No cookies provided for download - attempting standard download")
 
-            # Search for the file with any extension
-            downloaded_files = glob.glob(f"{output_filename_no_extension}.*")
-            if downloaded_files:
-                downloaded_file_name = downloaded_files[0]  # Assume the first match is the correct one
-                self.logger.info(f"Download finished, returning downloaded filename: {downloaded_file_name}")
-                return downloaded_file_name
-            else:
-                self.logger.error("No files found matching the download pattern.")
-                return None
+        try:
+            with ydl(ydl_opts) as ydl_instance:
+                ydl_instance.download([url])
+
+                # Search for the file with any extension
+                downloaded_files = glob.glob(f"{output_filename_no_extension}.*")
+                if downloaded_files:
+                    downloaded_file_name = downloaded_files[0]  # Assume the first match is the correct one
+                    self.logger.info(f"Download finished, returning downloaded filename: {downloaded_file_name}")
+                    return downloaded_file_name
+                else:
+                    self.logger.error("No files found matching the download pattern.")
+                    return None
+        finally:
+            # Clean up temporary cookie file if it was created
+            if cookies_str and 'cookiefile' in ydl_opts:
+                try:
+                    import os
+                    os.unlink(ydl_opts['cookiefile'])
+                except:
+                    pass
 
     def extract_still_image_from_video(self, input_filename, output_filename_no_extension):
         output_filename = output_filename_no_extension + ".png"

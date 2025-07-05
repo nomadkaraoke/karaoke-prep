@@ -100,7 +100,7 @@
                             
                             <div class="file-upload">
                                 <label for="audio-file">Audio File (MP3, WAV, FLAC, etc.)</label>
-                                <input type="file" id="audio-file" accept="audio/*">
+                                <input type="file" id="audio-file" accept="audio/*" required>
                                 <small>Upload the audio file you want to convert to karaoke</small>
                             </div>
                         </div>
@@ -112,44 +112,27 @@
                             <div class="url-input-section">
                                 <div class="form-group">
                                     <label for="youtube-url">YouTube URL</label>
-                                    <input type="url" id="youtube-url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." pattern="https://.*youtube\.com/.*|https://.*youtu\.be/.*">
-                                    <small>Enter a YouTube URL - artist and title will be extracted automatically</small>
+                                    <input type="url" id="youtube-url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." pattern="https://.*youtube\.com/.*|https://.*youtu\.be/.*" oninput="handleYouTubeUrlChange()">
+                                    <small>Enter a YouTube URL and we'll automatically extract the artist and title</small>
                                 </div>
                             </div>
                             
-                            <!-- Cookies Section -->
-                            <div class="cookies-section">
-                                <div class="cookies-header">
-                                    <h4>YouTube Access Enhancement (Optional)</h4>
-                                    <button type="button" id="toggle-cookies-btn" onclick="toggleCookiesSection()" class="btn btn-secondary">
-                                        🍪 Help with Access Issues
-                                    </button>
+                            <div class="name-fields-row">
+                                <div class="form-group">
+                                    <label for="youtube-artist">Artist Name</label>
+                                    <input type="text" id="youtube-artist" class="form-control" placeholder="Will be auto-populated from URL" required>
+                                    <small>Auto-extracted from YouTube - edit if needed</small>
                                 </div>
-                                
-                                <div id="cookies-help-section" class="cookies-help" style="display: none;">
-                                    <div class="cookies-explanation">
-                                        <p><strong>Why might I need this?</strong></p>
-                                        <p>Sometimes YouTube blocks server requests. Providing your browser cookies helps bypass this restriction.</p>
-                                        
-                                        <p><strong>How to get cookies:</strong></p>
-                                        <ol>
-                                            <li>Visit <a href="https://www.youtube.com" target="_blank">YouTube</a> in your browser</li>
-                                            <li>Open Developer Tools (F12)</li>
-                                            <li>Go to Application → Cookies → https://www.youtube.com</li>
-                                            <li>Copy the cookie data below</li>
-                                        </ol>
-                                        
-                                        <div class="form-group">
-                                            <label for="youtube-cookies">Browser Cookies (Optional)</label>
-                                            <textarea id="youtube-cookies" class="form-control" rows="3" 
-                                                    placeholder="Paste your YouTube cookies here if you encounter access issues..."></textarea>
-                                            <small>These cookies will be stored securely for your session and help access YouTube content</small>
-                                        </div>
-                                        
-                                        <div class="cookies-privacy">
-                                            <p><small>🔒 <strong>Privacy:</strong> Cookies are only stored temporarily for your session and used exclusively for YouTube access.</small></p>
-                                        </div>
+                                <div class="form-group">
+                                    <label for="youtube-title">Song Title</label>
+                                    <input type="text" id="youtube-title" class="form-control" placeholder="Will be auto-populated from URL" required>
+                                    <small>Auto-extracted from YouTube - edit if needed</small>
+                                </div>
+                                <div class="loading-status">
+                                    <div id="metadata-loading" class="metadata-loading" style="display: none;">
+                                        🔄 Extracting metadata...
                                     </div>
+                                    <div id="metadata-status" class="metadata-status"></div>
                                 </div>
                             </div>
                         </div>
@@ -245,6 +228,9 @@
                         <button onclick="showTokenManagement()" class="btn btn-primary">
                             🎫 Manage Tokens
                         </button>
+                        <button onclick="showCookieManagement()" class="btn btn-primary">
+                            🍪 Manage YouTube Cookies
+                        </button>
                         <button onclick="refreshData()" class="btn btn-primary">
                             🔄 Refresh Data
                         </button>
@@ -297,6 +283,23 @@
             <div class="modal-body">
                 <div id="token-management-content" class="token-management-content">
                     <div class="token-loading">Loading tokens...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cookie Management Modal (Admin Only) -->
+    <div id="cookie-management-modal" class="modal">
+        <div class="modal-content cookie-modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">🍪 YouTube Cookie Management</h3>
+                <div class="modal-controls">
+                    <button onclick="closeCookieManagementModal()" class="modal-close">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="cookie-management-content" class="cookie-management-content">
+                    <div class="cookie-loading">Loading cookie settings...</div>
                 </div>
             </div>
         </div>

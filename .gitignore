@@ -3,6 +3,7 @@
 .vscode
 *.csv
 *.mp3
+lyrics_transcriber_local
 
 # Andrew functional adds
 audio/

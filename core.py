@@ -192,7 +192,7 @@ class ServerlessKaraokeProcessor:
             self.logger.error(f"Error processing uploaded file {job_id}: {str(e)}")
             raise
 
-    async def process_url(self, job_id: str, url: str, cookies_str: Optional[str] = None) -> Dict[str, Any]:
+    async def process_url(self, job_id: str, url: str, stored_cookies: Optional[str] = None, override_artist: Optional[str] = None, override_title: Optional[str] = None) -> Dict[str, Any]:
         """
         Process a URL through the complete karaoke generation pipeline.
         Uses the same KaraokePrep workflow as the CLI.
@@ -200,7 +200,7 @@ class ServerlessKaraokeProcessor:
         Args:
             job_id: Unique identifier for this job
             url: YouTube or other media URL
-            cookies_str: Optional browser cookies to help bypass bot detection
+            stored_cookies: Optional stored browser cookies to help bypass bot detection
             
         Returns:
             Dictionary with processing results and output file paths
@@ -211,27 +211,27 @@ class ServerlessKaraokeProcessor:
             
             self.logger.info(f"Processing URL: {url}")
             
-            if cookies_str:
-                self.logger.info("Using provided user cookies for enhanced access")
+            if stored_cookies:
+                self.logger.info("Using stored admin cookies for enhanced access")
             else:
-                self.logger.info("Attempting server-side extraction with anti-detection measures")
+                self.logger.info("No stored cookies available - attempting server-side extraction with anti-detection measures")
             
             # Set up enhanced yt-dlp options
-            ytdlp_options = self.get_ytdlp_options(cookies_str)
+            ytdlp_options = self.get_ytdlp_options(stored_cookies)
             
             # Override the extraction options in the environment
             # This is a bit hacky but necessary since KaraokePrep doesn't expose yt-dlp options directly
             cookies_file_path = None
             try:
-                if cookies_str:
-                    # Save cookies to a file and set environment variable
+                if stored_cookies:
+                    # Save stored cookies to a file and set environment variable
                     import tempfile
                     cookies_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-                    cookies_file.write(cookies_str)
+                    cookies_file.write(stored_cookies)
                     cookies_file.close()
                     cookies_file_path = cookies_file.name
                     os.environ['YT_DLP_COOKIEFILE'] = cookies_file_path
-                    self.logger.debug(f"Cookies saved to: {cookies_file_path}")
+                    self.logger.debug(f"Stored cookies saved to: {cookies_file_path}")
                 
                 # Set additional yt-dlp options via environment
                 os.environ['YT_DLP_USER_AGENT'] = ytdlp_options['user_agent']
@@ -246,8 +246,8 @@ class ServerlessKaraokeProcessor:
                 # Create KaraokePrep instance using the same configuration as CLI
                 kprep = KaraokePrep(
                     input_media=url,
-                    artist=None,  # Will be extracted from URL
-                    title=None,   # Will be extracted from URL
+                    artist=override_artist,  # User-provided override or None
+                    title=override_title,    # User-provided override or None
                     filename_pattern=None,
                     dry_run=False,
                     log_formatter=log_formatter,
@@ -272,6 +272,7 @@ class ServerlessKaraokeProcessor:
                     skip_transcription_review=False,  # Enable review step - will be intercepted for web interface
                     subtitle_offset_ms=0,
                     style_params_json=None,  # No styles support for URL processing yet
+                    cookies_str=stored_cookies,  # Pass stored admin cookies
                 )
                 
                 # Process the track using the full KaraokePrep workflow
@@ -391,7 +392,7 @@ class ServerlessKaraokeProcessor:
                 "error": str(e)
             }
 
-    def get_ytdlp_options(self, cookies_str: Optional[str] = None):
+    def get_ytdlp_options(self, stored_cookies: Optional[str] = None):
         """Get yt-dlp options with enhanced anti-detection."""
         options = {
             # Basic extraction options
@@ -425,12 +426,12 @@ class ServerlessKaraokeProcessor:
             'call_home': False,
         }
         
-        # Add cookies if provided
-        if cookies_str:
-            # Save cookies to a temporary file
+        # Add stored cookies if available
+        if stored_cookies:
+            # Save stored cookies to a temporary file
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-                f.write(cookies_str)
+                f.write(stored_cookies)
                 options['cookiefile'] = f.name
         
         return options

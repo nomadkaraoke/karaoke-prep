@@ -426,6 +426,201 @@ function closeTokenManagementModal() {
     document.getElementById('token-management-modal').style.display = 'none';
 }
 
+// Cookie management functions (admin only)
+async function showCookieManagement() {
+    if (!currentUser || !currentUser.admin_access) {
+        showError('Admin access required');
+        return;
+    }
+    
+    const modal = document.getElementById('cookie-management-modal');
+    const content = document.getElementById('cookie-management-content');
+    
+    modal.style.display = 'flex';
+    content.innerHTML = '<div class="cookie-loading">Loading cookie settings...</div>';
+    
+    try {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/cookies/status`);
+        
+        if (!response) return; // Auth failed, already handled
+        
+        if (response.ok) {
+            const result = await response.json();
+            displayCookieManagement(result);
+        } else {
+            const error = await response.json();
+            content.innerHTML = `<div class="error">Error loading cookie settings: ${error.message}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading cookie settings:', error);
+        content.innerHTML = `<div class="error">Error loading cookie settings: ${error.message}</div>`;
+    }
+}
+
+function displayCookieManagement(cookieData) {
+    const content = document.getElementById('cookie-management-content');
+    
+    const hasActiveCookies = cookieData.has_cookies;
+    const lastUpdated = cookieData.last_updated;
+    const isExpired = cookieData.is_expired;
+    
+    let html = `
+        <div class="cookie-management">
+            <div class="cookie-status-section">
+                <h4>Current Cookie Status</h4>
+                <div class="cookie-status-info">
+                    <div class="status-indicator ${hasActiveCookies ? (isExpired ? 'warning' : 'active') : 'inactive'}">
+                        ${hasActiveCookies ? (isExpired ? '⚠️ Expired' : '✅ Active') : '❌ No Cookies Set'}
+                    </div>
+                    ${lastUpdated ? `<div class="last-updated">Last updated: ${formatTimestamp(lastUpdated)}</div>` : ''}
+                </div>
+                
+                ${hasActiveCookies && isExpired ? `
+                    <div class="cookie-warning">
+                        <p><strong>⚠️ Warning:</strong> The current cookies may be expired. YouTube jobs might fail.</p>
+                        <p>Please update the cookies below to ensure reliable YouTube access.</p>
+                    </div>
+                ` : ''}
+            </div>
+            
+            <div class="cookie-update-section">
+                <h4>Update YouTube Cookies</h4>
+                <form id="update-cookies-form" onsubmit="updateCookies(event)">
+                    <div class="form-group">
+                        <label for="cookie-data">YouTube Cookies</label>
+                        <textarea id="cookie-data" class="form-control" rows="8" 
+                                placeholder="Paste YouTube cookies here...&#10;&#10;How to get cookies:&#10;1. Visit youtube.com in your browser&#10;2. Open Developer Tools (F12)&#10;3. Go to Application → Cookies → https://www.youtube.com&#10;4. Copy all cookie data and paste here" required></textarea>
+                        <small class="help-text">These cookies will be used for all YouTube jobs to bypass bot detection</small>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">💾 Update Cookies</button>
+                        ${hasActiveCookies ? '<button type="button" onclick="testCookies()" class="btn btn-secondary">🧪 Test Current Cookies</button>' : ''}
+                        ${hasActiveCookies ? '<button type="button" onclick="deleteCookies()" class="btn btn-danger">🗑️ Delete Cookies</button>' : ''}
+                    </div>
+                </form>
+            </div>
+            
+            <div class="cookie-help-section">
+                <h4>Help & Instructions</h4>
+                <div class="cookie-instructions">
+                    <p><strong>Why are cookies needed?</strong></p>
+                    <p>YouTube has bot detection that blocks server requests. Using browser cookies allows the system to appear as a regular user.</p>
+                    
+                    <p><strong>How to extract cookies:</strong></p>
+                    <ol>
+                        <li>Open <a href="https://www.youtube.com" target="_blank">YouTube</a> in your browser</li>
+                        <li>Make sure you're signed in to your Google account</li>
+                        <li>Open Developer Tools (Press F12)</li>
+                        <li>Go to the <strong>Application</strong> tab</li>
+                        <li>In the sidebar, expand <strong>Cookies</strong></li>
+                        <li>Click on <strong>https://www.youtube.com</strong></li>
+                        <li>Select all cookies (Ctrl+A) and copy them</li>
+                        <li>Paste the cookie data in the textarea above</li>
+                    </ol>
+                    
+                    <p><strong>Security:</strong></p>
+                    <ul>
+                        <li>Cookies are stored securely and used only for YouTube access</li>
+                        <li>Only admin users can view or modify cookies</li>
+                        <li>Cookies are automatically used for all YouTube jobs</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+async function updateCookies(event) {
+    event.preventDefault();
+    
+    const cookieData = document.getElementById('cookie-data').value.trim();
+    
+    if (!cookieData) {
+        showError('Please provide cookie data');
+        return;
+    }
+    
+    try {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/cookies/update`, {
+            method: 'POST',
+            body: JSON.stringify({ cookies: cookieData })
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showSuccess(result.message);
+            // Clear form and refresh status
+            document.getElementById('cookie-data').value = '';
+            showCookieManagement();
+        } else {
+            showError('Error updating cookies: ' + result.message);
+        }
+    } catch (error) {
+        console.error('Error updating cookies:', error);
+        showError('Error updating cookies: ' + error.message);
+    }
+}
+
+async function testCookies() {
+    try {
+        showInfo('Testing cookies with YouTube...');
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/cookies/test`, {
+            method: 'POST'
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showSuccess(`Cookies test successful: ${result.message}`);
+        } else {
+            showError(`Cookies test failed: ${result.message}`);
+        }
+    } catch (error) {
+        console.error('Error testing cookies:', error);
+        showError('Error testing cookies: ' + error.message);
+    }
+}
+
+async function deleteCookies() {
+    if (!confirm('Are you sure you want to delete the stored YouTube cookies? This will cause YouTube jobs to fail until new cookies are provided.')) {
+        return;
+    }
+    
+    try {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/cookies/delete`, {
+            method: 'DELETE'
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showSuccess(result.message);
+            // Refresh cookie management
+            showCookieManagement();
+        } else {
+            showError('Error deleting cookies: ' + result.message);
+        }
+    } catch (error) {
+        console.error('Error deleting cookies:', error);
+        showError('Error deleting cookies: ' + error.message);
+    }
+}
+
+function closeCookieManagementModal() {
+    document.getElementById('cookie-management-modal').style.display = 'none';
+}
+
 // Update all API calls to include authentication headers
 async function authenticatedFetch(url, options = {}) {
     const headers = {
@@ -565,6 +760,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    const cookieModal = document.getElementById('cookie-management-modal');
+    if (cookieModal) {
+        cookieModal.addEventListener('click', function(e) {
+            if (e.target === cookieModal) {
+                closeCookieManagementModal();
+            }
+        });
+    }
+    
     const instrumentalModal = document.getElementById('instrumental-selection-modal');
     if (instrumentalModal) {
         instrumentalModal.addEventListener('click', function(e) {
@@ -586,6 +790,7 @@ document.addEventListener('DOMContentLoaded', function() {
             closeTimelineModal();
             closeUserInfoModal();
             closeTokenManagementModal();
+            closeCookieManagementModal();
             closeInstrumentalSelectionModal();
         }
     });
@@ -2379,17 +2584,21 @@ async function submitYouTubeJob(submitBtn) {
         return;
     }
     
-    // Get optional cookies
-    const cookies = document.getElementById('youtube-cookies').value.trim();
+    // Get artist and title values (required)
+    const artist = document.getElementById('youtube-artist').value.trim();
+    const title = document.getElementById('youtube-title').value.trim();
+    
+    if (!artist || !title) {
+        showError('Please wait for metadata extraction to complete, or enter artist and title manually');
+        return;
+    }
     
     // Prepare request data
     const requestData = {
-        url: youtubeUrl
+        url: youtubeUrl,
+        artist: artist,
+        title: title
     };
-    
-    if (cookies) {
-        requestData.cookies = cookies;
-    }
     
     const response = await fetch(`${API_BASE_URL}/submit-youtube`, {
         method: 'POST',
@@ -2409,7 +2618,7 @@ async function submitYouTubeJob(submitBtn) {
     
     const result = await response.json();
     
-    if (response.status === 200) {
+    if (response.status >= 200 && response.status < 300) {
         showSuccess(`YouTube job submitted successfully! Job ID: ${result.job_id}`);
         
         // Update user's remaining uses if provided
@@ -2420,26 +2629,16 @@ async function submitYouTubeJob(submitBtn) {
         
         // Clear form
         document.getElementById('youtube-url').value = '';
-        document.getElementById('youtube-cookies').value = '';
-        
-        // Hide cookies section
-        const cookiesSection = document.getElementById('cookies-help-section');
-        if (cookiesSection.style.display !== 'none') {
-            toggleCookiesSection();
-        }
+        document.getElementById('youtube-artist').value = '';
+        document.getElementById('youtube-title').value = '';
         
         // Refresh jobs list and handle post-submission tasks
         await handlePostSubmission();
         
     } else {
         // Handle specific error messages for YouTube issues
-        if (result.message && result.message.includes('blocked') || result.message.includes('bot')) {
-            showError(`${result.message}\n\nTip: Try providing browser cookies to help bypass YouTube restrictions.`);
-            // Auto-show cookies section to help user
-            const cookiesSection = document.getElementById('cookies-help-section');
-            if (cookiesSection.style.display === 'none') {
-                toggleCookiesSection();
-            }
+        if (result.message && (result.message.includes('blocked') || result.message.includes('bot'))) {
+            showError(`${result.message}\n\nNote: YouTube access issues are being addressed by the admin. Please try again later.`);
         } else {
             showError(result.message || 'Failed to submit YouTube job');
         }
@@ -2603,6 +2802,14 @@ function switchInputMode(mode) {
     const fileSection = document.getElementById('file-upload-mode');
     const youtubeSection = document.getElementById('youtube-url-mode');
     
+    // Get form elements
+    const artistField = document.getElementById('artist');
+    const titleField = document.getElementById('title');
+    const audioField = document.getElementById('audio-file');
+    const youtubeUrlField = document.getElementById('youtube-url');
+    const youtubeArtistField = document.getElementById('youtube-artist');
+    const youtubeTitleField = document.getElementById('youtube-title');
+    
     if (mode === 'file') {
         // Switch to file upload mode
         fileTab.classList.add('active');
@@ -2610,15 +2817,26 @@ function switchInputMode(mode) {
         fileSection.classList.add('active');
         youtubeSection.classList.remove('active');
         
+        // Enable required attributes for file mode
+        if (artistField) artistField.required = true;
+        if (titleField) titleField.required = true;
+        if (audioField) audioField.required = true;
+        
+        // Disable required attributes for YouTube mode
+        if (youtubeUrlField) youtubeUrlField.required = false;
+        if (youtubeArtistField) youtubeArtistField.required = false;
+        if (youtubeTitleField) youtubeTitleField.required = false;
+        
         // Clear YouTube form
         document.getElementById('youtube-url').value = '';
-        document.getElementById('youtube-cookies').value = '';
+        document.getElementById('youtube-artist').value = '';
+        document.getElementById('youtube-title').value = '';
         
-        // Hide cookies section if visible
-        const cookiesSection = document.getElementById('cookies-help-section');
-        if (cookiesSection.style.display !== 'none') {
-            cookiesSection.style.display = 'none';
-            document.getElementById('toggle-cookies-btn').textContent = '🍪 Help with Access Issues';
+        // Clear metadata status
+        const metadataStatus = document.getElementById('metadata-status');
+        if (metadataStatus) {
+            metadataStatus.textContent = '';
+            metadataStatus.className = 'metadata-status';
         }
         
     } else if (mode === 'youtube') {
@@ -2628,6 +2846,16 @@ function switchInputMode(mode) {
         youtubeSection.classList.add('active');
         fileSection.classList.remove('active');
         
+        // Disable required attributes for file mode
+        if (artistField) artistField.required = false;
+        if (titleField) titleField.required = false;
+        if (audioField) audioField.required = false;
+        
+        // Enable required attributes for YouTube mode
+        if (youtubeUrlField) youtubeUrlField.required = true;
+        if (youtubeArtistField) youtubeArtistField.required = true;
+        if (youtubeTitleField) youtubeTitleField.required = true;
+        
         // Clear file upload form
         document.getElementById('audio-file').value = '';
         document.getElementById('artist').value = '';
@@ -2635,19 +2863,7 @@ function switchInputMode(mode) {
     }
 }
 
-// Cookies section toggle function
-function toggleCookiesSection() {
-    const cookiesSection = document.getElementById('cookies-help-section');
-    const toggleBtn = document.getElementById('toggle-cookies-btn');
-    
-    if (cookiesSection.style.display === 'none') {
-        cookiesSection.style.display = 'block';
-        toggleBtn.textContent = '🍪 Hide Cookie Help';
-    } else {
-        cookiesSection.style.display = 'none';
-        toggleBtn.textContent = '🍪 Help with Access Issues';
-    }
-}
+
 
 // Toggle custom styles section
 function toggleCustomStyles() {
@@ -2666,6 +2882,109 @@ function toggleCustomStyles() {
         // Clear any selected custom files when hiding
         document.getElementById('styles-file').value = '';
         document.getElementById('styles-archive').value = '';
+    }
+}
+
+// YouTube metadata auto-population
+let metadataExtractionTimeout = null;
+
+function handleYouTubeUrlChange() {
+    const urlInput = document.getElementById('youtube-url');
+    const url = urlInput.value.trim();
+    
+    // Clear any existing timeout
+    if (metadataExtractionTimeout) {
+        clearTimeout(metadataExtractionTimeout);
+    }
+    
+    // Clear artist/title fields and status when URL changes
+    document.getElementById('youtube-artist').value = '';
+    document.getElementById('youtube-title').value = '';
+    const metadataStatus = document.getElementById('metadata-status');
+    metadataStatus.textContent = '';
+    metadataStatus.className = 'metadata-status';
+    
+    // Only proceed if URL looks like YouTube
+    const youtubePattern = /^https:\/\/(www\.)?(youtube\.com\/(watch\?v=|embed\/)|youtu\.be\/).+/;
+    if (!url || !youtubePattern.test(url)) {
+        return;
+    }
+    
+    // Debounce the API call - wait 1 second after user stops typing
+    metadataExtractionTimeout = setTimeout(() => {
+        extractYouTubeMetadata(url);
+    }, 1000);
+}
+
+async function extractYouTubeMetadata(url) {
+    const loadingIndicator = document.getElementById('metadata-loading');
+    const metadataStatus = document.getElementById('metadata-status');
+    const artistField = document.getElementById('youtube-artist');
+    const titleField = document.getElementById('youtube-title');
+    
+    try {
+        // Show loading indicator
+        loadingIndicator.style.display = 'block';
+        metadataStatus.textContent = '';
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/youtube/metadata`, {
+            method: 'POST',
+            body: JSON.stringify({ url: url })
+        });
+        
+        if (!response) {
+            // Auth failed, already handled by authenticatedFetch
+            loadingIndicator.style.display = 'none';
+            return;
+        }
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // Populate the fields with extracted metadata
+            artistField.value = result.artist || '';
+            titleField.value = result.title || '';
+            
+            // Show success status
+            metadataStatus.textContent = '✅ Metadata extracted successfully';
+            metadataStatus.className = 'metadata-status success';
+            
+            // Clear success message after 3 seconds
+            setTimeout(() => {
+                if (metadataStatus.textContent === '✅ Metadata extracted successfully') {
+                    metadataStatus.textContent = '';
+                    metadataStatus.className = 'metadata-status';
+                }
+            }, 3000);
+            
+        } else {
+            // Handle extraction errors
+            let errorMessage = result.message || 'Failed to extract metadata';
+            
+            if (result.error_type === 'bot_detection') {
+                errorMessage = '⚠️ YouTube blocked access. Contact admin to update cookies.';
+            } else {
+                errorMessage = `❌ ${errorMessage}`;
+            }
+            
+            metadataStatus.textContent = errorMessage;
+            metadataStatus.className = 'metadata-status error';
+            
+            // Show user they can enter manually
+            artistField.placeholder = 'Enter artist name manually';
+            titleField.placeholder = 'Enter song title manually';
+        }
+        
+    } catch (error) {
+        console.error('Error extracting YouTube metadata:', error);
+        metadataStatus.textContent = '❌ Error extracting metadata - please enter manually';
+        metadataStatus.className = 'metadata-status error';
+        
+        artistField.placeholder = 'Enter artist name manually';
+        titleField.placeholder = 'Enter song title manually';
+        
+    } finally {
+        loadingIndicator.style.display = 'none';
     }
 }
 

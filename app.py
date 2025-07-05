@@ -19,6 +19,7 @@ import os
 import logging
 import hashlib
 import time
+import subprocess
 from enum import Enum
 
 from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File, Header, Depends
@@ -145,7 +146,8 @@ class JobSubmissionRequest(BaseModel):
 
 class YouTubeSubmissionRequest(BaseModel):
     url: str
-    cookies: Optional[str] = None
+    artist: Optional[str] = None
+    title: Optional[str] = None
 
 
 class LyricsReviewRequest(BaseModel):
@@ -370,7 +372,7 @@ def warm_cache():
     secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
 )
-async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[str] = None):
+async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[str] = None, override_artist: Optional[str] = None, override_title: Optional[str] = None):
     """First phase: Download audio, separate, and transcribe lyrics."""
     import sys
     import traceback
@@ -391,7 +393,7 @@ async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[
 
         # Process using the full KaraokePrep workflow (same as CLI)
         log_message(job_id, "INFO", "Starting full karaoke processing workflow...")
-        result = await processor.process_url(job_id, youtube_url, cookies_str)
+        result = await processor.process_url(job_id, youtube_url, cookies_str, override_artist, override_title)
 
         # Update status to awaiting review
         update_job_status_with_timeline(
@@ -1415,6 +1417,267 @@ async def revoke_token(token_value: str, admin: dict = Depends(authenticate_admi
         return JSONResponse({"success": False, "message": f"Error revoking token: {str(e)}"}, status_code=500)
 
 
+# YouTube Cookie Management (Admin Only)
+class UpdateCookiesRequest(BaseModel):
+    cookies: str
+
+
+@api_app.get("/api/admin/cookies/status")
+async def get_cookie_status(admin: dict = Depends(authenticate_admin)):
+    """Get current YouTube cookie status (admin only)."""
+    try:
+        cookie_data = user_youtube_cookies_dict.get("admin_cookies", {})
+        
+        has_cookies = bool(cookie_data.get("cookies"))
+        last_updated = cookie_data.get("updated_at")
+        
+        # Consider cookies expired if they're older than 30 days
+        is_expired = False
+        if has_cookies and last_updated:
+            cookie_age_days = (time.time() - last_updated) / (24 * 60 * 60)
+            is_expired = cookie_age_days > 30
+        
+        return JSONResponse({
+            "success": True,
+            "has_cookies": has_cookies,
+            "last_updated": last_updated,
+            "is_expired": is_expired,
+            "cookie_age_days": int((time.time() - last_updated) / (24 * 60 * 60)) if last_updated else None
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error getting cookie status: {str(e)}"}, status_code=500)
+
+
+@api_app.post("/api/admin/cookies/update")
+async def update_cookies(request: UpdateCookiesRequest, admin: dict = Depends(authenticate_admin)):
+    """Update stored YouTube cookies (admin only)."""
+    try:
+        cookies_str = request.cookies.strip()
+        
+        if not cookies_str:
+            return JSONResponse({"success": False, "message": "Cookie data cannot be empty"}, status_code=400)
+        
+        # Basic validation - cookies should contain expected YouTube cookie names
+        expected_cookies = ["VISITOR_INFO1_LIVE", "YSC"]  # Common YouTube cookies
+        has_expected = any(cookie_name in cookies_str for cookie_name in expected_cookies)
+        
+        if not has_expected:
+            return JSONResponse({
+                "success": False, 
+                "message": f"Cookie data does not appear to contain YouTube cookies. Expected to find one of: {expected_cookies}"
+            }, status_code=400)
+        
+        # Store cookies with metadata
+        cookie_data = {
+            "cookies": cookies_str,
+            "updated_at": time.time(),
+            "updated_by": admin["token"][:8] + "...",
+            "character_count": len(cookies_str)
+        }
+        
+        user_youtube_cookies_dict["admin_cookies"] = cookie_data
+        
+        return JSONResponse({
+            "success": True, 
+            "message": f"YouTube cookies updated successfully ({len(cookies_str)} characters)",
+            "updated_at": cookie_data["updated_at"]
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error updating cookies: {str(e)}"}, status_code=500)
+
+
+@api_app.post("/api/admin/cookies/test")
+async def test_cookies(admin: dict = Depends(authenticate_admin)):
+    """Test stored YouTube cookies with a simple request (admin only)."""
+    try:
+        cookie_data = user_youtube_cookies_dict.get("admin_cookies", {})
+        
+        if not cookie_data.get("cookies"):
+            return JSONResponse({"success": False, "message": "No cookies stored to test"}, status_code=400)
+        
+        # Test cookies with a simple YouTube request
+        import requests
+        import tempfile
+        import os
+        
+        cookies_str = cookie_data["cookies"]
+        
+        # Save cookies to temporary file for testing
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write(cookies_str)
+            cookies_file = f.name
+        
+        try:
+            # Test with yt-dlp to extract info from a simple video
+            import subprocess
+            
+            test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Rick Roll - always available
+            
+            result = subprocess.run([
+                'yt-dlp', 
+                '--cookies', cookies_file,
+                '--no-download',
+                '--get-title',
+                '--get-duration', 
+                test_url
+            ], capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                # Extract title and duration from output
+                output_lines = result.stdout.strip().split('\n')
+                title = output_lines[0] if len(output_lines) > 0 else "Unknown"
+                duration = output_lines[1] if len(output_lines) > 1 else "Unknown"
+                
+                return JSONResponse({
+                    "success": True, 
+                    "message": f"Cookies working! Successfully accessed: {title} ({duration})",
+                    "test_url": test_url,
+                    "extracted_title": title,
+                    "extracted_duration": duration
+                })
+            else:
+                error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                return JSONResponse({
+                    "success": False, 
+                    "message": f"Cookie test failed: {error_msg}",
+                    "test_url": test_url
+                })
+                
+        finally:
+            # Clean up temporary cookies file
+            try:
+                os.unlink(cookies_file)
+            except:
+                pass
+        
+    except subprocess.TimeoutExpired:
+        return JSONResponse({"success": False, "message": "Cookie test timed out (30 seconds)"})
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error testing cookies: {str(e)}"}, status_code=500)
+
+
+@api_app.delete("/api/admin/cookies/delete")
+async def delete_cookies(admin: dict = Depends(authenticate_admin)):
+    """Delete stored YouTube cookies (admin only)."""
+    try:
+        if "admin_cookies" not in user_youtube_cookies_dict:
+            return JSONResponse({"success": False, "message": "No cookies stored to delete"}, status_code=404)
+        
+        # Store deletion info for audit trail
+        old_data = user_youtube_cookies_dict.get("admin_cookies", {})
+        deletion_info = {
+            "deleted_at": time.time(),
+            "deleted_by": admin["token"][:8] + "...",
+            "previous_update": old_data.get("updated_at"),
+            "character_count": len(old_data.get("cookies", ""))
+        }
+        
+        # Delete the cookies but keep deletion audit trail
+        del user_youtube_cookies_dict["admin_cookies"]
+        user_youtube_cookies_dict["last_deletion"] = deletion_info
+        
+        return JSONResponse({
+            "success": True, 
+            "message": f"YouTube cookies deleted successfully (was {deletion_info['character_count']} characters)",
+            "deleted_at": deletion_info["deleted_at"]
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error deleting cookies: {str(e)}"}, status_code=500)
+
+
+class YouTubeMetadataRequest(BaseModel):
+    url: str
+
+
+@api_app.post("/api/youtube/metadata")
+async def get_youtube_metadata(request: YouTubeMetadataRequest, user: dict = Depends(authenticate_user)):
+    """Extract metadata from YouTube URL without processing the full job."""
+    import re
+    
+    try:
+        youtube_url = request.url.strip()
+        
+        # Validate YouTube URL format
+        youtube_pattern = r'^https://(www\.)?(youtube\.com/(watch\?v=|embed/)|youtu\.be/).+'
+        if not re.match(youtube_pattern, youtube_url):
+            return JSONResponse({
+                "success": False,
+                "message": "Invalid YouTube URL format"
+            }, status_code=400)
+        
+        # Get stored admin cookies for metadata extraction
+        stored_cookies = None
+        cookie_data = user_youtube_cookies_dict.get("admin_cookies", {})
+        if cookie_data and cookie_data.get("cookies"):
+            stored_cookies = cookie_data["cookies"]
+        
+        # Extract metadata using the same function as full processing
+        from karaoke_gen.metadata import extract_info_for_online_media, parse_track_metadata
+        import logging
+        
+        # Create a logger for this operation
+        logger = logging.getLogger("metadata_extraction")
+        logger.setLevel(logging.INFO)
+        
+        try:
+            # Extract info from YouTube
+            extracted_info = extract_info_for_online_media(
+                input_url=youtube_url, 
+                input_artist=None, 
+                input_title=None, 
+                logger=logger, 
+                cookies_str=stored_cookies
+            )
+            
+            if not extracted_info:
+                return JSONResponse({
+                    "success": False,
+                    "message": "Could not extract metadata from YouTube URL"
+                }, status_code=400)
+            
+            # Parse metadata to get artist and title
+            metadata_result = parse_track_metadata(
+                extracted_info, None, None, None, logger
+            )
+            
+            artist = metadata_result.get("artist", "").strip()
+            title = metadata_result.get("title", "").strip()
+            
+            # Return extracted metadata
+            return JSONResponse({
+                "success": True,
+                "artist": artist,
+                "title": title,
+                "message": "Metadata extracted successfully"
+            })
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Check for bot detection errors
+            if any(keyword in error_msg.lower() for keyword in ['sign in', 'bot', 'automated', '403', 'forbidden', 'captcha']):
+                return JSONResponse({
+                    "success": False,
+                    "message": "YouTube access blocked. Please contact admin to update cookies.",
+                    "error_type": "bot_detection"
+                }, status_code=400)
+            else:
+                return JSONResponse({
+                    "success": False,
+                    "message": f"Error extracting metadata: {error_msg}",
+                    "error_type": "extraction_error"
+                }, status_code=400)
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": f"Server error: {str(e)}"
+        }, status_code=500)
+
+
 # Protected API Routes (now require authentication)
 @api_app.post("/api/submit")
 async def submit_job(request: JobSubmissionRequest, user: dict = Depends(authenticate_user)):
@@ -1459,7 +1722,7 @@ async def submit_job(request: JobSubmissionRequest, user: dict = Depends(authent
 
 @api_app.post("/api/submit-youtube")
 async def submit_youtube_job(request: YouTubeSubmissionRequest, user: dict = Depends(authenticate_user)):
-    """Submit a new YouTube karaoke generation job with optional cookies."""
+    """Submit a new YouTube karaoke generation job using stored admin cookies."""
     try:
         job_id = str(uuid.uuid4())[:8]
 
@@ -1467,16 +1730,17 @@ async def submit_youtube_job(request: YouTubeSubmissionRequest, user: dict = Dep
         if not track_job_usage(user["token"], job_id):
             return JSONResponse({"status": "error", "message": "Failed to track token usage"}, status_code=500)
 
-        # Store user cookies if provided
-        cookies_str = None
-        if request.cookies:
-            # Store cookies associated with the user's session token
-            session_token = user.get("session_token")  # We'll need to pass this in auth
-            if session_token:
-                user_youtube_cookies_dict[session_token] = {"cookies": request.cookies, "updated_at": time.time()}
-                cookies_str = request.cookies
-                print(f"Stored YouTube cookies for user session {session_token[:8]}...")
+        # Get stored admin cookies from the cookies dict
+        stored_cookies = None
+        cookie_data = user_youtube_cookies_dict.get("admin_cookies", {})
+        if cookie_data and cookie_data.get("cookies"):
+            stored_cookies = cookie_data["cookies"]
+            print(f"Using stored admin YouTube cookies for job {job_id}")
 
+        # Get optional override artist and title
+        override_artist = request.artist.strip() if request.artist else None
+        override_title = request.title.strip() if request.title else None
+        
         # Initialize job status with timeline and user info
         update_job_status_with_timeline(
             job_id,
@@ -1486,20 +1750,22 @@ async def submit_youtube_job(request: YouTubeSubmissionRequest, user: dict = Dep
             created_at=datetime.datetime.now().isoformat(),
             user_type=user["user_type"].value,
             remaining_uses=user["remaining_uses"],
-            has_cookies=bool(cookies_str),
+            has_stored_cookies=bool(stored_cookies),
+            override_artist=override_artist,
+            override_title=override_title,
         )
 
         # Initialize job logs
         job_logs_dict[job_id] = []
-
-        # Spawn the background job with cookies
-        process_part_one.spawn(job_id, request.url, cookies_str)
+        
+        # Spawn the background job with stored cookies and override values
+        process_part_one.spawn(job_id, request.url, stored_cookies, override_artist, override_title)
 
         return JSONResponse(
             {
                 "status": "success",
                 "job_id": job_id,
-                "message": "YouTube job submitted successfully" + (" with cookies" if cookies_str else ""),
+                "message": "YouTube job submitted successfully" + (" with stored cookies" if stored_cookies else " (no cookies available)"),
                 "remaining_uses": user["remaining_uses"] - 1 if user["remaining_uses"] > 0 else user["remaining_uses"],
             },
             status_code=202,
@@ -1806,7 +2072,18 @@ async def retry_job(job_id: str, user: dict = Depends(authenticate_user)):
             youtube_url = job_data.get("url", "")
             if not youtube_url:
                 raise HTTPException(status_code=400, detail="No URL found for retry")
-            process_part_one.spawn(job_id, youtube_url)
+            
+            # Get stored admin cookies for retry
+            stored_cookies = None
+            cookie_data = user_youtube_cookies_dict.get("admin_cookies", {})
+            if cookie_data and cookie_data.get("cookies"):
+                stored_cookies = cookie_data["cookies"]
+            
+            # Extract override artist/title from original job if they exist
+            override_artist = job_data.get("override_artist")
+            override_title = job_data.get("override_title")
+            
+            process_part_one.spawn(job_id, youtube_url, stored_cookies, override_artist, override_title)
 
         return JSONResponse({"status": "success", "message": f"Job {job_id} retry initiated"})
     except HTTPException:

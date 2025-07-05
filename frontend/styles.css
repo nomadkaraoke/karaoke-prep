@@ -2491,54 +2491,81 @@ html {
     max-width: 900px;
     width: 90%;
     max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.token-modal-content .modal-body {
+    flex: 1;
     overflow-y: auto;
+    padding: 0;
 }
 
 .token-management {
     padding: 20px;
+    padding-bottom: 0;
 }
 
 .token-create-section {
     background: #f8f9fa;
-    padding: 20px;
-    border-radius: 10px;
-    margin-bottom: 30px;
-    border: 2px solid #e9ecef;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #e9ecef;
+    flex-shrink: 0;
 }
 
 .token-create-section h4 {
     color: #667eea;
-    margin-bottom: 20px;
+    margin-bottom: 15px;
     text-align: center;
 }
 
 .form-row {
     display: grid;
     grid-template-columns: 1fr 2fr 1fr;
-    gap: 15px;
-    margin-bottom: 15px;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.token-list-section {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 .token-list-section h4 {
     color: #333;
-    margin-bottom: 20px;
+    margin-bottom: 15px;
     text-align: center;
+    flex-shrink: 0;
 }
 
 .token-list {
     display: grid;
-    gap: 15px;
+    gap: 8px;
+    padding-bottom: 20px;
+    overflow-y: auto;
+    flex: 1;
 }
 
 .token-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 20px;
-    border: 2px solid #e9ecef;
-    border-radius: 10px;
+    padding: 12px 15px;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
     background: white;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
+    min-height: auto;
+}
+
+.token-item:hover {
+    border-color: #667eea;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
 }
 
 .token-item.active {
@@ -2554,40 +2581,49 @@ html {
 
 .token-info {
     flex: 1;
+    min-width: 0;
 }
 
 .token-header {
     display: flex;
-    gap: 15px;
+    gap: 10px;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
 }
 
 .token-value {
     font-family: 'Courier New', monospace;
     background: #f1f3f4;
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 14px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 13px;
     color: #333;
     border: 1px solid #ddd;
+    flex-shrink: 0;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .token-type {
     background: #667eea;
     color: white;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 16px;
+    font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
+    flex-shrink: 0;
 }
 
 .token-status {
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 12px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 11px;
     font-weight: 600;
+    flex-shrink: 0;
 }
 
 .token-status.active {
@@ -2602,44 +2638,52 @@ html {
 
 .token-details {
     display: flex;
-    gap: 15px;
-    font-size: 14px;
+    gap: 12px;
+    font-size: 13px;
     color: #666;
-    margin-bottom: 5px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
 }
 
 .token-usage, .token-jobs {
     background: #e9ecef;
-    padding: 2px 8px;
-    border-radius: 4px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    white-space: nowrap;
 }
 
 .token-description {
     font-style: italic;
     color: #888;
+    font-size: 12px;
+    margin-bottom: 2px;
+    word-break: break-word;
 }
 
 .token-last-used {
-    font-size: 12px;
+    font-size: 11px;
     color: #999;
 }
 
 .token-actions {
     display: flex;
-    gap: 10px;
+    gap: 8px;
+    flex-shrink: 0;
+    align-items: center;
 }
 
 .no-tokens {
     text-align: center;
     color: #666;
     font-style: italic;
-    padding: 40px;
+    padding: 30px;
 }
 
 .token-loading {
     text-align: center;
     color: #666;
-    padding: 40px;
+    padding: 30px;
 }
 
 /* Token Management Form Styling */
@@ -2720,6 +2764,279 @@ html {
 /* Form row specific adjustments */
 .token-management .form-row .form-group {
     margin-bottom: 0;
+}
+
+/* Cookie Management Modal Styles */
+.cookie-modal-content {
+    max-width: 800px;
+    width: 90%;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.cookie-modal-content .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.cookie-management {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.cookie-status-section {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+    flex-shrink: 0;
+}
+
+.cookie-status-section h4 {
+    color: #667eea;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.cookie-status-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.cookie-status-info .status-indicator {
+    padding: 16px 20px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 1rem;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+    line-height: 1.4;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: normal;
+    min-height: 60px;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: visible;
+}
+
+.cookie-status-info .status-indicator:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.cookie-status-info .status-indicator.active {
+    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.cookie-status-info .status-indicator.inactive {
+    background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.cookie-status-info .status-indicator.warning {
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.last-updated {
+    font-size: 0.85rem;
+    color: #6c757d;
+    text-align: center;
+    font-style: italic;
+}
+
+.cookie-warning {
+    margin-top: 12px;
+    padding: 12px;
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 6px;
+    color: #856404;
+}
+
+.cookie-warning p {
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+
+.cookie-warning p:last-child {
+    margin-bottom: 0;
+}
+
+.cookie-update-section {
+    background: white;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+}
+
+.cookie-update-section h4 {
+    color: #333;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.cookie-update-section .form-group {
+    margin-bottom: 15px;
+}
+
+.cookie-update-section .form-group:last-child {
+    margin-bottom: 0;
+}
+
+.cookie-update-section label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #333;
+    font-size: 0.95rem;
+}
+
+.cookie-update-section textarea {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    resize: vertical;
+    min-height: 120px;
+    transition: border-color 0.3s ease;
+}
+
+.cookie-update-section textarea:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.cookie-update-section .form-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 15px;
+}
+
+.cookie-update-section .btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.cookie-update-section .btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.cookie-update-section .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.cookie-update-section .btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.cookie-update-section .btn-secondary:hover {
+    background: #5a6268;
+    transform: translateY(-1px);
+}
+
+.cookie-update-section .btn-danger {
+    background: #dc3545;
+    color: white;
+}
+
+.cookie-update-section .btn-danger:hover {
+    background: #c82333;
+    transform: translateY(-1px);
+}
+
+.cookie-help-section {
+    background: #e3f2fd;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #bbdefb;
+}
+
+.cookie-help-section h4 {
+    color: #0d47a1;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.cookie-instructions {
+    color: #1565c0;
+    line-height: 1.5;
+}
+
+.cookie-instructions p {
+    margin-bottom: 12px;
+}
+
+.cookie-instructions p:last-child {
+    margin-bottom: 0;
+}
+
+.cookie-instructions strong {
+    color: #0d47a1;
+    font-weight: 600;
+}
+
+.cookie-instructions ol,
+.cookie-instructions ul {
+    margin: 10px 0 12px 20px;
+    padding-left: 0;
+}
+
+.cookie-instructions li {
+    margin-bottom: 6px;
+    line-height: 1.4;
+}
+
+.cookie-instructions a {
+    color: #1976d2;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.cookie-instructions a:hover {
+    text-decoration: underline;
+}
+
+.cookie-loading {
+    text-align: center;
+    color: #6c757d;
+    padding: 40px;
+    font-style: italic;
 }
 
 /* Instrumental Selection Modal Specific Styles */
@@ -3030,4 +3347,142 @@ html {
         width: 100%;
         max-width: 300px;
     }
-} 
+    
+    .cookie-modal-content {
+        width: 95vw;
+        margin: 1rem;
+    }
+    
+    .cookie-management {
+        padding: 15px;
+        gap: 15px;
+    }
+    
+    .cookie-status-section,
+    .cookie-update-section,
+    .cookie-help-section {
+        padding: 12px;
+    }
+    
+    .cookie-update-section .form-actions {
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .cookie-update-section .btn {
+        width: 100%;
+        text-align: center;
+    }
+    
+    .cookie-instructions ol,
+    .cookie-instructions ul {
+        margin-left: 15px;
+    }
+}
+
+/* YouTube Metadata Auto-Population Styles */
+.loading-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    margin-top: 0.5rem;
+}
+
+.metadata-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: #6c757d;
+    font-style: italic;
+    padding: 0.75rem;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    text-align: center;
+    min-width: 180px;
+}
+
+.metadata-status {
+    font-size: 0.85rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    text-align: center;
+    transition: all 0.3s ease;
+    min-height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.metadata-status.success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.metadata-status.error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.youtube-url-mode .name-fields-row {
+    margin-top: 1rem;
+}
+
+.youtube-url-mode .form-group small {
+    font-size: 0.8rem;
+    color: #6c757d;
+    font-style: italic;
+}
+
+/* Enhanced input styling for auto-populated fields */
+.youtube-url-mode input[placeholder*="auto-populated"] {
+    border-color: #28a745;
+    background: linear-gradient(135deg, #f8fff9 0%, #f0f8f0 100%);
+}
+
+.youtube-url-mode input[placeholder*="auto-populated"]:focus {
+    border-color: #20c997;
+    box-shadow: 0 0 0 0.2rem rgba(32, 201, 151, 0.25);
+}
+
+/* Loading animation */
+@keyframes metadata-pulse {
+    0%, 100% {
+        opacity: 0.7;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+.metadata-loading {
+    animation: metadata-pulse 1.5s ease-in-out infinite;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+    .loading-status {
+        flex-direction: column;
+        gap: 0.5rem;
+        min-height: auto;
+    }
+    
+    .metadata-loading {
+        min-width: auto;
+        width: 100%;
+    }
+    
+    .metadata-status {
+        width: 100%;
+        text-align: center;
+    }
+    
+    .youtube-url-mode .name-fields-row {
+        flex-direction: column;
+        gap: 1rem;
+    }
+}

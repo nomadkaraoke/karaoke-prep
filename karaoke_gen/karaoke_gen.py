@@ -69,6 +69,8 @@ class KaraokePrep:
         style_params_json=None,
         # Add the new parameter
         skip_separation=False,
+        # YouTube/Online Configuration
+        cookies_str=None,
     ):
         self.log_level = log_level
         self.log_formatter = log_formatter
@@ -123,6 +125,9 @@ class KaraokePrep:
         # Style Config - Keep needed ones
         self.render_bounding_boxes = render_bounding_boxes # Passed to VideoGenerator
         self.style_params_json = style_params_json # Passed to LyricsProcessor
+
+        # YouTube/Online Config
+        self.cookies_str = cookies_str # Passed to metadata extraction and file download
 
         # Load style parameters using the config module
         self.style_params = load_style_params(self.style_params_json, self.logger)
@@ -197,7 +202,7 @@ class KaraokePrep:
     # Compatibility methods for tests - these call the new functions in metadata.py
     def extract_info_for_online_media(self, input_url=None, input_artist=None, input_title=None):
         """Compatibility method that calls the function in metadata.py"""
-        self.extracted_info = extract_info_for_online_media(input_url, input_artist, input_title, self.logger)
+        self.extracted_info = extract_info_for_online_media(input_url, input_artist, input_title, self.logger, self.cookies_str)
         return self.extracted_info
 
     def parse_single_track_metadata(self, input_artist, input_title):
@@ -242,7 +247,7 @@ class KaraokePrep:
                 self.logger.warning(f"Input media '{self.input_media}' is not a file and self.url was not set. Attempting to treat as URL.")
                 # This path requires calling extract/parse again, less efficient
                 try:
-                    extracted = extract_info_for_online_media(self.input_media, self.artist, self.title, self.logger)
+                    extracted = extract_info_for_online_media(self.input_media, self.artist, self.title, self.logger, self.cookies_str)
                     if extracted:
                          metadata_result = parse_track_metadata(
                              extracted, self.artist, self.title, self.persistent_artist, self.logger
@@ -345,7 +350,7 @@ class KaraokePrep:
 
                     self.logger.info(f"Downloading input media from {self.url}...")
                     # Delegate to FileHandler
-                    processed_track["input_media"] = self.file_handler.download_video(self.url, output_filename_no_extension)
+                    processed_track["input_media"] = self.file_handler.download_video(self.url, output_filename_no_extension, self.cookies_str)
 
                     self.logger.info("Extracting still image from downloaded media (if input is video)...")
                     # Delegate to FileHandler
@@ -681,7 +686,7 @@ class KaraokePrep:
             self.url = self.input_media
             # Use the imported extract_info_for_online_media function
             self.extracted_info = extract_info_for_online_media(
-                input_url=self.url, input_artist=self.artist, input_title=self.title, logger=self.logger
+                input_url=self.url, input_artist=self.artist, input_title=self.title, logger=self.logger, cookies_str=self.cookies_str
             )
 
             if self.extracted_info and "playlist_count" in self.extracted_info:
@@ -690,4 +695,6 @@ class KaraokePrep:
                 return await self.process_playlist()
             else:
                 self.logger.info(f"Input URL is not a playlist, processing single track")
+                # Parse metadata to extract artist and title before processing
+                self.parse_single_track_metadata(self.artist, self.title)
                 return [await self.prep_single_track()]

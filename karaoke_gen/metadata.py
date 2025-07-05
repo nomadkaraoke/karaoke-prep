@@ -1,30 +1,80 @@
 import logging
 import yt_dlp.YoutubeDL as ydl
 
-def extract_info_for_online_media(input_url, input_artist, input_title, logger):
+def extract_info_for_online_media(input_url, input_artist, input_title, logger, cookies_str=None):
     """Extracts metadata using yt-dlp, either from a URL or via search."""
     logger.info(f"Extracting info for input_url: {input_url} input_artist: {input_artist} input_title: {input_title}")
-    extracted_info = None
-    if input_url is not None:
-        # If a URL is provided, use it to extract the metadata
-        with ydl({"quiet": True}) as ydl_instance:
-            extracted_info = ydl_instance.extract_info(input_url, download=False)
+    
+    # Set up yt-dlp options with enhanced anti-detection
+    base_opts = {
+        "quiet": True,
+        # Anti-detection options
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "referer": "https://www.youtube.com/",
+        "sleep_interval": 1,
+        "max_sleep_interval": 3,
+        "fragment_retries": 3,
+        "extractor_retries": 3,
+        "retries": 3,
+        # Headers to appear more human
+        "http_headers": {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-us,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        },
+    }
+    
+    # Add cookies if provided
+    if cookies_str:
+        logger.info("Using provided cookies for enhanced YouTube access")
+        # Save cookies to a temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write(cookies_str)
+            base_opts['cookiefile'] = f.name
     else:
-        # If no URL is provided, use the query to search for the top result
-        ydl_opts = {"quiet": "True", "format": "bestaudio", "noplaylist": "True", "extract_flat": True}
-        with ydl(ydl_opts) as ydl_instance:
-            query = f"{input_artist} {input_title}"
-            search_results = ydl_instance.extract_info(f"ytsearch1:{query}", download=False)
-            if search_results and "entries" in search_results and search_results["entries"]:
-                 extracted_info = search_results["entries"][0]
-            else:
-                # Raise IndexError to match the expected exception in tests
-                raise IndexError(f"No search results found on YouTube for query: {input_artist} {input_title}")
+        logger.info("No cookies provided - attempting standard extraction")
+    
+    extracted_info = None
+    try:
+        if input_url is not None:
+            # If a URL is provided, use it to extract the metadata
+            with ydl(base_opts) as ydl_instance:
+                extracted_info = ydl_instance.extract_info(input_url, download=False)
+        else:
+            # If no URL is provided, use the query to search for the top result
+            search_opts = base_opts.copy()
+            search_opts.update({
+                "format": "bestaudio", 
+                "noplaylist": "True", 
+                "extract_flat": True
+            })
+            
+            with ydl(search_opts) as ydl_instance:
+                query = f"{input_artist} {input_title}"
+                search_results = ydl_instance.extract_info(f"ytsearch1:{query}", download=False)
+                if search_results and "entries" in search_results and search_results["entries"]:
+                     extracted_info = search_results["entries"][0]
+                else:
+                    # Raise IndexError to match the expected exception in tests
+                    raise IndexError(f"No search results found on YouTube for query: {input_artist} {input_title}")
 
-    if not extracted_info:
-         raise Exception(f"Failed to extract info for query: {input_artist} {input_title} or URL: {input_url}")
+        if not extracted_info:
+             raise Exception(f"Failed to extract info for query: {input_artist} {input_title} or URL: {input_url}")
 
-    return extracted_info
+        return extracted_info
+        
+    finally:
+        # Clean up temporary cookie file if it was created
+        if cookies_str and 'cookiefile' in base_opts:
+            try:
+                import os
+                os.unlink(base_opts['cookiefile'])
+            except:
+                pass
 
 
 def parse_track_metadata(extracted_info, current_artist, current_title, persistent_artist, logger):
