@@ -1966,7 +1966,7 @@ def get_base_api_url() -> str:
 
 @api_app.get("/api/jobs/{job_id}/download")
 async def download_video(job_id: str, request: Request, user: dict = Depends(authenticate_user_or_token)):
-    """Download the primary completed video."""
+    """Download the Final Karaoke Lossy 4k MP4 video."""
     try:
         job_data = job_status_dict.get(job_id)
         if not job_data:
@@ -1979,45 +1979,22 @@ async def download_video(job_id: str, request: Request, user: dict = Depends(aut
         if job_data.get("status") != "complete":
             raise HTTPException(status_code=400, detail="Job is not complete")
 
-        # First try the stored video path (should be the best quality final file)
-        video_path = job_data.get("video_path")
-        if video_path and Path(video_path).exists():
-            # Determine appropriate filename and media type
-            video_file = Path(video_path)
-            if video_file.suffix.lower() == ".mkv":
-                media_type = "video/x-matroska"
-                filename = f"karaoke-{job_id}.mkv"
-            else:
-                media_type = "video/mp4"
-                filename = f"karaoke-{job_id}.mp4"
-
-            return FileResponse(path=video_path, filename=filename, media_type=media_type)
-
-        # Fallback: look for final video files in order of preference
+        # Look specifically for the Final Karaoke Lossy 4k MP4 file
         track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
         track_dir = Path(track_output_dir)
 
-        # Look for final videos in order of preference (best quality first)
-        video_patterns = [
-            "*Final Karaoke Lossy 4k*.mp4",
-            "*Final Karaoke Lossless 4k*.mp4",
-            "*Final Karaoke*.mkv",
-            "*With Vocals*.mkv",
-            "*With Vocals*.mp4",
-            "*Final Karaoke*.mp4",
-        ]
+        # Find the Final Karaoke Lossy 4k MP4 file
+        video_files = list(track_dir.rglob("*Final Karaoke Lossy 4k*.mp4"))
+        
+        if not video_files:
+            raise HTTPException(status_code=404, detail="Final Karaoke Lossy 4k MP4 file not found")
 
-        for pattern in video_patterns:
-            video_files = list(track_dir.rglob(pattern))
-            if video_files:
-                video_file = video_files[0]  # Take the first match
-                return FileResponse(
-                    path=str(video_file),
-                    filename=f"karaoke-{job_id}-{video_file.stem}.{video_file.suffix[1:]}",
-                    media_type=get_mime_type(video_file.suffix),
-                )
-
-        raise HTTPException(status_code=404, detail="Video file not found")
+        video_file = video_files[0]  # Take the first match
+        return FileResponse(
+            path=str(video_file),
+            filename=video_file.name,
+            media_type="video/mp4",
+        )
 
     except HTTPException:
         raise

@@ -1666,7 +1666,6 @@ function createJobActions(jobId, job) {
     
     if (status === 'complete') {
         actions.push(`<button onclick="downloadVideo('${jobId}')" class="btn btn-primary">📥 Download MP4 Video</button>`);
-        actions.push(`<button onclick="downloadAll('${jobId}')" class="btn btn-success">📦 Download All Zip</button>`);
         actions.push(`<button onclick="showFilesModal('${jobId}')" class="btn btn-info">📁 View All Files</button>`);
     }
     
