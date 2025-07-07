@@ -29,13 +29,16 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 
-# Define the environment for our functions - using Python 3.13 for latest features
-# Option 1: Use container with latest FFmpeg pre-installed
+# Define the environment for our functions - using Python 3.13 for latest features with NVENC hardware acceleration
 karaoke_image = (
-    modal.Image.from_registry("jrottenberg/ffmpeg:7.1-ubuntu", add_python="3.13")
-    .entrypoint([])  # Override FFmpeg entrypoint to use standard shell
+    modal.Image.from_registry("nvidia/cuda:12.9.1-runtime-ubuntu22.04", add_python="3.13")
     .apt_install(
         [
+            # Note: NVIDIA drivers are pre-installed in Modal's GPU containers
+            # Installing additional driver packages can cause conflicts
+            "curl",
+            "wget", 
+            "xz-utils",
             # Audio libraries
             "libsndfile1",
             "libsox-dev",
@@ -48,14 +51,19 @@ karaoke_image = (
             "g++",
             "make",
             # rclone for cloud storage sync
-            "curl",
             "unzip",
         ]
     )
     .run_commands([
+        # Install latest FFmpeg with full NVENC support
+        "wget https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
+        "tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz",
+        "cp ffmpeg-master-latest-linux64-gpl/bin/* /usr/local/bin/",
+        "chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe",
         # Install rclone
         "curl https://rclone.org/install.sh | bash",
-        # Verify rclone installation
+        # Verify installations
+        "ffmpeg -version",
         "rclone version",
     ])
     .pip_install(
@@ -97,12 +105,6 @@ karaoke_image = (
             # uncomment the lyrics_transcriber_local "add_local_dir" and "run_commands" lines below
         ]
     )
-    .run_commands(
-        [
-            # Verify FFmpeg version
-            "ffmpeg -version",
-        ]
-    )
     .env({"LYRICS_TRANSCRIBER_CACHE_DIR": "/cache", "AUDIO_SEPARATOR_MODEL_DIR": "/models"})
     # ----- lyrics_transcriber_local -----
     # Uncomment this section to use the local version of lyrics-transcriber
@@ -125,6 +127,7 @@ app = modal.App("karaoke-generator-webapp")
 model_volume = modal.Volume.from_name("karaoke-models", create_if_missing=True)
 output_volume = modal.Volume.from_name("karaoke-output", create_if_missing=True)
 cache_volume = modal.Volume.from_name("karaoke-cache", create_if_missing=True)
+preview_volume = modal.Volume.from_name("karaoke-previews", create_if_missing=True)
 
 # Define serverless dictionaries to hold job states
 job_status_dict = modal.Dict.from_name("karaoke-job-statuses", create_if_missing=True)
@@ -146,7 +149,7 @@ system_config_dict = modal.Dict.from_name("karaoke-system-config", create_if_mis
 config_volume = modal.Volume.from_name("karaoke-config", create_if_missing=True)
 
 # Mount volumes to specific paths inside the container
-VOLUME_CONFIG = {"/models": model_volume, "/output": output_volume, "/cache": cache_volume, "/config": config_volume}
+VOLUME_CONFIG = {"/models": model_volume, "/output": output_volume, "/cache": cache_volume, "/config": config_volume, "/previews": preview_volume}
 
 
 # User type enumeration (must be defined before Pydantic models that use it)
@@ -306,7 +309,7 @@ def setup_job_logging(job_id: str):
     # Get configured log level from system config, default to INFO for production
     system_config = system_config_dict.get("config", {})
     log_level_name = system_config.get("log_level", "INFO")
-    log_level = getattr(logging, log_level_name.upper(), logging.INFO)
+    log_level = getattr(logging, log_level_name.upper(), logging.DEBUG)
     root_logger.setLevel(log_level)
     
     # Force specific loggers that are important for our application to the correct level
@@ -322,6 +325,18 @@ def setup_job_logging(job_id: str):
         important_logger.setLevel(log_level)
         # Ensure propagation is enabled so logs reach the root handler
         important_logger.propagate = True
+    
+    # Specifically configure video generation loggers to ensure NVENC/FFmpeg logs are captured
+    video_loggers = [
+        'lyrics_transcriber.output.video',
+        'lyrics_transcriber.output.generator',
+        f'lyrics_transcriber.preview.{job_id}',  # Preview-specific logger
+    ]
+    
+    for logger_name in video_loggers:
+        video_logger = logging.getLogger(logger_name)
+        video_logger.setLevel(log_level)
+        video_logger.propagate = True
 
     # Suppress noisy debug logs from Modal's internal libraries
     noisy_loggers = [
@@ -834,6 +849,8 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
     secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
     retries=0,
+    cpu=16.0,
+    memory=16384,
 )
 def process_part_three(job_id: str, selected_instrumental: Optional[str] = None):
     """Third phase: Generate final video formats and packages with selected instrumental."""
@@ -3048,8 +3065,10 @@ async def get_audio_file(job_id: str):
     try:
         from pathlib import Path
         import hashlib
+        import shutil
+        import tempfile
 
-        # Reload volume to see files from other containers
+        # Reload output volume to see latest audio files (no conflicts since previews are in separate volume)
         output_volume.reload()
 
         job_data = job_status_dict.get(job_id)
@@ -3094,7 +3113,17 @@ async def get_audio_file(job_id: str):
         else:
             media_type = "audio/flac"  # Default
 
-        return FileResponse(path=str(vocals_file), filename=f"vocals-{job_id}{file_extension}", media_type=media_type)
+        # Serve the original file directly to minimize volume conflicts
+        # The preview video generation will gracefully handle volume reload failures
+        return FileResponse(
+            path=str(vocals_file), 
+            filename=f"vocals-{job_id}{file_extension}", 
+            media_type=media_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            }
+        )
 
     except HTTPException:
         raise
@@ -3112,7 +3141,7 @@ async def generate_preview_video(job_id: str, request: Request):
     try:
         log_message(job_id, "INFO", f"🎬 [STAGE 1] Preview video request received at {datetime.datetime.now().isoformat()}")
         
-        # Reload volume to see files from other containers
+        # Reload output volume for audio files (no conflicts since previews use separate volume)
         volume_reload_start = time.time()
         output_volume.reload()
         volume_reload_duration = time.time() - volume_reload_start
@@ -3161,8 +3190,9 @@ async def get_audio_by_hash(job_id: str, audio_hash: str):
     try:
         from pathlib import Path
         import hashlib
+        import shutil
 
-        # Reload volume to see files from other containers
+        # Reload output volume to see latest audio files (no conflicts since previews are in separate volume)
         output_volume.reload()
 
         job_data = job_status_dict.get(job_id)
@@ -3215,7 +3245,17 @@ async def get_audio_by_hash(job_id: str, audio_hash: str):
         else:
             media_type = "audio/flac"  # Default
 
-        return FileResponse(path=str(vocals_file), filename=f"vocals-{job_id}{file_extension}", media_type=media_type)
+        # Serve the original file directly to minimize volume conflicts
+        # The preview video generation will gracefully handle volume reload failures
+        return FileResponse(
+            path=str(vocals_file), 
+            filename=f"vocals-{job_id}{file_extension}", 
+            media_type=media_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            }
+        )
 
     except HTTPException:
         raise
@@ -3235,20 +3275,22 @@ async def get_preview_video(job_id: str, preview_hash: str):
 
         log_message(job_id, "INFO", f"📺 [STAGE 4] Preview video fetch request received at {datetime.datetime.now().isoformat()} for hash: {preview_hash}")
 
-        # Reload volume to see files from other containers
+        # Reload preview volume to see latest preview videos (no conflicts since previews are in separate volume)
         volume_reload_start = time.time()
-        output_volume.reload()
-        volume_reload_duration = time.time() - volume_reload_start
-        log_message(job_id, "DEBUG", f"📁 [STAGE 4] Volume reload completed in {volume_reload_duration:.3f}s")
+        try:
+            preview_volume.reload()
+            volume_reload_duration = time.time() - volume_reload_start
+            log_message(job_id, "DEBUG", f"📁 [STAGE 4] Preview volume reload completed in {volume_reload_duration:.3f}s")
+        except Exception as e:
+            log_message(job_id, "WARNING", f"📁 [STAGE 4] Preview volume reload failed: {str(e)} - proceeding anyway")
 
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        # Look for the preview video file
+        # Look for the preview video file in dedicated preview volume
         file_search_start = time.time()
-        track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
-        preview_dir = Path(track_output_dir) / "previews"
+        preview_dir = Path(f"/previews/{job_id}")
 
         if not preview_dir.exists():
             raise HTTPException(status_code=404, detail="Preview directory not found")
@@ -4123,6 +4165,8 @@ def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
     volumes=VOLUME_CONFIG,
     timeout=300,  # 5 minutes for preview video generation
     retries=0,
+    cpu=8.0,
+    memory=16384,
 )
 def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
     """Generate a preview video with current corrections."""
@@ -4141,11 +4185,15 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         
         log_message(job_id, "INFO", f"🎥 [STAGE 2] Modal function started at {datetime.datetime.now().isoformat()}")
 
-        # Reload volume to see files from other containers
+        # Only reload preview volume (audio files should already be accessible from Phase 1)
+        # Avoid reloading output volume to prevent conflicts with concurrent audio serving
         volume_reload_start = time.time()
-        output_volume.reload()
-        volume_reload_duration = time.time() - volume_reload_start
-        log_message(job_id, "DEBUG", f"📁 [STAGE 2] Volume reload completed in {volume_reload_duration:.3f}s")
+        try:
+            preview_volume.reload()
+            volume_reload_duration = time.time() - volume_reload_start
+            log_message(job_id, "DEBUG", f"📁 [STAGE 2] Preview volume reload completed in {volume_reload_duration:.3f}s")
+        except Exception as e:
+            log_message(job_id, "INFO", f"📁 [STAGE 2] Preview volume reload skipped: {str(e)} - proceeding anyway")
 
         log_message(job_id, "INFO", "🎬 [STAGE 2] Starting preview video generation with corrected data")
 
@@ -4210,15 +4258,16 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
             else:
                 log_message(job_id, "WARNING", "No styles files found, using default styles")
 
-        # Create previews directory for storing preview videos
-        preview_dir = Path(track_output_dir) / "previews"
+        # Use dedicated preview volume instead of job output directory
+        # This completely separates preview videos from audio files, eliminating volume conflicts
+        preview_dir = Path(f"/previews/{job_id}")
         preview_dir.mkdir(parents=True, exist_ok=True)
 
-        # Set up preview config with cache_dir pointing to previews directory
-        # This ensures the video is created where the API expects to find it
+        # Set up preview config with cache_dir pointing to dedicated preview volume
+        # This ensures preview videos are isolated from audio file operations
         preview_config = OutputConfig(
             output_dir=str(track_output_dir),
-            cache_dir=str(preview_dir),  # Point cache_dir to previews directory
+            cache_dir=str(preview_dir),  # Point cache_dir to dedicated preview volume
             output_styles_json=styles_file,
             video_resolution="360p",  # Force 360p for preview
             render_video=True,
@@ -4237,6 +4286,25 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         video_generation_start = time.time()
         log_message(job_id, "INFO", f"⚙️ [STAGE 2] Starting video generation (FFmpeg) at {datetime.datetime.now().isoformat()}")
         
+        # Create a logger that's connected to the job logging system
+        preview_logger = logging.getLogger(f"lyrics_transcriber.preview.{job_id}")
+        preview_logger.setLevel(logging.DEBUG)  # Ensure we capture all video generation logs
+        preview_logger.propagate = True  # Ensure it propagates to the root handler
+        
+        # Also ensure the VideoGenerator logger is properly configured 
+        video_logger = logging.getLogger("lyrics_transcriber.output.video")
+        video_logger.setLevel(logging.DEBUG)
+        video_logger.propagate = True
+        
+        # Debug: Log the logger configuration
+        log_message(job_id, "DEBUG", f"🔧 Preview logger: {preview_logger.name}, level: {preview_logger.level}, propagate: {preview_logger.propagate}")
+        log_message(job_id, "DEBUG", f"🔧 Video logger: {video_logger.name}, level: {video_logger.level}, propagate: {video_logger.propagate}")
+        log_message(job_id, "DEBUG", f"🔧 Root logger handlers: {len(logging.getLogger().handlers)}")
+        
+        # Test the logger to make sure it works
+        preview_logger.info("🧪 Preview logger test - this should appear in logs")
+        video_logger.info("🧪 Video logger test - this should appear in logs")
+        
         result = CorrectionOperations.generate_preview_video(
             correction_result=base_correction_result,
             updated_data=updated_data,
@@ -4244,7 +4312,7 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
             audio_filepath=str(audio_file),
             artist=artist,
             title=title,
-            logger=None,  # Don't use Python logging - we use log_message() instead
+            logger=preview_logger,  # Use properly connected logger for video generation logs
         )
         
         video_generation_duration = time.time() - video_generation_start
@@ -4255,12 +4323,12 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         import sys
         sys.stdout.flush()
 
-        # Ensure volume changes are committed before returning
+        # Commit preview volume changes before returning (preview videos are now in separate volume)
         volume_commit_start = time.time()
-        log_message(job_id, "INFO", f"💾 [STAGE 3] Starting volume commit at {datetime.datetime.now().isoformat()}")
-        output_volume.commit()
+        log_message(job_id, "INFO", f"💾 [STAGE 3] Starting preview volume commit at {datetime.datetime.now().isoformat()}")
+        preview_volume.commit()
         volume_commit_duration = time.time() - volume_commit_start
-        log_message(job_id, "INFO", f"✅ [STAGE 3] Volume commit completed in {volume_commit_duration:.3f}s")
+        log_message(job_id, "INFO", f"✅ [STAGE 3] Preview volume commit completed in {volume_commit_duration:.3f}s")
 
         # Final flush after volume commit
         sys.stdout.flush()
