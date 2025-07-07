@@ -4676,31 +4676,49 @@ let currentReviewData = null;
 
 async function showInstrumentalSelectionModal(jobId, correctedData) {
     try {
-        // Store the corrected data for later use
-        currentReviewData = correctedData;
+        currentJobId = jobId;
+        currentCorrectedData = correctedData;
         
-        const modal = document.getElementById('instrumental-selection-modal');
-        const content = document.getElementById('instrumental-selection-content');
+        // Show the modal
+        document.getElementById('instrumental-selection-modal').style.display = 'flex';
         
-        modal.style.display = 'flex';
-        content.innerHTML = '<div class="instrumental-loading">Loading instrumental options...</div>';
+        // Check YouTube authentication status
+        const authStatus = await checkYouTubeAuthStatus();
+        displayYouTubeAuthStatus(authStatus);
         
-        // Fetch available instrumentals
-        const response = await authenticatedFetch(`${API_BASE_URL}/corrections/${jobId}/instrumentals`);
+        // Load instrumental options
+        const response = await authenticatedFetch(`/api/corrections/${jobId}/instrumentals`);
+        const data = await response.json();
         
-        if (!response) return; // Auth failed, already handled
-        
-        if (response.ok) {
-            const result = await response.json();
-            displayInstrumentalOptions(result.instrumentals);
+        if (data.instrumentals && data.instrumentals.length > 0) {
+            displayInstrumentalOptions(data.instrumentals);
         } else {
-            const error = await response.json();
-            content.innerHTML = `<div class="no-instrumentals">Error loading instrumentals: ${error.detail}</div>`;
+            document.getElementById('instrumental-selection-content').innerHTML = `
+                <div class="no-instrumentals">
+                    <h3>❌ No Instrumental Files Found</h3>
+                    <p>No instrumental audio files were generated during processing. This may indicate an issue with audio separation.</p>
+                    <p>You can still proceed with finalization, but no instrumental will be used for the final video.</p>
+                </div>
+            `;
+            
+            // Enable the confirm button even without instrumentals
+            updateConfirmInstrumentalButton();
         }
+        
     } catch (error) {
-        console.error('Error loading instrumentals:', error);
-        const content = document.getElementById('instrumental-selection-content');
-        content.innerHTML = `<div class="no-instrumentals">Error loading instrumentals: ${error.message}</div>`;
+        console.error('Error loading instrumental options:', error);
+        showError('Failed to load instrumental options');
+        
+        document.getElementById('instrumental-selection-content').innerHTML = `
+            <div class="no-instrumentals">
+                <h3>❌ Error Loading Instrumentals</h3>
+                <p>Failed to load instrumental options: ${error.message}</p>
+                <p>You can still proceed with finalization.</p>
+            </div>
+        `;
+        
+        // Enable the confirm button even with errors
+        updateConfirmInstrumentalButton();
     }
 }
 
@@ -5472,3 +5490,164 @@ function toggleLogAutoRefresh() {
 }
 
 // Modify the existing loadLogTailData function to store logs and apply filters
+
+// YouTube Authentication Functions
+async function checkYouTubeAuthStatus() {
+    try {
+        const response = await authenticatedFetch('/api/youtube/auth-status');
+        const data = await response.json();
+        
+        if (data.success) {
+            return data;
+        } else {
+            console.warn('YouTube auth status check failed:', data.message);
+            return { authenticated: false, message: data.message };
+        }
+    } catch (error) {
+        console.error('Error checking YouTube auth status:', error);
+        return { authenticated: false, message: 'Error checking authentication' };
+    }
+}
+
+async function authenticateWithYouTube() {
+    try {
+        // Get the authorization URL
+        const response = await authenticatedFetch('/api/youtube/auth-url');
+        const data = await response.json();
+        
+        if (!data.success) {
+            showError(`YouTube authentication setup error: ${data.message}`);
+            return false;
+        }
+        
+        // Open authorization URL in a popup
+        const popup = window.open(
+            data.authorization_url,
+            'youtube_auth',
+            'width=500,height=600,scrollbars=yes,resizable=yes'
+        );
+        
+        // Listen for the popup to send a success message
+        return new Promise((resolve) => {
+            const messageHandler = (event) => {
+                if (event.data && event.data.type === 'youtube_auth_success') {
+                    window.removeEventListener('message', messageHandler);
+                    popup.close();
+                    showSuccess('YouTube authentication successful!');
+                    resolve(true);
+                }
+            };
+            
+            window.addEventListener('message', messageHandler);
+            
+            // Check if popup was closed manually
+            const checkClosed = setInterval(() => {
+                if (popup.closed) {
+                    clearInterval(checkClosed);
+                    window.removeEventListener('message', messageHandler);
+                    resolve(false);
+                }
+            }, 1000);
+            
+            // Timeout after 10 minutes
+            setTimeout(() => {
+                clearInterval(checkClosed);
+                window.removeEventListener('message', messageHandler);
+                if (!popup.closed) {
+                    popup.close();
+                }
+                resolve(false);
+            }, 10 * 60 * 1000);
+        });
+        
+    } catch (error) {
+        console.error('Error starting YouTube authentication:', error);
+        showError('Error starting YouTube authentication');
+        return false;
+    }
+}
+
+async function revokeYouTubeAuth() {
+    try {
+        const response = await authenticatedFetch('/api/youtube/auth', {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('YouTube authentication revoked');
+            return true;
+        } else {
+            showError(`Error revoking YouTube authentication: ${data.message}`);
+            return false;
+        }
+    } catch (error) {
+        console.error('Error revoking YouTube authentication:', error);
+        showError('Error revoking YouTube authentication');
+        return false;
+    }
+}
+
+function displayYouTubeAuthStatus(authStatus) {
+    const statusContainer = document.getElementById('youtube-auth-status');
+    
+    if (authStatus.authenticated) {
+        statusContainer.innerHTML = `
+            <div class="youtube-auth-info authenticated">
+                ✅ Authenticated with YouTube
+            </div>
+            <div class="youtube-auth-actions">
+                <button onclick="revokeYouTubeAuthAndUpdate()" class="youtube-revoke-btn">
+                    Revoke
+                </button>
+            </div>
+        `;
+    } else {
+        statusContainer.innerHTML = `
+            <div class="youtube-auth-info not-authenticated">
+                ⚠️ Not authenticated - videos will be generated without YouTube upload
+            </div>
+            <div class="youtube-auth-actions">
+                <button onclick="authenticateYouTubeAndUpdate()" class="youtube-auth-btn">
+                    🔑 Authenticate with YouTube
+                </button>
+            </div>
+        `;
+    }
+}
+
+async function authenticateYouTubeAndUpdate() {
+    const authBtn = document.querySelector('.youtube-auth-btn');
+    const originalText = authBtn.textContent;
+    
+    authBtn.disabled = true;
+    authBtn.textContent = '🔄 Authenticating...';
+    
+    try {
+        const success = await authenticateWithYouTube();
+        
+        if (success) {
+            // Refresh auth status
+            const newStatus = await checkYouTubeAuthStatus();
+            displayYouTubeAuthStatus(newStatus);
+        }
+    } finally {
+        // Reset button if it still exists (might have been replaced)
+        const currentBtn = document.querySelector('.youtube-auth-btn');
+        if (currentBtn) {
+            currentBtn.disabled = false;
+            currentBtn.textContent = originalText;
+        }
+    }
+}
+
+async function revokeYouTubeAuthAndUpdate() {
+    const success = await revokeYouTubeAuth();
+    
+    if (success) {
+        // Refresh auth status
+        const newStatus = await checkYouTubeAuthStatus();
+        displayYouTubeAuthStatus(newStatus);
+    }
+}

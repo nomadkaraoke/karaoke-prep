@@ -31,11 +31,10 @@ from pydantic import BaseModel
 
 # Define the environment for our functions - using Python 3.13 for latest features with NVENC hardware acceleration
 karaoke_image = (
-    modal.Image.from_registry("nvidia/cuda:12.9.1-runtime-ubuntu22.04", add_python="3.13")
+    modal.Image.from_registry("nvidia/cuda:12.9.1-devel-ubuntu22.04", add_python="3.13")
     .apt_install(
         [
-            # Note: NVIDIA drivers are pre-installed in Modal's GPU containers
-            # Installing additional driver packages can cause conflicts
+            # Core system packages
             "curl",
             "wget", 
             "xz-utils",
@@ -55,6 +54,9 @@ karaoke_image = (
         ]
     )
     .run_commands([
+        # Set up CUDA library paths for NVENC support
+        "echo '/usr/local/cuda/lib64' >> /etc/ld.so.conf.d/cuda.conf",
+        "ldconfig",
         # Install latest FFmpeg with full NVENC support
         "wget https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
         "tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz",
@@ -62,8 +64,9 @@ karaoke_image = (
         "chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe",
         # Install rclone
         "curl https://rclone.org/install.sh | bash",
-        # Verify installations
+        # Verify installations and NVENC support
         "ffmpeg -version",
+        "ffmpeg -hide_banner -encoders | grep nvenc || echo 'NVENC encoders check'",
         "rclone version",
     ])
     .pip_install(
@@ -105,7 +108,13 @@ karaoke_image = (
             # uncomment the lyrics_transcriber_local "add_local_dir" and "run_commands" lines below
         ]
     )
-    .env({"LYRICS_TRANSCRIBER_CACHE_DIR": "/cache", "AUDIO_SEPARATOR_MODEL_DIR": "/models"})
+    .env({
+        "LYRICS_TRANSCRIBER_CACHE_DIR": "/cache", 
+        "AUDIO_SEPARATOR_MODEL_DIR": "/models",
+        # CUDA environment for NVENC support
+        "LD_LIBRARY_PATH": "/usr/local/cuda/lib64:$LD_LIBRARY_PATH",
+        "PATH": "/usr/local/cuda/bin:$PATH"
+    })
     # ----- lyrics_transcriber_local -----
     # Uncomment this section to use the local version of lyrics-transcriber
     # If using the PyPI version, comment out this section and
@@ -147,6 +156,9 @@ system_config_dict = modal.Dict.from_name("karaoke-system-config", create_if_mis
 
 # Add a volume for storing configuration files
 config_volume = modal.Volume.from_name("karaoke-config", create_if_missing=True)
+
+# Add new Modal Dict for storing user YouTube credentials
+user_youtube_credentials_dict = modal.Dict.from_name("karaoke-user-youtube-credentials", create_if_missing=True)
 
 # Mount volumes to specific paths inside the container
 VOLUME_CONFIG = {"/models": model_volume, "/output": output_volume, "/cache": cache_volume, "/config": config_volume, "/previews": preview_volume}
@@ -308,7 +320,7 @@ def setup_job_logging(job_id: str):
     
     # Get configured log level from system config, default to INFO for production
     system_config = system_config_dict.get("config", {})
-    log_level_name = system_config.get("log_level", "INFO")
+    log_level_name = system_config.get("log_level", "DEBUG")
     log_level = getattr(logging, log_level_name.upper(), logging.DEBUG)
     root_logger.setLevel(log_level)
     
@@ -946,10 +958,31 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
             
             log_message(job_id, "INFO", "Initializing KaraokeFinalise with configuration...")
             
+            # Get user credentials for YouTube upload if enabled
+            youtube_credentials = None
+            if config.get("enable_youtube_upload"):
+                # Get user from job data if available
+                user_token = job_data.get("user_token")  # We'll need to store this in job data
+                if user_token:
+                    user_credentials = user_youtube_credentials_dict.get("user_credentials", {})
+                    if user_token in user_credentials:
+                        cred_data = user_credentials[user_token]
+                        # Check if credentials are not expired
+                        expires_at = cred_data.get("expires_at")
+                        if not expires_at or time.time() < expires_at:
+                            youtube_credentials = cred_data["credentials"]
+                            log_message(job_id, "INFO", "Using stored YouTube credentials for upload")
+                        else:
+                            log_message(job_id, "WARNING", "YouTube credentials expired, disabling upload")
+                    else:
+                        log_message(job_id, "WARNING", "No YouTube credentials found for user, disabling upload")
+                else:
+                    log_message(job_id, "WARNING", "No user token in job data, disabling YouTube upload")
+
             # Set up KaraokeFinalise with full configuration (logs go to Modal stdout)
             finalizer = KaraokeFinalise(
                 logger=None,
-                log_level=logging.INFO,
+                log_level=logging.DEBUG,
                 dry_run=False,
                 instrumental_format="flac",
                 enable_cdg=True,  # Enable CDG creation
@@ -966,8 +999,9 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
                 cdg_styles=cdg_styles,  # Pass CDG styles configuration
                 non_interactive=True,  # CRITICAL: disable user prompts
                 keep_brand_code=False,  # Don't keep existing brand code, generate new one
+                user_youtube_credentials=youtube_credentials,  # Pass user's YouTube credentials
             )
-            
+                
             # Log which features are enabled
             features_enabled = []
             if finalizer.youtube_upload_enabled:
@@ -1814,6 +1848,262 @@ async def revoke_token(token_value: str, admin: dict = Depends(authenticate_admi
         return JSONResponse({"success": False, "message": f"Error revoking token: {str(e)}"}, status_code=500)
 
 
+# YouTube OAuth Management  
+class YouTubeAuthRequest(BaseModel):
+    authorization_code: str
+    redirect_uri: str
+
+
+@api_app.get("/api/youtube/auth-url")
+async def get_youtube_auth_url(user: dict = Depends(authenticate_user)):
+    """Get YouTube OAuth authorization URL for user authentication."""
+    try:
+        from google_auth_oauthlib.flow import Flow
+        import secrets
+        
+        # Get YouTube client secrets file path
+        config = get_finalization_config("youtube_auth")
+        youtube_secrets_file = config.get("youtube_client_secrets_file")
+        
+        if not youtube_secrets_file or not Path(youtube_secrets_file).exists():
+            return JSONResponse({
+                "success": False,
+                "message": "YouTube OAuth not configured. Please contact admin to set up YouTube client secrets."
+            }, status_code=400)
+        
+        # Generate state parameter for security
+        state = secrets.token_urlsafe(32)
+        
+        # Store state associated with user for verification
+        user_token = user["token"]
+        auth_states = user_youtube_credentials_dict.get("auth_states", {})
+        auth_states[state] = {
+            "user_token": user_token,
+            "created_at": time.time(),
+            "expires_at": time.time() + 600  # 10 minute expiry
+        }
+        user_youtube_credentials_dict["auth_states"] = auth_states
+        
+        # Create OAuth flow
+        flow = Flow.from_client_secrets_file(
+            youtube_secrets_file,
+            scopes=['https://www.googleapis.com/auth/youtube.upload'],
+            redirect_uri=f"{get_base_api_url()}/api/youtube/oauth-callback"
+        )
+        
+        # Generate authorization URL
+        authorization_url, _ = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            state=state
+        )
+        
+        return JSONResponse({
+            "success": True,
+            "authorization_url": authorization_url,
+            "state": state,
+            "message": "Open this URL in a new tab to authenticate with YouTube"
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": f"Error generating YouTube auth URL: {str(e)}"
+        }, status_code=500)
+
+
+@api_app.get("/api/youtube/oauth-callback")
+async def youtube_oauth_callback(request: Request):
+    """Handle YouTube OAuth callback and store credentials."""
+    try:
+        from google_auth_oauthlib.flow import Flow
+        import pickle
+        import base64
+        
+        # Get query parameters
+        code = request.query_params.get('code')
+        state = request.query_params.get('state')
+        error = request.query_params.get('error')
+        
+        if error:
+            return JSONResponse({
+                "success": False,
+                "message": f"YouTube authorization denied: {error}"
+            }, status_code=400)
+        
+        if not code or not state:
+            return JSONResponse({
+                "success": False,
+                "message": "Missing authorization code or state parameter"
+            }, status_code=400)
+        
+        # Verify state parameter
+        auth_states = user_youtube_credentials_dict.get("auth_states", {})
+        if state not in auth_states:
+            return JSONResponse({
+                "success": False,
+                "message": "Invalid or expired state parameter"
+            }, status_code=400)
+        
+        state_data = auth_states[state]
+        if time.time() > state_data["expires_at"]:
+            return JSONResponse({
+                "success": False,
+                "message": "Authorization state expired. Please try again."
+            }, status_code=400)
+        
+        user_token = state_data["user_token"]
+        
+        # Clean up used state
+        del auth_states[state]
+        user_youtube_credentials_dict["auth_states"] = auth_states
+        
+        # Get YouTube client secrets
+        config = get_finalization_config("youtube_auth")
+        youtube_secrets_file = config.get("youtube_client_secrets_file")
+        
+        # Complete OAuth flow
+        flow = Flow.from_client_secrets_file(
+            youtube_secrets_file,
+            scopes=['https://www.googleapis.com/auth/youtube.upload'],
+            redirect_uri=f"{get_base_api_url()}/api/youtube/oauth-callback"
+        )
+        
+        # Exchange authorization code for tokens
+        flow.fetch_token(code=code)
+        
+        # Serialize credentials for storage
+        credentials = flow.credentials
+        credentials_data = {
+            'token': credentials.token,
+            'refresh_token': credentials.refresh_token,
+            'token_uri': credentials.token_uri,
+            'client_id': credentials.client_id,
+            'client_secret': credentials.client_secret,
+            'scopes': credentials.scopes
+        }
+        
+        # Store credentials associated with user
+        user_credentials = user_youtube_credentials_dict.get("user_credentials", {})
+        user_credentials[user_token] = {
+            "credentials": credentials_data,
+            "created_at": time.time(),
+            "expires_at": credentials.expiry.timestamp() if credentials.expiry else None
+        }
+        user_youtube_credentials_dict["user_credentials"] = user_credentials
+        
+        # Return success page
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>YouTube Authentication Success</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                .success { color: #28a745; font-size: 24px; margin-bottom: 20px; }
+                .instructions { color: #666; margin-bottom: 30px; }
+                .close-btn { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+            </style>
+            <script>
+                // Close window automatically after showing success
+                setTimeout(() => {
+                    if (window.opener) {
+                        window.opener.postMessage({ type: 'youtube_auth_success' }, '*');
+                        window.close();
+                    }
+                }, 2000);
+            </script>
+        </head>
+        <body>
+            <div class="success">✅ YouTube Authentication Successful!</div>
+            <div class="instructions">
+                You can now upload videos to YouTube. This window will close automatically.
+            </div>
+            <button class="close-btn" onclick="window.close()">Close Window</button>
+        </body>
+        </html>
+        """
+        
+    except Exception as e:
+        error_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>YouTube Authentication Error</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
+                .error {{ color: #dc3545; font-size: 24px; margin-bottom: 20px; }}
+                .details {{ color: #666; margin-bottom: 30px; }}
+            </style>
+        </head>
+        <body>
+            <div class="error">❌ YouTube Authentication Failed</div>
+            <div class="details">Error: {str(e)}</div>
+            <button onclick="window.close()">Close Window</button>
+        </body>
+        </html>
+        """
+        return error_html
+
+
+@api_app.get("/api/youtube/auth-status")
+async def get_youtube_auth_status(user: dict = Depends(authenticate_user)):
+    """Get current YouTube authentication status for user."""
+    try:
+        user_token = user["token"]
+        user_credentials = user_youtube_credentials_dict.get("user_credentials", {})
+        
+        if user_token not in user_credentials:
+            return JSONResponse({
+                "success": True,
+                "authenticated": False,
+                "message": "Not authenticated with YouTube"
+            })
+        
+        cred_data = user_credentials[user_token]
+        expires_at = cred_data.get("expires_at")
+        
+        # Check if credentials are expired
+        is_expired = expires_at and time.time() > expires_at
+        
+        return JSONResponse({
+            "success": True,
+            "authenticated": not is_expired,
+            "expires_at": expires_at,
+            "created_at": cred_data.get("created_at"),
+            "message": "Authenticated with YouTube" if not is_expired else "YouTube credentials expired"
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": f"Error checking YouTube auth status: {str(e)}"
+        }, status_code=500)
+
+
+@api_app.delete("/api/youtube/auth")
+async def revoke_youtube_auth(user: dict = Depends(authenticate_user)):
+    """Revoke user's YouTube authentication."""
+    try:
+        user_token = user["token"]
+        user_credentials = user_youtube_credentials_dict.get("user_credentials", {})
+        
+        if user_token in user_credentials:
+            del user_credentials[user_token]
+            user_youtube_credentials_dict["user_credentials"] = user_credentials
+        
+        return JSONResponse({
+            "success": True,
+            "message": "YouTube authentication revoked successfully"
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": f"Error revoking YouTube auth: {str(e)}"
+        }, status_code=500)
+
+
 # YouTube Cookie Management (Admin Only)
 class UpdateCookiesRequest(BaseModel):
     cookies: str
@@ -2208,7 +2498,7 @@ async def get_youtube_metadata(request: YouTubeMetadataRequest, user: dict = Dep
         
         # Create a logger for this operation
         logger = logging.getLogger("metadata_extraction")
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
         
         try:
             # Extract info from YouTube
@@ -2286,6 +2576,7 @@ async def submit_job(request: JobSubmissionRequest, user: dict = Depends(authent
             created_at=datetime.datetime.now().isoformat(),
             user_type=user["user_type"].value,
             remaining_uses=user["remaining_uses"],
+            user_token=user["token"],  # Store user token for YouTube auth
         )
 
         # Job logs are now handled by Modal's native logging
@@ -2416,6 +2707,7 @@ async def submit_youtube_job(
             has_stored_cookies=bool(stored_cookies),
             override_artist=override_artist,
             override_title=override_title,
+            user_token=user["token"],  # Store user token for YouTube auth
         )
 
         # Job logs are now handled by Modal's native logging
@@ -3141,12 +3433,6 @@ async def generate_preview_video(job_id: str, request: Request):
     try:
         log_message(job_id, "INFO", f"🎬 [STAGE 1] Preview video request received at {datetime.datetime.now().isoformat()}")
         
-        # Reload output volume for audio files (no conflicts since previews use separate volume)
-        volume_reload_start = time.time()
-        output_volume.reload()
-        volume_reload_duration = time.time() - volume_reload_start
-        log_message(job_id, "DEBUG", f"📁 Volume reload completed in {volume_reload_duration:.3f}s")
-
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -3948,6 +4234,7 @@ async def submit_file(
             created_at=datetime.datetime.now().isoformat(),
             user_type=user["user_type"].value,
             remaining_uses=user["remaining_uses"],
+            user_token=user["token"],  # Store user token for YouTube auth
         )
 
         # Job logs are now handled by Modal's native logging
@@ -4165,6 +4452,7 @@ def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
     volumes=VOLUME_CONFIG,
     timeout=300,  # 5 minutes for preview video generation
     retries=0,
+    gpu="any",
     cpu=8.0,
     memory=16384,
 )
@@ -4183,19 +4471,7 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
         # Set up logging to capture ALL log messages from all modules
         log_handler = setup_job_logging(job_id)
         
-        log_message(job_id, "INFO", f"🎥 [STAGE 2] Modal function started at {datetime.datetime.now().isoformat()}")
-
-        # Only reload preview volume (audio files should already be accessible from Phase 1)
-        # Avoid reloading output volume to prevent conflicts with concurrent audio serving
-        volume_reload_start = time.time()
-        try:
-            preview_volume.reload()
-            volume_reload_duration = time.time() - volume_reload_start
-            log_message(job_id, "DEBUG", f"📁 [STAGE 2] Preview volume reload completed in {volume_reload_duration:.3f}s")
-        except Exception as e:
-            log_message(job_id, "INFO", f"📁 [STAGE 2] Preview volume reload skipped: {str(e)} - proceeding anyway")
-
-        log_message(job_id, "INFO", "🎬 [STAGE 2] Starting preview video generation with corrected data")
+        log_message(job_id, "INFO", f"🎥 [STAGE 2] Modal function for preview video generation started at {datetime.datetime.now().isoformat()}")
 
         # Get job data and prepare configuration
         config_prep_start = time.time()

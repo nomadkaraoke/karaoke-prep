@@ -44,6 +44,7 @@ class KaraokeFinalise:
         cdg_styles=None,
         keep_brand_code=False,
         non_interactive=False,
+        user_youtube_credentials=None,  # Add support for pre-stored credentials
     ):
         self.log_level = log_level
         self.log_formatter = log_formatter
@@ -99,6 +100,7 @@ class KaraokeFinalise:
 
         self.skip_notifications = False
         self.non_interactive = non_interactive
+        self.user_youtube_credentials = user_youtube_credentials  # Store pre-provided credentials
 
         self.suffixes = {
             "title_mov": " (Title).mov",
@@ -307,14 +309,43 @@ class KaraokeFinalise:
             self.logger.info("Non-interactive mode: automatically confirming enabled features")
 
     def authenticate_youtube(self):
-        """Authenticate and return a YouTube service object."""
-        credentials = None
-        youtube_token_file = "/tmp/karaoke-finalise-youtube-token.pickle"
+        """Authenticate with YouTube and return service object."""
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
 
+        # Check if we have pre-stored credentials (for non-interactive mode)
+        if self.user_youtube_credentials and self.non_interactive:
+            try:
+                # Create credentials object from stored data
+                credentials = Credentials(
+                    token=self.user_youtube_credentials['token'],
+                    refresh_token=self.user_youtube_credentials.get('refresh_token'),
+                    token_uri=self.user_youtube_credentials.get('token_uri'),
+                    client_id=self.user_youtube_credentials.get('client_id'),
+                    client_secret=self.user_youtube_credentials.get('client_secret'),
+                    scopes=self.user_youtube_credentials.get('scopes')
+                )
+                
+                # Refresh token if needed
+                if credentials.expired and credentials.refresh_token:
+                    credentials.refresh(Request())
+                
+                # Build YouTube service with credentials
+                youtube = build('youtube', 'v3', credentials=credentials)
+                self.logger.info("Successfully authenticated with YouTube using pre-stored credentials")
+                return youtube
+                
+            except Exception as e:
+                self.logger.error(f"Failed to authenticate with pre-stored credentials: {str(e)}")
+                # Fall through to original authentication if pre-stored credentials fail
+        
+        # Original authentication code for interactive mode
+        if self.non_interactive:
+            raise Exception("YouTube authentication required but running in non-interactive mode. Please pre-authenticate or disable YouTube upload.")
+        
         # Token file stores the user's access and refresh tokens for YouTube.
-        if os.path.exists(youtube_token_file):
-            with open(youtube_token_file, "rb") as token:
-                credentials = pickle.load(token)
+        youtube_token_file = "/tmp/karaoke-finalise-youtube-token.pickle"
 
         # If there are no valid credentials, let the user log in.
         if not credentials or not credentials.valid:
@@ -1156,58 +1187,100 @@ class KaraokeFinalise:
             return "aac"
 
     def detect_nvenc_support(self):
-        """Detect if NVENC hardware encoding is available."""
+        """Detect if NVENC hardware encoding is available with comprehensive checks."""
         try:
-            self.logger.info("Detecting NVENC hardware acceleration support...")
+            self.logger.info("🔍 Detecting NVENC hardware acceleration support...")
             
             if self.dry_run:
                 self.logger.info("DRY RUN: Assuming NVENC is available")
                 return True
             
-            # Use subprocess with timeout to prevent hanging
             import subprocess
-            import signal
+            import os
+            import shutil
             
-            def timeout_handler(signum, frame):
-                raise TimeoutError("NVENC detection timed out")
+            # Step 1: Check for nvidia-smi (indicates NVIDIA driver presence)
+            try:
+                nvidia_smi_result = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"], 
+                                                  capture_output=True, text=True, timeout=10)
+                if nvidia_smi_result.returncode == 0:
+                    gpu_info = nvidia_smi_result.stdout.strip()
+                    self.logger.info(f"✓ NVIDIA GPU detected: {gpu_info}")
+                else:
+                    self.logger.warning("⚠️ nvidia-smi not available or no NVIDIA GPU detected")
+                    return False
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError):
+                self.logger.warning("⚠️ nvidia-smi not available or failed")
+                return False
             
-            # Test NVENC availability with a minimal encode test
-            test_cmd = f"{self.ffmpeg_base_command} -f lavfi -i testsrc=duration=1:size=320x240:rate=1 -c:v h264_nvenc -f null -"
+            # Step 2: Check for NVENC encoders in FFmpeg
+            try:
+                encoders_cmd = f"{self.ffmpeg_base_command} -hide_banner -encoders 2>/dev/null | grep nvenc"
+                encoders_result = subprocess.run(encoders_cmd, shell=True, capture_output=True, text=True, timeout=10)
+                if encoders_result.returncode == 0 and "nvenc" in encoders_result.stdout:
+                    nvenc_encoders = [line.strip() for line in encoders_result.stdout.split('\n') if 'nvenc' in line]
+                    self.logger.info("✓ Found NVENC encoders in FFmpeg:")
+                    for encoder in nvenc_encoders:
+                        if encoder:
+                            self.logger.info(f"  {encoder}")
+                else:
+                    self.logger.warning("⚠️ No NVENC encoders found in FFmpeg")
+                    return False
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to check FFmpeg NVENC encoders: {e}")
+                return False
             
-            # Set a 30-second timeout for NVENC detection
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(30)
+            # Step 3: Check for libcuda.so.1 (critical for NVENC)
+            try:
+                libcuda_check = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, timeout=10)
+                if libcuda_check.returncode == 0 and "libcuda.so.1" in libcuda_check.stdout:
+                    self.logger.info("✅ libcuda.so.1 found in system libraries")
+                else:
+                    self.logger.warning("❌ libcuda.so.1 NOT found in system libraries")
+                    self.logger.warning("💡 This usually indicates the CUDA runtime image is needed instead of devel")
+                    return False
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to check for libcuda.so.1: {e}")
+                return False
+            
+            # Step 4: Test h264_nvenc encoder with simple test
+            self.logger.info("🧪 Testing h264_nvenc encoder...")
+            test_cmd = f"{self.ffmpeg_base_command} -hide_banner -loglevel warning -f lavfi -i testsrc=duration=1:size=320x240:rate=1 -c:v h264_nvenc -f null -"
+            self.logger.debug(f"Running test command: {test_cmd}")
             
             try:
-                result = subprocess.run(test_cmd, shell=True, capture_output=True, text=True, timeout=25)
-                signal.alarm(0)  # Cancel timeout
+                result = subprocess.run(test_cmd, shell=True, capture_output=True, text=True, timeout=30)
                 
-                nvenc_available = result.returncode == 0
-                
-                if nvenc_available:
-                    self.logger.info("✓ NVENC hardware encoding detected and available")
+                if result.returncode == 0:
+                    self.logger.info("✅ NVENC hardware encoding available for video generation")
+                    self.logger.info(f"Test command succeeded. Output: {result.stderr if result.stderr else '...'}")
+                    return True
                 else:
-                    self.logger.info("✗ NVENC not available, will use software encoding")
-                    self.logger.debug(f"NVENC test stderr: {result.stderr}")
+                    self.logger.warning(f"❌ NVENC test failed with exit code {result.returncode}")
+                    if result.stderr:
+                        self.logger.warning(f"Error output: {result.stderr}")
+                        if "Cannot load libcuda.so.1" in result.stderr:
+                            self.logger.warning("💡 Root cause: libcuda.so.1 cannot be loaded by NVENC")
+                            self.logger.warning("💡 Solution: Use nvidia/cuda:*-devel-* image instead of runtime")
+                    return False
                     
-                return nvenc_available
-                
-            except (subprocess.TimeoutExpired, TimeoutError):
-                signal.alarm(0)
-                self.logger.warning("NVENC detection timed out, falling back to software encoding")
+            except subprocess.TimeoutExpired:
+                self.logger.warning("❌ NVENC test timed out")
                 return False
                 
         except Exception as e:
-            self.logger.warning(f"Failed to detect NVENC support: {e}, falling back to software encoding")
+            self.logger.warning(f"❌ Failed to detect NVENC support: {e}, falling back to software encoding")
             return False
 
     def configure_hardware_acceleration(self):
         """Configure hardware acceleration settings based on detected capabilities."""
         if self.nvenc_available:
             self.video_encoder = "h264_nvenc"
-            self.hwaccel_decode_flags = "-hwaccel cuda -hwaccel_output_format cuda"
-            self.scale_filter = "scale_cuda"
-            self.logger.info("Configured for NVIDIA hardware acceleration")
+            # Use simpler hardware acceleration that works with complex filter chains
+            # Remove -hwaccel_output_format cuda as it causes pixel format conversion issues
+            self.hwaccel_decode_flags = "-hwaccel cuda"
+            self.scale_filter = "scale"  # Use CPU scaling for complex filter chains
+            self.logger.info("Configured for NVIDIA hardware acceleration (simplified for filter compatibility)")
         else:
             self.video_encoder = "libx264"
             self.hwaccel_decode_flags = ""
@@ -1241,24 +1314,77 @@ class KaraokeFinalise:
         # Try GPU-accelerated command first if available
         if self.nvenc_available and gpu_command != cpu_command:
             self.logger.debug(f"Attempting hardware-accelerated encoding: {gpu_command}")
-            exit_code = os.system(gpu_command)
-            
-            if exit_code == 0:
-                self.logger.info(f"✓ Hardware acceleration successful")
-                return
-            else:
-                self.logger.warning(f"✗ Hardware acceleration failed (exit code {exit_code}), falling back to software encoding")
+            try:
+                result = subprocess.run(gpu_command, shell=True, capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0:
+                    self.logger.info(f"✓ Hardware acceleration successful")
+                    return
+                else:
+                    self.logger.warning(f"✗ Hardware acceleration failed (exit code {result.returncode})")
+                    self.logger.warning(f"GPU Command: {gpu_command}")
+                    
+                    # If we didn't get detailed error info and using fatal loglevel, try again with verbose logging
+                    if (not result.stderr or len(result.stderr.strip()) < 10) and "-loglevel fatal" in gpu_command:
+                        self.logger.warning("Empty error output detected, retrying with verbose logging...")
+                        verbose_gpu_command = gpu_command.replace("-loglevel fatal", "-loglevel error")
+                        try:
+                            verbose_result = subprocess.run(verbose_gpu_command, shell=True, capture_output=True, text=True, timeout=300)
+                            self.logger.warning(f"Verbose GPU Command: {verbose_gpu_command}")
+                            if verbose_result.stderr:
+                                self.logger.warning(f"FFmpeg STDERR (verbose): {verbose_result.stderr}")
+                            if verbose_result.stdout:
+                                self.logger.warning(f"FFmpeg STDOUT (verbose): {verbose_result.stdout}")
+                        except Exception as e:
+                            self.logger.warning(f"Verbose retry failed: {e}")
+                    
+                    if result.stderr:
+                        self.logger.warning(f"FFmpeg STDERR: {result.stderr}")
+                    else:
+                        self.logger.warning("FFmpeg STDERR: (empty)")
+                    if result.stdout:
+                        self.logger.warning(f"FFmpeg STDOUT: {result.stdout}")
+                    else:
+                        self.logger.warning("FFmpeg STDOUT: (empty)")
+                    self.logger.info("Falling back to software encoding...")
+                    
+            except subprocess.TimeoutExpired:
+                self.logger.warning("✗ Hardware acceleration timed out, falling back to software encoding")
+            except Exception as e:
+                self.logger.warning(f"✗ Hardware acceleration failed with exception: {e}, falling back to software encoding")
         
         # Use CPU command (either as fallback or primary method)
         self.logger.debug(f"Running software encoding: {cpu_command}")
-        exit_code = os.system(cpu_command)
-        
-        if exit_code != 0:
-            error_msg = f"Command failed with exit code {exit_code}: {cpu_command}"
+        try:
+            result = subprocess.run(cpu_command, shell=True, capture_output=True, text=True, timeout=600)
+            
+            if result.returncode != 0:
+                error_msg = f"Software encoding failed with exit code {result.returncode}"
+                self.logger.error(error_msg)
+                self.logger.error(f"CPU Command: {cpu_command}")
+                if result.stderr:
+                    self.logger.error(f"FFmpeg STDERR: {result.stderr}")
+                else:
+                    self.logger.error("FFmpeg STDERR: (empty)")
+                if result.stdout:
+                    self.logger.error(f"FFmpeg STDOUT: {result.stdout}")
+                else:
+                    self.logger.error("FFmpeg STDOUT: (empty)")
+                raise Exception(f"{error_msg}: {cpu_command}")
+            else:
+                self.logger.info(f"✓ Software encoding successful")
+                
+        except subprocess.TimeoutExpired:
+            error_msg = "Software encoding timed out"
             self.logger.error(error_msg)
-            raise Exception(error_msg)
-        else:
-            self.logger.info(f"✓ Software encoding successful")
+            raise Exception(f"{error_msg}: {cpu_command}")
+        except Exception as e:
+            if "Software encoding failed" not in str(e):
+                error_msg = f"Software encoding failed with exception: {e}"
+                self.logger.error(error_msg)
+                raise Exception(f"{error_msg}: {cpu_command}")
+            else:
+                raise
 
     def process(self, replace_existing=False):
         if self.dry_run:

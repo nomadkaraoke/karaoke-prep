@@ -3609,12 +3609,9 @@ html {
 
 .no-instrumentals {
     text-align: center;
-    color: #dc3545;
-    background: #f8d7da;
-    border: 1px solid #f5c6cb;
-    border-radius: 8px;
-    padding: 2rem;
-    margin: 1rem 0;
+    padding: 40px 20px;
+    color: #666;
+    font-style: italic;
 }
 
 /* Responsive Design Enhancements */
@@ -4491,4 +4488,91 @@ html {
         margin-left: 0;
         text-align: center;
     }
+}
+
+/* YouTube Authentication Styles */
+.youtube-auth-section {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border-left: 4px solid #ff4757;
+}
+
+.youtube-auth-section h4 {
+    margin: 0 0 10px 0;
+    color: #333;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.youtube-auth-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.auth-loading {
+    color: #666;
+    font-style: italic;
+    font-size: 13px;
+}
+
+.youtube-auth-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.youtube-auth-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.youtube-auth-info.authenticated {
+    color: #28a745;
+}
+
+.youtube-auth-info.not-authenticated {
+    color: #666;
+}
+
+.youtube-auth-info.error {
+    color: #dc3545;
+}
+
+.youtube-auth-btn {
+    background: #ff4757;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.youtube-auth-btn:hover {
+    background: #ff3742;
+}
+
+.youtube-auth-btn:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
+.youtube-revoke-btn {
+    background: #6c757d;
+    color: white;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.youtube-revoke-btn:hover {
+    background: #545b62;
 }
