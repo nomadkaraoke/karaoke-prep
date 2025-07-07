@@ -146,6 +146,10 @@ class KaraokeFinalise:
         if self.non_interactive:
             self.ffmpeg_base_command += " -y"
 
+        # Detect and configure hardware acceleration
+        self.nvenc_available = self.detect_nvenc_support()
+        self.configure_hardware_acceleration()
+
     def check_input_files_exist(self, base_name, with_vocals_file, instrumental_audio_file):
         self.logger.info(f"Checking required input files exist...")
 
@@ -292,11 +296,15 @@ class KaraokeFinalise:
         self.logger.info(f" Public share copy: {self.public_share_copy_enabled}")
         self.logger.info(f" Public share rclone: {self.public_share_rclone_enabled}")
 
-        self.prompt_user_confirmation_or_raise_exception(
-            f"Confirm features enabled log messages above match your expectations for finalisation?",
-            "Refusing to proceed without user confirmation they're happy with enabled features.",
-            allow_empty=True,
-        )
+        # Skip user confirmation in non-interactive mode for Modal deployment
+        if not self.non_interactive:
+            self.prompt_user_confirmation_or_raise_exception(
+                f"Confirm features enabled log messages above match your expectations for finalisation?",
+                "Refusing to proceed without user confirmation they're happy with enabled features.",
+                allow_empty=True,
+            )
+        else:
+            self.logger.info("Non-interactive mode: automatically confirming enabled features")
 
     def authenticate_youtube(self):
         """Authenticate and return a YouTube service object."""
@@ -313,6 +321,9 @@ class KaraokeFinalise:
             if credentials and credentials.expired and credentials.refresh_token:
                 credentials.refresh(Request())
             else:
+                if self.non_interactive:
+                    raise Exception("YouTube authentication required but running in non-interactive mode. Please pre-authenticate or disable YouTube upload.")
+                    
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.youtube_client_secrets_file, scopes=["https://www.googleapis.com/auth/youtube"]
                 )
@@ -631,80 +642,93 @@ class KaraokeFinalise:
         return base_name, artist, title
 
     def execute_command(self, command, description):
-        self.logger.info(description)
-        if self.dry_run:
-            self.logger.info(f"DRY RUN: Would run command: {command}")
-        else:
-            self.logger.info(f"Running command: {command}")
-            exit_code = os.system(command)
-            
-            # Check if command failed (non-zero exit code)
-            if exit_code != 0:
-                error_msg = f"Command failed with exit code {exit_code}: {command}"
-                self.logger.error(error_msg)
-                raise Exception(error_msg)
+        """Legacy method for backwards compatibility - delegates to execute_command_with_fallback"""
+        # For backwards compatibility, treat as CPU command
+        self.execute_command_with_fallback(command, command, description)
 
     def remux_with_instrumental(self, with_vocals_file, instrumental_audio, output_file):
         """Remux the video with instrumental audio to create karaoke version"""
-        # fmt: off
+        # This operation is primarily I/O bound (remuxing), so hardware acceleration doesn't provide significant benefit
+        # Keep the existing approach but use the new execute method
         ffmpeg_command = (
             f'{self.ffmpeg_base_command} -an -i "{with_vocals_file}" '
             f'-vn -i "{instrumental_audio}" -c:v copy -c:a pcm_s16le "{output_file}"'
         )
-        # fmt: on
         self.execute_command(ffmpeg_command, "Remuxing video with instrumental audio")
 
     def convert_mov_to_mp4(self, input_file, output_file):
-        """Convert MOV file to MP4 format"""
-        # fmt: off
-        ffmpeg_command = (
+        """Convert MOV file to MP4 format with hardware acceleration support"""
+        # Hardware-accelerated version
+        gpu_command = (
+            f'{self.ffmpeg_base_command} {self.hwaccel_decode_flags} -i "{input_file}" '
+            f'-c:v {self.video_encoder} {self.get_nvenc_quality_settings("high")} -c:a {self.aac_codec} {self.mp4_flags} "{output_file}"'
+        )
+        
+        # Software fallback version
+        cpu_command = (
             f'{self.ffmpeg_base_command} -i "{input_file}" '
             f'-c:v libx264 -c:a {self.aac_codec} {self.mp4_flags} "{output_file}"'
         )
-        # fmt: on
-        self.execute_command(ffmpeg_command, "Converting MOV video to MP4")
+        
+        self.execute_command_with_fallback(gpu_command, cpu_command, "Converting MOV video to MP4")
 
     def encode_lossless_mp4(self, title_mov_file, karaoke_mp4_file, env_mov_input, ffmpeg_filter, output_file):
-        """Create the final MP4 with PCM audio (lossless)"""
-        # fmt: off
-        ffmpeg_command = (
+        """Create the final MP4 with PCM audio (lossless) using hardware acceleration when available"""
+        # Hardware-accelerated version
+        gpu_command = (
+            f"{self.ffmpeg_base_command} {self.hwaccel_decode_flags} -i {title_mov_file} "
+            f"{self.hwaccel_decode_flags} -i {karaoke_mp4_file} {env_mov_input} "
+            f'{ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v {self.video_encoder} '
+            f'{self.get_nvenc_quality_settings("lossless")} -c:a pcm_s16le {self.mp4_flags} "{output_file}"'
+        )
+        
+        # Software fallback version
+        cpu_command = (
             f"{self.ffmpeg_base_command} -i {title_mov_file} -i {karaoke_mp4_file} {env_mov_input} "
             f'{ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a pcm_s16le '
             f'{self.mp4_flags} "{output_file}"'
         )
-        # fmt: on
-        self.execute_command(ffmpeg_command, "Creating MP4 version with PCM audio")
+        
+        self.execute_command_with_fallback(gpu_command, cpu_command, "Creating MP4 version with PCM audio")
 
     def encode_lossy_mp4(self, input_file, output_file):
         """Create MP4 with AAC audio (lossy, for wider compatibility)"""
-        # fmt: off
+        # This is primarily an audio re-encoding operation, video is copied
+        # Hardware acceleration doesn't provide significant benefit for copy operations
         ffmpeg_command = (
             f'{self.ffmpeg_base_command} -i "{input_file}" '
             f'-c:v copy -c:a {self.aac_codec} -b:a 320k {self.mp4_flags} "{output_file}"'
         )
-        # fmt: on
         self.execute_command(ffmpeg_command, "Creating MP4 version with AAC audio")
 
     def encode_lossless_mkv(self, input_file, output_file):
         """Create MKV with FLAC audio (for YouTube)"""
-        # fmt: off
+        # This is primarily an audio re-encoding operation, video is copied
+        # Hardware acceleration doesn't provide significant benefit for copy operations
         ffmpeg_command = (
             f'{self.ffmpeg_base_command} -i "{input_file}" '
             f'-c:v copy -c:a flac "{output_file}"'
         )
-        # fmt: on
         self.execute_command(ffmpeg_command, "Creating MKV version with FLAC audio for YouTube")
 
     def encode_720p_version(self, input_file, output_file):
-        """Create 720p MP4 with AAC audio (for smaller file size)"""
-        # fmt: off
-        ffmpeg_command = (
-            f'{self.ffmpeg_base_command} -i "{input_file}" '
-            f'-c:v libx264 -vf "scale=1280:720" -b:v 200k -preset medium -tune animation '
+        """Create 720p MP4 with AAC audio (for smaller file size) using hardware acceleration when available"""
+        # Hardware-accelerated version with GPU scaling and encoding
+        gpu_command = (
+            f'{self.ffmpeg_base_command} {self.hwaccel_decode_flags} -i "{input_file}" '
+            f'-c:v {self.video_encoder} -vf "{self.scale_filter}=1280:720" '
+            f'{self.get_nvenc_quality_settings("medium")} -b:v 2000k '
             f'-c:a {self.aac_codec} -b:a 128k {self.mp4_flags} "{output_file}"'
         )
-        # fmt: on
-        self.execute_command(ffmpeg_command, "Encoding 720p version of the final video")
+        
+        # Software fallback version
+        cpu_command = (
+            f'{self.ffmpeg_base_command} -i "{input_file}" '
+            f'-c:v libx264 -vf "scale=1280:720" -b:v 2000k -preset medium -tune animation '
+            f'-c:a {self.aac_codec} -b:a 128k {self.mp4_flags} "{output_file}"'
+        )
+        
+        self.execute_command_with_fallback(gpu_command, cpu_command, "Encoding 720p version of the final video")
 
     def prepare_concat_filter(self, input_files):
         """Prepare the concat filter and additional input for end credits if present"""
@@ -755,17 +779,21 @@ class KaraokeFinalise:
         self.encode_lossless_mkv(output_files["final_karaoke_lossless_mp4"], output_files["final_karaoke_lossless_mkv"])
         self.encode_720p_version(output_files["final_karaoke_lossless_mp4"], output_files["final_karaoke_lossy_720p_mp4"])
 
-        # Prompt user to check final video files before proceeding
-        self.prompt_user_confirmation_or_raise_exception(
-            f"Final video files created:\n"
-            f"- Lossless 4K MP4: {output_files['final_karaoke_lossless_mp4']}\n"
-            f"- Lossless 4K MKV: {output_files['final_karaoke_lossless_mkv']}\n"
-            f"- Lossy 4K MP4: {output_files['final_karaoke_lossy_mp4']}\n"
-            f"- Lossy 720p MP4: {output_files['final_karaoke_lossy_720p_mp4']}\n"
-            f"Please check them! Proceed?",
-            "Refusing to proceed without user confirmation they're happy with the Final videos.",
-            allow_empty=True,
-        )
+        # Skip user confirmation in non-interactive mode for Modal deployment
+        if not self.non_interactive:
+            # Prompt user to check final video files before proceeding
+            self.prompt_user_confirmation_or_raise_exception(
+                f"Final video files created:\n"
+                f"- Lossless 4K MP4: {output_files['final_karaoke_lossless_mp4']}\n"
+                f"- Lossless 4K MKV: {output_files['final_karaoke_lossless_mkv']}\n"
+                f"- Lossy 4K MP4: {output_files['final_karaoke_lossy_mp4']}\n"
+                f"- Lossy 720p MP4: {output_files['final_karaoke_lossy_720p_mp4']}\n"
+                f"Please check them! Proceed?",
+                "Refusing to proceed without user confirmation they're happy with the Final videos.",
+                allow_empty=True,
+            )
+        else:
+            self.logger.info("Non-interactive mode: automatically confirming final video files")
 
     def create_cdg_zip_file(self, input_files, output_files, artist, title):
         self.logger.info(f"Creating CDG and MP3 files, then zipping them...")
@@ -1057,6 +1085,9 @@ class KaraokeFinalise:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
+                if self.non_interactive:
+                    raise Exception("Gmail authentication required but running in non-interactive mode. Please pre-authenticate or disable email drafts.")
+                    
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.youtube_client_secrets_file, ["https://www.googleapis.com/auth/gmail.compose"]
                 )
@@ -1123,6 +1154,111 @@ class KaraokeFinalise:
         else:
             self.logger.info("Using built-in aac codec (basic quality)")
             return "aac"
+
+    def detect_nvenc_support(self):
+        """Detect if NVENC hardware encoding is available."""
+        try:
+            self.logger.info("Detecting NVENC hardware acceleration support...")
+            
+            if self.dry_run:
+                self.logger.info("DRY RUN: Assuming NVENC is available")
+                return True
+            
+            # Use subprocess with timeout to prevent hanging
+            import subprocess
+            import signal
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutError("NVENC detection timed out")
+            
+            # Test NVENC availability with a minimal encode test
+            test_cmd = f"{self.ffmpeg_base_command} -f lavfi -i testsrc=duration=1:size=320x240:rate=1 -c:v h264_nvenc -f null -"
+            
+            # Set a 30-second timeout for NVENC detection
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(30)
+            
+            try:
+                result = subprocess.run(test_cmd, shell=True, capture_output=True, text=True, timeout=25)
+                signal.alarm(0)  # Cancel timeout
+                
+                nvenc_available = result.returncode == 0
+                
+                if nvenc_available:
+                    self.logger.info("✓ NVENC hardware encoding detected and available")
+                else:
+                    self.logger.info("✗ NVENC not available, will use software encoding")
+                    self.logger.debug(f"NVENC test stderr: {result.stderr}")
+                    
+                return nvenc_available
+                
+            except (subprocess.TimeoutExpired, TimeoutError):
+                signal.alarm(0)
+                self.logger.warning("NVENC detection timed out, falling back to software encoding")
+                return False
+                
+        except Exception as e:
+            self.logger.warning(f"Failed to detect NVENC support: {e}, falling back to software encoding")
+            return False
+
+    def configure_hardware_acceleration(self):
+        """Configure hardware acceleration settings based on detected capabilities."""
+        if self.nvenc_available:
+            self.video_encoder = "h264_nvenc"
+            self.hwaccel_decode_flags = "-hwaccel cuda -hwaccel_output_format cuda"
+            self.scale_filter = "scale_cuda"
+            self.logger.info("Configured for NVIDIA hardware acceleration")
+        else:
+            self.video_encoder = "libx264"
+            self.hwaccel_decode_flags = ""
+            self.scale_filter = "scale"
+            self.logger.info("Configured for software encoding")
+
+    def get_nvenc_quality_settings(self, quality_mode="high"):
+        """Get NVENC settings based on quality requirements."""
+        if quality_mode == "lossless":
+            return "-preset lossless"
+        elif quality_mode == "high":
+            return "-preset p4 -tune hq -cq 18"  # High quality
+        elif quality_mode == "medium":
+            return "-preset p4 -cq 23"  # Balanced quality/speed
+        elif quality_mode == "fast":
+            return "-preset p1 -tune ll"  # Low latency, faster encoding
+        else:
+            return "-preset p4"  # Balanced default
+
+    def execute_command_with_fallback(self, gpu_command, cpu_command, description):
+        """Execute GPU command with automatic fallback to CPU if it fails."""
+        self.logger.info(f"{description}")
+        
+        if self.dry_run:
+            if self.nvenc_available:
+                self.logger.info(f"DRY RUN: Would run GPU-accelerated command: {gpu_command}")
+            else:
+                self.logger.info(f"DRY RUN: Would run CPU command: {cpu_command}")
+            return
+        
+        # Try GPU-accelerated command first if available
+        if self.nvenc_available and gpu_command != cpu_command:
+            self.logger.debug(f"Attempting hardware-accelerated encoding: {gpu_command}")
+            exit_code = os.system(gpu_command)
+            
+            if exit_code == 0:
+                self.logger.info(f"✓ Hardware acceleration successful")
+                return
+            else:
+                self.logger.warning(f"✗ Hardware acceleration failed (exit code {exit_code}), falling back to software encoding")
+        
+        # Use CPU command (either as fallback or primary method)
+        self.logger.debug(f"Running software encoding: {cpu_command}")
+        exit_code = os.system(cpu_command)
+        
+        if exit_code != 0:
+            error_msg = f"Command failed with exit code {exit_code}: {cpu_command}"
+            self.logger.error(error_msg)
+            raise Exception(error_msg)
+        else:
+            self.logger.info(f"✓ Software encoding successful")
 
     def process(self, replace_existing=False):
         if self.dry_run:

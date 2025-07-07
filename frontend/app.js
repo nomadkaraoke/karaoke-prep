@@ -9,6 +9,416 @@ let logFontSizeIndex = 2; // Default to 'font-md'
 let autoScrollEnabled = false;
 let currentUser = null; // Store current user authentication data
 
+// Notification state tracking
+let previousJobStates = new Map(); // Track previous states to detect changes
+let notificationAudio = null; // Audio object for notification sounds
+let originalPageTitle = document.title; // Store original title for flashing
+let titleFlashInterval = null; // Interval for title flashing
+let hasUnseenNotifications = false; // Track if there are unseen notifications
+let notifiedJobStates = new Map(); // Track which job states we've already notified about
+
+// Initialize notification system
+function initializeNotificationSystem() {
+    // Request notification permission on first load
+    if ('Notification' in window && Notification.permission === 'default') {
+        // Don't request immediately, wait for user interaction
+        document.addEventListener('click', requestNotificationPermission, { once: true });
+    }
+    
+    // Load previous notification state from localStorage
+    loadNotificationState();
+    
+    // Initialize notification audio (we'll create the audio data URL)
+    try {
+        // Create a simple notification beep using Web Audio API
+        createNotificationSound();
+    } catch (error) {
+        console.warn('Could not initialize notification audio:', error);
+    }
+    
+    // Handle page visibility changes to stop notifications when user returns
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Handle window focus to clear notifications
+    window.addEventListener('focus', handleWindowFocus);
+    
+    // Clean up old notification state periodically (older than 24 hours)
+    cleanupOldNotificationState();
+    
+    console.log('📢 Notification system initialized');
+}
+
+function loadNotificationState() {
+    try {
+        const stored = localStorage.getItem('karaoke_notification_state');
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            // Convert array back to Map
+            notifiedJobStates = new Map(parsed.notifiedJobStates || []);
+            
+            // Clean up entries older than 24 hours
+            const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+            for (const [key, timestamp] of notifiedJobStates.entries()) {
+                if (timestamp < twentyFourHoursAgo) {
+                    notifiedJobStates.delete(key);
+                }
+            }
+        }
+    } catch (error) {
+        console.warn('Could not load notification state:', error);
+        notifiedJobStates = new Map();
+    }
+}
+
+function saveNotificationState() {
+    try {
+        const state = {
+            notifiedJobStates: Array.from(notifiedJobStates.entries()),
+            lastSaved: Date.now()
+        };
+        localStorage.setItem('karaoke_notification_state', JSON.stringify(state));
+    } catch (error) {
+        console.warn('Could not save notification state:', error);
+    }
+}
+
+function cleanupOldNotificationState() {
+    const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+    let cleaned = false;
+    
+    for (const [key, timestamp] of notifiedJobStates.entries()) {
+        if (timestamp < twentyFourHoursAgo) {
+            notifiedJobStates.delete(key);
+            cleaned = true;
+        }
+    }
+    
+    if (cleaned) {
+        saveNotificationState();
+    }
+}
+
+function requestNotificationPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().then(permission => {
+            if (permission === 'granted') {
+                showInfo('Browser notifications enabled! You\'ll be alerted when jobs need your attention.');
+            } else {
+                showInfo('Browser notifications disabled. You can enable them in your browser settings.');
+            }
+        });
+    }
+}
+
+function createNotificationSound() {
+    // Create a simple beep sound using Web Audio API
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    // Create audio buffer for notification sound
+    const sampleRate = audioContext.sampleRate;
+    const duration = 0.3; // 300ms
+    const frameCount = sampleRate * duration;
+    const audioBuffer = audioContext.createBuffer(1, frameCount, sampleRate);
+    const channelData = audioBuffer.getChannelData(0);
+    
+    // Generate a pleasant notification sound (two tones)
+    for (let i = 0; i < frameCount; i++) {
+        const t = i / sampleRate;
+        const envelope = Math.exp(-t * 3); // Exponential decay
+        const tone1 = Math.sin(2 * Math.PI * 800 * t); // 800Hz
+        const tone2 = Math.sin(2 * Math.PI * 1000 * t); // 1000Hz
+        channelData[i] = (tone1 + tone2) * 0.1 * envelope; // Low volume
+    }
+    
+    // Create audio source
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    gainNode.gain.value = 0.3; // 30% volume
+    
+    // Store for later use
+    notificationAudio = {
+        context: audioContext,
+        buffer: audioBuffer,
+        play: function() {
+            try {
+                if (this.context.state === 'suspended') {
+                    this.context.resume();
+                }
+                const source = this.context.createBufferSource();
+                const gain = this.context.createGain();
+                source.buffer = this.buffer;
+                source.connect(gain);
+                gain.connect(this.context.destination);
+                gain.gain.value = 0.3;
+                source.start();
+            } catch (error) {
+                console.warn('Could not play notification sound:', error);
+            }
+        }
+    };
+}
+
+function checkForJobNotifications(jobs) {
+    // States that require user action/attention
+    const notificationStates = new Set([
+        'awaiting_review',
+        'ready_for_finalization', 
+        'complete',
+        'error'
+    ]);
+    
+    const newNotifications = [];
+    
+    // Check each job for state changes
+    Object.entries(jobs).forEach(([jobId, job]) => {
+        const currentStatus = job.status;
+        const previousStatus = previousJobStates.get(jobId);
+        const notificationKey = `${jobId}-${currentStatus}`;
+        
+        // Update the stored state
+        previousJobStates.set(jobId, currentStatus);
+        
+        // Check if this is a new state that requires notification
+        if (currentStatus !== previousStatus && notificationStates.has(currentStatus)) {
+            // Only notify for jobs that have actually changed state
+            // (not initial loads where previousStatus is undefined)
+            // AND we haven't already notified about this job status
+            if (previousStatus !== undefined && !notifiedJobStates.has(notificationKey)) {
+                newNotifications.push({
+                    jobId,
+                    job,
+                    status: currentStatus,
+                    previousStatus
+                });
+                
+                // Mark this job status as notified
+                notifiedJobStates.set(notificationKey, Date.now());
+            }
+        }
+    });
+    
+    // Handle notifications
+    if (newNotifications.length > 0) {
+        handleJobNotifications(newNotifications);
+        saveNotificationState(); // Persist the notification state
+    }
+}
+
+function handleJobNotifications(notifications) {
+    console.log('🔔 Handling job notifications:', notifications);
+    console.log(`📊 Notification state - Page hidden: ${document.hidden}, Audio available: ${!!notificationAudio}`);
+    
+    // Play notification sound if page is not visible
+    if (document.hidden && notificationAudio) {
+        console.log('🔊 Playing notification sound');
+        notificationAudio.play();
+    }
+    
+    // Show browser notifications
+    showBrowserNotifications(notifications);
+    
+    // Start title flashing if page is not visible
+    if (document.hidden) {
+        console.log('📋 Starting title flashing');
+        startTitleFlashing();
+        hasUnseenNotifications = true;
+    }
+    
+    // Show in-app notifications
+    notifications.forEach(notification => {
+        console.log(`📱 Showing in-app notification for job ${notification.jobId}: ${notification.status}`);
+        showInAppNotification(notification);
+    });
+}
+
+function showBrowserNotifications(notifications) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+        return;
+    }
+    
+    notifications.forEach(({ jobId, job, status }) => {
+        const trackInfo = (job.artist && job.title) 
+            ? `${job.artist} - ${job.title}` 
+            : `Job ${jobId}`;
+        
+        let title, body, icon;
+        
+        switch (status) {
+            case 'awaiting_review':
+                title = '📝 Review Required';
+                body = `${trackInfo} is ready for lyrics review`;
+                icon = '📝';
+                break;
+            case 'ready_for_finalization':
+                title = '🎵 Instrumental Selection Required';
+                body = `${trackInfo} needs instrumental selection to complete`;
+                icon = '🎵';
+                break;
+            case 'complete':
+                title = '✅ Job Complete';
+                body = `${trackInfo} has finished processing and is ready for download`;
+                icon = '✅';
+                break;
+            case 'error':
+                title = '❌ Job Failed';
+                body = `${trackInfo} encountered an error and needs attention`;
+                icon = '❌';
+                break;
+            default:
+                return;
+        }
+        
+        const notification = new Notification(title, {
+            body: body,
+            icon: `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">${icon}</text></svg>`,
+            badge: `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🎤</text></svg>`,
+            tag: `karaoke-job-${jobId}`, // Prevent duplicates
+            requireInteraction: status !== 'complete', // Keep notification visible except for complete jobs
+            silent: false
+        });
+        
+        // Handle notification click
+        notification.onclick = function() {
+            window.focus();
+            
+            // Scroll to the specific job
+            setTimeout(() => {
+                const jobElement = document.querySelector(`[data-job-id="${jobId}"]`);
+                if (jobElement) {
+                    jobElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    jobElement.style.animation = 'highlight-flash 2s ease-in-out';
+                    setTimeout(() => {
+                        jobElement.style.animation = '';
+                    }, 2000);
+                }
+            }, 100);
+            
+            this.close();
+        };
+        
+        // Auto-close non-critical notifications after 10 seconds
+        if (status === 'complete') {
+            setTimeout(() => {
+                notification.close();
+            }, 10000);
+        }
+    });
+}
+
+function showInAppNotification(notification) {
+    const { jobId, job, status } = notification;
+    const trackInfo = (job.artist && job.title) 
+        ? `${job.artist} - ${job.title}` 
+        : `Job ${jobId}`;
+    
+    let message, type;
+    
+    switch (status) {
+        case 'awaiting_review':
+            message = `🎤 ${trackInfo} is ready for lyrics review! Click to review.`;
+            type = 'success';
+            break;
+        case 'ready_for_finalization':
+            message = `🎵 ${trackInfo} needs instrumental selection to complete! Click to choose.`;
+            type = 'success';
+            break;
+        case 'complete':
+            message = `✅ ${trackInfo} is complete and ready for download!`;
+            type = 'success';
+            break;
+        case 'error':
+            message = `❌ ${trackInfo} encountered an error. Check the logs for details.`;
+            type = 'error';
+            break;
+        default:
+            return;
+    }
+    
+    showNotification(message, type);
+}
+
+function startTitleFlashing() {
+    if (titleFlashInterval) {
+        return; // Already flashing
+    }
+    
+    let isFlashed = false;
+    titleFlashInterval = setInterval(() => {
+        if (document.hidden) {
+            document.title = isFlashed ? originalPageTitle : '🔔 Action Required - Karaoke Generator';
+            isFlashed = !isFlashed;
+        } else {
+            stopTitleFlashing();
+        }
+    }, 1000);
+}
+
+function stopTitleFlashing() {
+    if (titleFlashInterval) {
+        clearInterval(titleFlashInterval);
+        titleFlashInterval = null;
+        document.title = originalPageTitle;
+        hasUnseenNotifications = false;
+    }
+}
+
+function handleVisibilityChange() {
+    if (!document.hidden) {
+        // Page became visible, stop notifications
+        stopTitleFlashing();
+        hasUnseenNotifications = false;
+    }
+}
+
+function handleWindowFocus() {
+    // Window got focus, stop all notification effects
+    stopTitleFlashing();
+    hasUnseenNotifications = false;
+}
+
+function testNotification() {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+        showError('Browser notifications are not enabled. Please enable them first.');
+        return;
+    }
+    
+    // Play notification sound
+    if (notificationAudio) {
+        notificationAudio.play();
+    }
+    
+    // Show test browser notification
+    const testNotification = new Notification('🎤 Test Notification', {
+        body: 'This is how you\'ll be notified when jobs need your attention!',
+        icon: `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔔</text></svg>`,
+        badge: `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🎤</text></svg>`,
+        tag: 'karaoke-test-notification',
+        requireInteraction: false,
+        silent: false
+    });
+    
+    // Auto-close test notification after 5 seconds
+    setTimeout(() => {
+        testNotification.close();
+    }, 5000);
+    
+    // Show in-app notification
+    showSuccess('🔔 Test notification sent! You should hear a sound and see a browser notification.');
+    
+    // Test title flashing by temporarily hiding the page
+    if (!document.hidden) {
+        const originalTitle = document.title;
+        document.title = '🔔 Test - Karaoke Generator';
+        setTimeout(() => {
+            document.title = originalTitle;
+        }, 2000);
+    }
+}
+
 // Authentication functions
 function getAuthToken() {
     return localStorage.getItem('karaoke_auth_token');
@@ -196,6 +606,14 @@ function showUserInfo() {
         ? 'Unlimited' 
         : `${currentUser.remaining_uses} uses remaining`;
     
+    // Check notification support and permission
+    const notificationSupport = 'Notification' in window;
+    const notificationPermission = notificationSupport ? Notification.permission : 'unsupported';
+    const notificationStatus = notificationSupport 
+        ? (notificationPermission === 'granted' ? '✅ Enabled' : 
+           notificationPermission === 'denied' ? '❌ Blocked' : '⚠️ Not Set')
+        : '❌ Not Supported';
+    
     content.innerHTML = `
         <div class="user-info-grid">
             <div class="user-info-item">
@@ -213,6 +631,42 @@ function showUserInfo() {
             <div class="user-info-item">
                 <label>Status:</label>
                 <span>${currentUser.message}</span>
+            </div>
+            <div class="user-info-item">
+                <label>Notifications:</label>
+                <span>${notificationStatus}</span>
+            </div>
+        </div>
+        
+        <div class="notification-controls">
+            <h4>🔔 Notification Settings</h4>
+            <div class="notification-settings">
+                ${notificationSupport ? `
+                    <div class="notification-setting">
+                        <label>Browser Notifications:</label>
+                        <div class="notification-actions">
+                            ${notificationPermission === 'default' ? 
+                                '<button onclick="requestNotificationPermission()" class="btn btn-primary btn-sm">Enable Notifications</button>' :
+                                notificationPermission === 'granted' ?
+                                '<span class="notification-enabled">✅ Enabled</span>' :
+                                '<span class="notification-blocked">❌ Blocked (check browser settings)</span>'
+                            }
+                        </div>
+                    </div>
+                    <div class="notification-setting">
+                        <label>Test Notification:</label>
+                        <div class="notification-actions">
+                            <button onclick="testNotification()" class="btn btn-secondary btn-sm" ${notificationPermission !== 'granted' ? 'disabled' : ''}>
+                                🔔 Test Sound & Notification
+                            </button>
+                        </div>
+                    </div>
+                ` : `
+                    <div class="notification-unsupported">
+                        <p>❌ Browser notifications are not supported in this browser.</p>
+                        <p>You'll still receive in-app notifications when jobs need attention.</p>
+                    </div>
+                `}
             </div>
         </div>
     `;
@@ -658,6 +1112,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize the form to file upload mode (ensures proper required field setup)
     switchInputMode('file');
     
+    // Initialize notification system
+    initializeNotificationSystem();
+    
     // Debug timezone information for troubleshooting timestamp issues
     console.log('🌍 Timezone Debug Info:', {
         userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -781,6 +1238,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    const cloneJobModal = document.getElementById('clone-job-modal');
+    if (cloneJobModal) {
+        cloneJobModal.addEventListener('click', function(e) {
+            if (e.target === cloneJobModal) {
+                closeCloneJobModal();
+            }
+        });
+    }
+    
     // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
         // Escape key closes modals
@@ -795,6 +1261,7 @@ document.addEventListener('DOMContentLoaded', function() {
             closeTokenManagementModal();
             closeCookieManagementModal();
             closeInstrumentalSelectionModal();
+            closeCloneJobModal();
         }
     });
 });
@@ -889,6 +1356,9 @@ async function loadJobs() {
         const jobs = await response.json();
         console.log(`Loaded ${Object.keys(jobs).length} jobs`);
         
+        // Check for job state changes that require notifications
+        checkForJobNotifications(jobs);
+        
         updateJobsList(jobs);
         updateStats(jobs);
         
@@ -978,13 +1448,13 @@ function createJobHTML(jobId, job) {
                     <div class="job-header">
                         <div class="job-title-section">
                             <div class="job-header-line">
-                                <span class="job-id">🎵 Job ${jobId}</span>
+                                <span class="track-name">🎵 ${trackInfo}</span>
                                 <div class="job-status">
                                     <span class="status-badge status-${status}">${formatStatus(status)}</span>
                                 </div>
                             </div>
-                            <div class="job-track-info">
-                                <span class="track-name">${trackInfo}</span>
+                            <div class="job-id-info">
+                                <span class="job-id">Job ${jobId}</span>
                             </div>
                         </div>
                         <div class="job-timing-section">
@@ -1882,6 +2352,15 @@ function createJobActions(jobId, job) {
         actions.push(`<button onclick="retryJob('${jobId}')" class="btn btn-warning">🔄 Retry</button>`);
     }
     
+    // Admin-only clone action
+    if (currentUser && currentUser.admin_access) {
+        // Show clone button for jobs that have completed at least phase 1
+        const completableStatuses = ['awaiting_review', 'reviewing', 'ready_for_finalization', 'rendering', 'finalizing', 'complete'];
+        if (completableStatuses.includes(status)) {
+            actions.push(`<button onclick="showCloneJobModal('${jobId}')" class="btn btn-info">🔄 Clone Job</button>`);
+        }
+    }
+    
     // Always available actions
     actions.push(`<button onclick="deleteJob('${jobId}')" class="btn btn-danger">🗑️ Delete</button>`);
     
@@ -1932,7 +2411,14 @@ function showLogTailModal(jobId) {
             clearInterval(logTailInterval);
             logTailInterval = null;
         }
+        if (logRefreshInterval) {
+            clearInterval(logRefreshInterval);
+            logRefreshInterval = null;
+        }
         currentTailJobId = null;
+        
+        // Store job ID on modal for server-side filtering
+        modal.setAttribute('data-job-id', jobId);
         
         // Set up modal content
         modalJobId.textContent = jobId;
@@ -1950,13 +2436,61 @@ function showLogTailModal(jobId) {
             autoScrollBtn.title = 'Auto-scroll disabled - click to enable';
         }
         
+        // Reset filter state and clear previous data
+        logFilters = {
+            include: '',
+            exclude: '',
+            level: '',
+            limit: 1000,
+            regex: false
+        };
+        currentLogData = null;
+        
+        // Reset filter input values
+        const includeFilter = document.getElementById('log-include-filter');
+        const excludeFilter = document.getElementById('log-exclude-filter');
+        const levelFilter = document.getElementById('log-level-filter');
+        const limitInput = document.getElementById('log-limit-input');
+        
+        if (includeFilter) includeFilter.value = '';
+        if (excludeFilter) excludeFilter.value = '';
+        if (levelFilter) levelFilter.value = '';
+        if (limitInput) limitInput.value = '1000';
+        
+        // Clear regex toggle
+        const regexBtn = document.getElementById('regex-mode-btn');
+        if (regexBtn) {
+            regexBtn.classList.remove('active');
+            regexBtn.style.fontWeight = 'normal';
+            regexBtn.title = 'Toggle regex mode';
+        }
+        
+        // Reset filter stats
+        const statsElement = document.getElementById('filter-stats');
+        if (statsElement) {
+            statsElement.textContent = 'Loading...';
+        }
+        
+        // Reset auto-refresh button state
+        logAutoRefreshEnabled = true;
+        const logAutoRefreshBtn = document.getElementById('log-auto-refresh-btn');
+        if (logAutoRefreshBtn) {
+            logAutoRefreshBtn.classList.add('toggle-active');
+            logAutoRefreshBtn.textContent = '🔄 Refresh';
+            logAutoRefreshBtn.title = 'Auto-refresh enabled - click to disable';
+        }
+        
         // Force reflow and show modal
         modal.offsetHeight; // Trigger reflow
         modal.style.display = 'flex';
         
+        // Load initial logs with server-side filtering
         setTimeout(async () => {
-            scrollToBottom();
-        }, 1000);
+            await fetchFilteredLogs();
+            if (autoScrollEnabled) {
+                scrollToBottom();
+            }
+        }, 100);
 
         return true;
     } else {
@@ -1971,8 +2505,12 @@ function closeLogTailModal() {
         modal.style.display = 'none';
     }
     
-    // Stop any log tailing
+    // Stop any log tailing and refresh intervals
     stopLogTail();
+    if (logRefreshInterval) {
+        clearInterval(logRefreshInterval);
+        logRefreshInterval = null;
+    }
     
     // Reset auto-scroll to enabled for next time
     autoScrollEnabled = false;
@@ -1983,6 +2521,19 @@ function closeLogTailModal() {
         autoScrollBtn.title = 'Auto-scroll disabled - click to enable';
     }
     
+    // Reset filter state
+    logFilters = {
+        include: '',
+        exclude: '',
+        level: '',
+        limit: 1000,
+        regex: false
+    };
+    currentLogData = null;
+    
+    // Reset auto-refresh state
+    logAutoRefreshEnabled = true;
+    
     // Clear modal content to ensure fresh state
     const modalLogs = document.getElementById('modal-logs');
     if (modalLogs) {
@@ -1992,6 +2543,11 @@ function closeLogTailModal() {
     const modalJobId = document.getElementById('modal-job-id');
     if (modalJobId) {
         modalJobId.textContent = '';
+    }
+    
+    // Remove job ID from modal
+    if (modal) {
+        modal.removeAttribute('data-job-id');
     }
 }
 
@@ -2035,16 +2591,31 @@ async function loadLogTailData(jobId) {
         return;
     }
     
+    // Check if auto-refresh is disabled
+    if (!logAutoRefreshEnabled) {
+        // Still update the title but skip log fetching
+        try {
+            const statusResponse = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}`);
+            if (!statusResponse) return;
+            const status = await statusResponse.json();
+            
+            const modalTitle = document.querySelector('#log-tail-modal .modal-title');
+            if (modalTitle) {
+                modalTitle.innerHTML = `Log Tail - Job <span id="modal-job-id">${jobId}</span> - ${formatStatus(status.status)} (${status.progress || 0}%) [Paused]`;
+            }
+        } catch (error) {
+            console.error('Error loading status:', error);
+        }
+        return;
+    }
+    
     try {
-        const [statusResponse, logsResponse] = await Promise.all([
-            authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}`),
-            authenticatedFetch(`${API_BASE_URL}/logs/${jobId}`)
-        ]);
+        // Only fetch job status for title update
+        const statusResponse = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}`);
         
-        if (!statusResponse || !logsResponse) return; // Auth failed, already handled
+        if (!statusResponse) return; // Auth failed, already handled
         
         const status = await statusResponse.json();
-        const logs = await logsResponse.json();
         
         // Update modal title with current status - preserve structure
         const modalJobIdSpan = document.getElementById('modal-job-id');
@@ -2057,28 +2628,8 @@ async function loadLogTailData(jobId) {
             modalTitle.innerHTML = `Log Tail - Job <span id="modal-job-id">${jobId}</span> - ${formatStatus(status.status)} (${status.progress || 0}%)`;
         }
         
-        // Update logs
-        if (logs.length === 0) {
-            modalLogs.innerHTML = '<p class="no-logs">No logs available yet...</p>';
-            return;
-        }
-        
-        const logsHTML = logs.map(log => {
-            const timestamp = parseServerTime(log.timestamp).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false
-            });
-            const levelClass = log.level.toLowerCase();
-            return `<div class="log-entry log-${levelClass}">
-                <span class="log-timestamp">${timestamp}</span>
-                <span class="log-level">${log.level}</span>
-                <span class="log-message">${escapeHtml(log.message)}</span>
-            </div>`;
-        }).join('');
-        
-        modalLogs.innerHTML = logsHTML;
+        // Fetch filtered logs from server
+        await fetchFilteredLogs();
         
         // Auto-scroll to bottom if auto-scroll is enabled
         if (autoScrollEnabled) {
@@ -2190,6 +2741,160 @@ async function warmCache() {
     } catch (error) {
         console.error('Error warming cache:', error);
         showError('Failed to warm cache: ' + error.message);
+    }
+}
+
+// Log Level Management Functions (Admin Only)
+async function showLogLevelSettings() {
+    if (!currentUser || !currentUser.admin_access) {
+        showError('Admin access required');
+        return;
+    }
+    
+    try {
+        showInfo('Loading current log level...');
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/system/log-level`);
+        
+        if (!response) return; // Auth failed, already handled
+        
+        if (response.ok) {
+            const result = await response.json();
+            displayLogLevelSettings(result);
+        } else {
+            const error = await response.json();
+            showError('Error loading log level: ' + error.message);
+        }
+    } catch (error) {
+        console.error('Error loading log level:', error);
+        showError('Error loading log level: ' + error.message);
+    }
+}
+
+function displayLogLevelSettings(logLevelData) {
+    const currentLevel = logLevelData.log_level;
+    const availableLevels = logLevelData.available_levels;
+    
+    // Create log level selection UI
+    let levelOptions = '';
+    availableLevels.forEach(level => {
+        const selected = level === currentLevel ? 'selected' : '';
+        const description = getLogLevelDescription(level);
+        levelOptions += `<option value="${level}" ${selected}>${level} - ${description}</option>`;
+    });
+    
+    const logLevelHtml = `
+        <div class="log-level-settings">
+            <h4>🔍 System Log Level</h4>
+            <div class="log-level-info">
+                <p><strong>Current Level:</strong> ${currentLevel}</p>
+                <p class="log-level-description">${logLevelData.description}</p>
+            </div>
+            
+            <div class="log-level-controls">
+                <div class="form-group">
+                    <label for="log-level-select">Change Log Level:</label>
+                    <select id="log-level-select" class="form-control">
+                        ${levelOptions}
+                    </select>
+                    <small class="help-text">
+                        Changes will apply to new jobs only. Existing running jobs will keep their current log level.
+                    </small>
+                </div>
+                
+                <div class="log-level-actions">
+                    <button onclick="applyLogLevel()" class="btn btn-primary">
+                        💾 Apply Log Level
+                    </button>
+                    <button onclick="showLogLevelSettings()" class="btn btn-secondary">
+                        🔄 Refresh
+                    </button>
+                </div>
+            </div>
+            
+            <div class="log-level-help">
+                <h5>Log Level Guide:</h5>
+                <ul>
+                    <li><strong>DEBUG:</strong> Very verbose output including internal processing details</li>
+                    <li><strong>INFO:</strong> Standard operational messages (recommended for normal use)</li>
+                    <li><strong>WARNING:</strong> Only warnings and errors</li>
+                    <li><strong>ERROR:</strong> Only error messages</li>
+                    <li><strong>CRITICAL:</strong> Only critical system errors</li>
+                </ul>
+                <p><em>Note: DEBUG level will produce significantly more log output and may impact performance.</em></p>
+            </div>
+        </div>
+    `;
+    
+    // Display in a dedicated section or modal
+    const adminPanel = document.getElementById('admin-panel');
+    if (adminPanel) {
+        // Look for existing log level section
+        let logLevelSection = adminPanel.querySelector('.log-level-section');
+        if (!logLevelSection) {
+            // Create new section if it doesn't exist
+            logLevelSection = document.createElement('div');
+            logLevelSection.className = 'admin-section log-level-section';
+            adminPanel.appendChild(logLevelSection);
+        }
+        logLevelSection.innerHTML = logLevelHtml;
+        
+        // Scroll to the section
+        logLevelSection.scrollIntoView({ behavior: 'smooth' });
+        
+        showSuccess('Log level settings loaded');
+    }
+}
+
+function getLogLevelDescription(level) {
+    const descriptions = {
+        'DEBUG': 'Verbose debugging information',
+        'INFO': 'Standard operational messages',
+        'WARNING': 'Warnings and errors only',
+        'ERROR': 'Error messages only',
+        'CRITICAL': 'Critical system errors only'
+    };
+    return descriptions[level] || 'Unknown level';
+}
+
+async function applyLogLevel() {
+    const selectElement = document.getElementById('log-level-select');
+    if (!selectElement) {
+        showError('Log level selector not found');
+        return;
+    }
+    
+    const newLogLevel = selectElement.value;
+    if (!newLogLevel) {
+        showError('Please select a log level');
+        return;
+    }
+    
+    try {
+        showInfo(`Setting log level to ${newLogLevel}...`);
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/system/log-level`, {
+            method: 'POST',
+            body: JSON.stringify({ log_level: newLogLevel })
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showSuccess(result.message);
+            if (result.note) {
+                setTimeout(() => showInfo(result.note), 2000);
+            }
+            // Refresh the display to show the new current level
+            setTimeout(() => showLogLevelSettings(), 1000);
+        } else {
+            showError('Error setting log level: ' + result.message);
+        }
+    } catch (error) {
+        console.error('Error setting log level:', error);
+        showError('Error setting log level: ' + error.message);
     }
 }
 
@@ -4270,3 +4975,500 @@ window.debugTimestamp = function(timestamp) {
 console.log('🎤 Karaoke Generator Frontend Ready!');
 console.log('💡 Use debugTimestamp("your-timestamp-here") to test timestamp parsing');
 console.log('🕐 Timestamps now display in your local timezone with improved error handling'); 
+
+// Add job cloning functions after the existing admin functions
+
+// Job cloning functions (admin only)
+async function showCloneJobModal(jobId) {
+    if (!currentUser || !currentUser.admin_access) {
+        showError('Admin access required for job cloning');
+        return;
+    }
+    
+    try {
+        showInfo('Loading clone options...');
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/jobs/${jobId}/clone-info`);
+        
+        if (!response) return; // Auth failed, already handled
+        
+        if (response.ok) {
+            const result = await response.json();
+            displayCloneJobModal(result);
+        } else {
+            const error = await response.json();
+            showError('Error loading clone options: ' + error.message);
+        }
+    } catch (error) {
+        console.error('Error loading clone options:', error);
+        showError('Error loading clone options: ' + error.message);
+    }
+}
+
+function displayCloneJobModal(cloneInfo) {
+    const modalHtml = `
+        <div id="clone-job-modal" class="modal">
+            <div class="modal-content clone-job-modal-content" style="max-height: 90vh; overflow-y: auto;">
+                <div class="modal-header">
+                    <h3 class="modal-title">🔄 Clone Job ${cloneInfo.job_id}</h3>
+                    <div class="modal-controls">
+                        <button onclick="closeCloneJobModal()" class="modal-close">✕</button>
+                    </div>
+                </div>
+                <div class="modal-body" style="max-height: calc(90vh - 60px); overflow-y: auto; padding: 20px;">
+                    <div class="clone-job-info">
+                        <div class="clone-source-info">
+                            <h4>Source Job</h4>
+                            <p><strong>Track:</strong> ${cloneInfo.artist} - ${cloneInfo.title}</p>
+                            <p><strong>Current Status:</strong> ${formatStatus(cloneInfo.current_status)}</p>
+                            <p><strong>Job ID:</strong> ${cloneInfo.job_id}</p>
+                        </div>
+                        
+                        <div class="clone-options">
+                            <h4>Clone At Phase</h4>
+                            <p class="clone-description">Select which phase to clone the job at. This will copy all files and state up to that point.</p>
+                            
+                            <form id="clone-job-form" onsubmit="executeJobClone(event)">
+                                <div class="clone-phases">
+                                    ${createClonePhasesHtml(cloneInfo.available_phases)}
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="clone-name">Clone Name (Optional)</label>
+                                    <input type="text" id="clone-name" class="form-control" 
+                                           placeholder="e.g., 'Phase 3 Test', 'Instrumental Test'">
+                                    <small class="help-text">Optional name to help identify this clone</small>
+                                </div>
+                                
+                                <div class="clone-actions">
+                                    <button type="submit" class="btn btn-primary" id="clone-submit-btn" disabled>
+                                        🔄 Clone Job
+                                    </button>
+                                    <button type="button" onclick="closeCloneJobModal()" class="btn btn-secondary">
+                                        Cancel
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove any existing clone modal
+    const existingModal = document.getElementById('clone-job-modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Show modal
+    const modal = document.getElementById('clone-job-modal');
+    modal.style.display = 'flex';
+    
+    // Add click outside to close
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closeCloneJobModal();
+        }
+    });
+    
+    // If no phases are available, show message
+    if (cloneInfo.available_phases.length === 0) {
+        const phasesContainer = document.querySelector('.clone-phases');
+        phasesContainer.innerHTML = '<p class="no-clone-phases">No clone points available for this job. The job needs to complete at least Phase 1 to be cloneable.</p>';
+    }
+}
+
+function createClonePhasesHtml(availablePhases) {
+    if (availablePhases.length === 0) {
+        return '<p class="no-clone-phases">No clone points available for this job.</p>';
+    }
+    
+    let html = '';
+    
+    availablePhases.forEach((phase, index) => {
+        html += `
+            <div class="clone-phase-option">
+                <label class="clone-phase-label">
+                    <input type="radio" name="clone-phase" value="${phase.phase}" 
+                           onchange="handleClonePhaseSelection()" ${index === 0 ? 'checked' : ''}>
+                    <div class="clone-phase-info">
+                        <div class="clone-phase-name">${phase.name}</div>
+                        <div class="clone-phase-description">${phase.description}</div>
+                        <div class="clone-phase-badge">${formatStatus(phase.phase)}</div>
+                    </div>
+                </label>
+            </div>
+        `;
+    });
+    
+    return html;
+}
+
+function handleClonePhaseSelection() {
+    const submitBtn = document.getElementById('clone-submit-btn');
+    const selectedPhase = document.querySelector('input[name="clone-phase"]:checked');
+    
+    if (submitBtn && selectedPhase) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = `🔄 Clone at ${formatStatus(selectedPhase.value)}`;
+    }
+}
+
+async function executeJobClone(event) {
+    event.preventDefault();
+    
+    const selectedPhase = document.querySelector('input[name="clone-phase"]:checked');
+    const cloneName = document.getElementById('clone-name').value.trim();
+    const submitBtn = document.getElementById('clone-submit-btn');
+    
+    if (!selectedPhase) {
+        showError('Please select a phase to clone at');
+        return;
+    }
+    
+    // Get job ID from modal title
+    const modalTitle = document.querySelector('#clone-job-modal .modal-title');
+    const jobIdMatch = modalTitle.textContent.match(/Clone Job (\w+)/);
+    
+    if (!jobIdMatch) {
+        showError('Unable to determine job ID');
+        return;
+    }
+    
+    const sourceJobId = jobIdMatch[1];
+    const targetPhase = selectedPhase.value;
+    
+    try {
+        // Disable submit button and show progress
+        submitBtn.disabled = true;
+        submitBtn.textContent = '🔄 Cloning...';
+        
+        showInfo(`Cloning job ${sourceJobId} at phase ${formatStatus(targetPhase)}...`);
+        
+        const requestData = {
+            source_job_id: sourceJobId,
+            target_phase: targetPhase
+        };
+        
+        if (cloneName) {
+            requestData.clone_name = cloneName;
+        }
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/jobs/${sourceJobId}/clone`, {
+            method: 'POST',
+            body: JSON.stringify(requestData)
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showSuccess(`Job cloned successfully! New job ID: ${result.new_job_id}`);
+            closeCloneJobModal();
+            
+            // Refresh jobs list to show the cloned job
+            await loadJobs();
+            
+            // Scroll to jobs section to show the new clone
+            const jobsSection = document.querySelector('.jobs-section');
+            if (jobsSection) {
+                jobsSection.scrollIntoView({ behavior: 'smooth' });
+            }
+            
+        } else {
+            showError('Error cloning job: ' + result.message);
+        }
+        
+    } catch (error) {
+        console.error('Error cloning job:', error);
+        showError('Error cloning job: ' + error.message);
+    } finally {
+        // Re-enable submit button
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '🔄 Clone Job';
+        }
+    }
+}
+
+function closeCloneJobModal() {
+    const modal = document.getElementById('clone-job-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Clone functionality is now integrated into the main createJobActions function above
+
+// ... existing code ...
+
+// Log filtering state (now server-side)
+let logFilters = {
+    include: '',
+    exclude: '',
+    level: '',
+    limit: 1000,
+    regex: false
+};
+
+let currentLogData = null; // Store current log response data
+let logRefreshInterval = null;
+let logAutoRefreshEnabled = true; // Control auto-refresh of logs
+
+// Log filtering functions (now server-side)
+async function applyLogFilters() {
+    // Get current filter values
+    updateFilterState();
+    
+    // Fetch filtered logs from server
+    await fetchFilteredLogs();
+}
+
+async function fetchFilteredLogs() {
+    const modalLogs = document.getElementById('modal-logs');
+    if (!modalLogs) return;
+    
+    // Get job ID from the log tail modal or current tail job ID
+    const modal = document.getElementById('log-tail-modal');
+    const currentJobId = modal?.getAttribute('data-job-id') || currentTailJobId;
+    if (!currentJobId) return;
+    
+    try {
+        // Only show loading state if there are no logs currently displayed
+        // This prevents disrupting the user's view during auto-refresh
+        const hasExistingLogs = modalLogs.querySelector('.log-entry');
+        const isInitialLoad = modalLogs.innerHTML.includes('Starting log tail') || 
+                             modalLogs.innerHTML.includes('logs-loading');
+        
+        if (!hasExistingLogs && isInitialLoad) {
+            modalLogs.innerHTML = '<p class="loading">Loading logs...</p>';
+        }
+        
+        // Build query parameters
+        const params = new URLSearchParams();
+        if (logFilters.include) params.append('include', logFilters.include);
+        if (logFilters.exclude) params.append('exclude', logFilters.exclude);
+        if (logFilters.level) params.append('level', logFilters.level);
+        if (logFilters.limit > 0) params.append('limit', logFilters.limit.toString());
+        if (logFilters.regex) params.append('regex', 'true');
+        
+        const apiUrl = `${API_BASE_URL}/logs/${currentJobId}?${params}`;
+        
+        // Fetch filtered logs from server using authenticated fetch
+        const response = await authenticatedFetch(apiUrl);
+        
+        if (!response) {
+            return; // Auth failed, already handled
+        }
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        currentLogData = data;
+        
+        // Store current scroll position before updating
+        const currentScrollTop = modalLogs.scrollTop;
+        const currentScrollHeight = modalLogs.scrollHeight;
+        const wasAtBottom = currentScrollTop + modalLogs.clientHeight >= currentScrollHeight - 10;
+        
+        // Render the filtered logs
+        renderServerFilteredLogs(data.logs || []);
+        
+        // Update stats
+        updateServerFilterStats(data);
+        
+        // Restore scroll position or auto-scroll
+        if (autoScrollEnabled || wasAtBottom) {
+            // If auto-scroll is enabled OR user was at bottom, scroll to bottom
+            modalLogs.scrollTop = modalLogs.scrollHeight;
+        } else {
+            // Try to maintain relative scroll position
+            const newScrollHeight = modalLogs.scrollHeight;
+            const scrollRatio = currentScrollTop / Math.max(currentScrollHeight, 1);
+            modalLogs.scrollTop = scrollRatio * newScrollHeight;
+        }
+        
+    } catch (error) {
+        console.error('Error fetching filtered logs:', error);
+        modalLogs.innerHTML = `<p class="error">Error loading logs: ${error.message}</p>`;
+    }
+}
+
+function updateFilterState() {
+    // Update filters from form inputs
+    logFilters.include = document.getElementById('log-include-filter')?.value || '';
+    logFilters.exclude = document.getElementById('log-exclude-filter')?.value || '';
+    logFilters.level = document.getElementById('log-level-filter')?.value || '';
+    logFilters.limit = parseInt(document.getElementById('log-limit-input')?.value || '1000');
+    logFilters.regex = document.getElementById('regex-mode-btn')?.classList.contains('active') || false;
+}
+
+function renderServerFilteredLogs(logEntries) {
+    const modalLogs = document.getElementById('modal-logs');
+    if (!modalLogs) return;
+    
+    if (logEntries.length === 0) {
+        modalLogs.innerHTML = '<p class="no-logs">No logs match the current filters.</p>';
+        return;
+    }
+    
+    // Generate HTML for log entries
+    const logsHTML = logEntries.map(logEntry => {
+        const timestamp = parseServerTime(logEntry.timestamp).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+        const levelClass = logEntry.level.toLowerCase();
+        
+        return `<div class="log-entry log-${levelClass}">
+            <span class="log-timestamp">${timestamp}</span>
+            <span class="log-level">${logEntry.level}</span>
+            <span class="log-message">${escapeHtml(logEntry.message)}</span>
+        </div>`;
+    }).join('');
+    
+    modalLogs.innerHTML = logsHTML;
+}
+
+function updateServerFilterStats(data) {
+    const statsElement = document.getElementById('filter-stats');
+    if (!statsElement) return;
+    
+    const totalCount = data.total_count || 0;
+    const filtersApplied = data.filters_applied || {};
+    
+    let statusText = `Showing ${totalCount} logs`;
+    
+    // Add filter info
+    const activeFilters = [];
+    if (filtersApplied.include) activeFilters.push(`include:"${filtersApplied.include}"`);
+    if (filtersApplied.exclude) activeFilters.push(`exclude:"${filtersApplied.exclude}"`);
+    if (filtersApplied.level) activeFilters.push(`level:${filtersApplied.level}+`);
+    if (filtersApplied.limit && filtersApplied.limit < 10000) activeFilters.push(`limit:${filtersApplied.limit}`);
+    if (filtersApplied.regex) activeFilters.push('regex');
+    
+    if (activeFilters.length > 0) {
+        statusText += ` (filtered: ${activeFilters.join(', ')})`;
+    }
+    
+    statsElement.textContent = statusText;
+}
+
+// Simplified filter control functions for server-side filtering
+
+function toggleRegexMode() {
+    const button = document.getElementById('regex-mode-btn');
+    if (!button) return;
+    
+    const isActive = button.classList.toggle('active');
+    
+    // Update button appearance
+    if (isActive) {
+        button.style.fontWeight = 'bold';
+        button.title = 'Regex mode enabled - click to disable';
+    } else {
+        button.style.fontWeight = 'normal';
+        button.title = 'Toggle regex mode';
+    }
+    
+    // Reapply filters
+    applyLogFilters();
+}
+
+function clearAllFilters() {
+    // Clear main filter inputs
+    const includeFilter = document.getElementById('log-include-filter');
+    const excludeFilter = document.getElementById('log-exclude-filter');
+    const levelFilter = document.getElementById('log-level-filter');
+    const limitInput = document.getElementById('log-limit-input');
+    
+    if (includeFilter) includeFilter.value = '';
+    if (excludeFilter) excludeFilter.value = '';
+    if (levelFilter) levelFilter.value = '';
+    if (limitInput) limitInput.value = '1000';
+    
+    // Clear regex toggle
+    const regexBtn = document.getElementById('regex-mode-btn');
+    if (regexBtn) {
+        regexBtn.classList.remove('active');
+        regexBtn.style.fontWeight = 'normal';
+        regexBtn.title = 'Toggle regex mode';
+    }
+    
+    // Reset filter state
+    logFilters = {
+        include: '',
+        exclude: '',
+        level: '',
+        limit: 1000,
+        regex: false
+    };
+    
+    // Reapply filters (will show all logs with default limit)
+    applyLogFilters();
+    
+    showInfo('All filters cleared');
+}
+
+async function refreshLogs() {
+    // Manual refresh of logs with current filters
+    try {
+        const refreshBtn = document.querySelector('button[onclick="refreshLogs()"]');
+        if (refreshBtn) {
+            const originalText = refreshBtn.innerHTML;
+            refreshBtn.innerHTML = '🔄';
+            refreshBtn.disabled = true;
+            
+            await applyLogFilters();
+            
+            refreshBtn.innerHTML = originalText;
+            refreshBtn.disabled = false;
+            
+            showInfo('Logs refreshed manually');
+        } else {
+            await applyLogFilters();
+        }
+    } catch (error) {
+        console.error('Error during manual refresh:', error);
+        showError('Failed to refresh logs: ' + error.message);
+    }
+}
+
+function setLogLimit(value) {
+    const limitInput = document.getElementById('log-limit-input');
+    if (limitInput) {
+        limitInput.value = value;
+        applyLogFilters();
+    }
+}
+
+function toggleLogAutoRefresh() {
+    logAutoRefreshEnabled = !logAutoRefreshEnabled;
+    
+    const autoRefreshBtn = document.getElementById('log-auto-refresh-btn');
+    if (autoRefreshBtn) {
+        if (logAutoRefreshEnabled) {
+            autoRefreshBtn.classList.add('toggle-active');
+            autoRefreshBtn.textContent = '🔄 Refresh';
+            autoRefreshBtn.title = 'Auto-refresh enabled - click to disable';
+            showInfo('Log auto-refresh enabled');
+        } else {
+            autoRefreshBtn.classList.remove('toggle-active');
+            autoRefreshBtn.textContent = '⏸️ Paused';
+            autoRefreshBtn.title = 'Auto-refresh disabled - click to enable';
+            showInfo('Log auto-refresh paused');
+        }
+    }
+}
+
+// Modify the existing loadLogTailData function to store logs and apply filters

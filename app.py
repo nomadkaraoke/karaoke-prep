@@ -22,7 +22,7 @@ import time
 import subprocess
 from enum import Enum
 
-from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File, Header, Depends
+from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File, Depends
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -47,8 +47,17 @@ karaoke_image = (
             "gcc",
             "g++",
             "make",
+            # rclone for cloud storage sync
+            "curl",
+            "unzip",
         ]
     )
+    .run_commands([
+        # Install rclone
+        "curl https://rclone.org/install.sh | bash",
+        # Verify rclone installation
+        "rclone version",
+    ])
     .pip_install(
         [
             # Core dependencies
@@ -80,10 +89,10 @@ karaoke_image = (
             # FastAPI dependencies
             "fastapi>=0.104.0",
             "uvicorn>=0.24.0",
-            "python-multipart>=0.0.6",
+            "python-multipart>=0.0.7",
             "requests>=2.31.0",
             # Uncomment this line to use the lyrics-transcriber package from PyPI
-            "lyrics-transcriber>=0.60",
+            # "lyrics-transcriber>=0.60",
             # To use the local version of lyrics-transcriber, comment out the line above and
             # uncomment the lyrics_transcriber_local "add_local_dir" and "run_commands" lines below
         ]
@@ -99,11 +108,11 @@ karaoke_image = (
     # Uncomment this section to use the local version of lyrics-transcriber
     # If using the PyPI version, comment out this section and
     # uncomment the normal lyrics-transcriber line above
-    # .add_local_dir("lyrics_transcriber_local", "/root/lyrics_transcriber_local", copy=True)
-    # .run_commands([
-    #     "cd /root/lyrics_transcriber_local && pip install -e .",  # Install lyrics-transcriber from local first
-    #     "python -c 'import lyrics_transcriber; print(f\"✓ lyrics-transcriber installed from: {lyrics_transcriber.__file__}\")'",  # Verify installation
-    # ])
+    .add_local_dir("lyrics_transcriber_local", "/root/lyrics_transcriber_local", copy=True)
+    .run_commands([
+        "cd /root/lyrics_transcriber_local && pip install -e .",  # Install lyrics-transcriber from local first
+        "python -c 'import lyrics_transcriber; print(f\"✓ lyrics-transcriber installed from: {lyrics_transcriber.__file__}\")'",  # Verify installation
+    ])
     # ----- lyrics_transcriber_local -----
     .add_local_dir("karaoke_gen", "/root/karaoke_gen")
     .add_local_file("core.py", "/root/core.py")
@@ -117,9 +126,9 @@ model_volume = modal.Volume.from_name("karaoke-models", create_if_missing=True)
 output_volume = modal.Volume.from_name("karaoke-output", create_if_missing=True)
 cache_volume = modal.Volume.from_name("karaoke-cache", create_if_missing=True)
 
-# Define serverless dictionaries to hold job states and logs
+# Define serverless dictionaries to hold job states
 job_status_dict = modal.Dict.from_name("karaoke-job-statuses", create_if_missing=True)
-job_logs_dict = modal.Dict.from_name("karaoke-job-logs", create_if_missing=True)
+# Note: job_logs_dict removed - now using Modal's native logging via CLI queries
 
 # Add new Modal Dicts for authentication and YouTube cookies
 auth_tokens_dict = modal.Dict.from_name("karaoke-auth-tokens", create_if_missing=True)
@@ -127,8 +136,17 @@ token_usage_dict = modal.Dict.from_name("karaoke-token-usage", create_if_missing
 user_sessions_dict = modal.Dict.from_name("karaoke-user-sessions", create_if_missing=True)
 user_youtube_cookies_dict = modal.Dict.from_name("karaoke-youtube-cookies", create_if_missing=True)
 
+# Add configuration storage for finalization features
+finalization_config_dict = modal.Dict.from_name("karaoke-finalization-config", create_if_missing=True)
+
+# Add system configuration storage for log levels, etc.
+system_config_dict = modal.Dict.from_name("karaoke-system-config", create_if_missing=True)
+
+# Add a volume for storing configuration files
+config_volume = modal.Volume.from_name("karaoke-config", create_if_missing=True)
+
 # Mount volumes to specific paths inside the container
-VOLUME_CONFIG = {"/models": model_volume, "/output": output_volume, "/cache": cache_volume}
+VOLUME_CONFIG = {"/models": model_volume, "/output": output_volume, "/cache": cache_volume, "/config": config_volume}
 
 
 # User type enumeration (must be defined before Pydantic models that use it)
@@ -174,13 +192,15 @@ class CreateTokenRequest(BaseModel):
 
 
 class JobLogHandler(logging.Handler):
-    """Custom logging handler that forwards log messages to job_logs_dict"""
+    """Custom logging handler that outputs to both Modal's native logging and local log files"""
 
     def __init__(self, job_id: str):
         super().__init__()
         self.job_id = job_id
         # Prevent recursion by not processing our own log messages
         self.processing = False
+        # Set up local log file path
+        self.log_file_path = Path(f"/output/{job_id}/job_logs.jsonl")
 
     def emit(self, record):
         if self.processing:
@@ -189,22 +209,78 @@ class JobLogHandler(logging.Handler):
         try:
             self.processing = True
 
+            # Filter out noisy logs from Modal's internal operations
+            if self._should_filter_log(record):
+                return
+
             # Format the log message
             message = self.format(record)
 
             # Create log entry
             log_entry = {"timestamp": datetime.datetime.now().isoformat(), "level": record.levelname, "message": message}
 
-            # Get existing logs or create new list
-            existing_logs = job_logs_dict.get(self.job_id, [])
-            existing_logs.append(log_entry)
-            job_logs_dict[self.job_id] = existing_logs
+            # Print to stdout for Modal's native logging
+            print(f"[{log_entry['level']}] {log_entry['message']}")
+            
+            # Also write to local log file (JSONL format - one JSON object per line)
+            try:
+                # Ensure the directory exists - use more robust directory creation
+                import os
+                directory = self.log_file_path.parent
+                if not directory.exists():
+                    directory.mkdir(parents=True, exist_ok=True)
+                
+                # Append to the log file (JSONL format) with explicit error handling
+                with open(self.log_file_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(log_entry) + "\n")
+                    f.flush()  # Ensure data is written immediately
+                    
 
-        except Exception:
-            # Silently ignore errors to prevent recursion
-            pass
+                    
+            except PermissionError as e:
+                print(f"[WARNING] Permission denied writing to log file {self.log_file_path}: {e}")
+            except OSError as e:
+                print(f"[WARNING] OS error writing to log file {self.log_file_path}: {e}")
+            except Exception as e:
+                print(f"[WARNING] Unexpected error writing to local log file {self.log_file_path}: {e}")
+
+        except Exception as e:
+            # Print error for debugging but don't crash
+            print(f"[ERROR] JobLogHandler.emit failed: {e}")
         finally:
             self.processing = False
+
+    def _should_filter_log(self, record):
+        """Filter out noisy logs from Modal's internal libraries and operations."""
+        
+        # Filter by logger name (module)
+        noisy_modules = ['hpack']
+        if any(record.name.startswith(module) for module in noisy_modules):
+            return True
+
+        # Keep all other logs
+        return False
+
+    def flush(self):
+        """Flush any pending log writes to disk."""
+        try:
+            # Force flush stdout
+            import sys
+            sys.stdout.flush()
+            
+            # Force filesystem sync if the log file exists
+            if self.log_file_path.exists():
+                try:
+                    import os
+                    # Open and close to ensure all writes are flushed
+                    with open(self.log_file_path, "a") as f:
+                        f.flush()
+                        os.fsync(f.fileno())
+                except (PermissionError, OSError, Exception):
+                    pass  # Fail silently on flush errors
+        except Exception as e:
+            # Don't crash on flush errors
+            print(f"[WARNING] Could not flush log file: {e}")
 
 
 def setup_job_logging(job_id: str):
@@ -217,11 +293,51 @@ def setup_job_logging(job_id: str):
     formatter = logging.Formatter(fmt="%(asctime)s.%(msecs)03d - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     handler.setFormatter(formatter)
 
-    # Only add handler to root logger - this will capture all logging via propagation
+    # Add handler to root logger - this will capture all logging via propagation
     root_logger = logging.getLogger()
+    
+    # Remove any existing handlers to avoid duplicates
+    for existing_handler in root_logger.handlers[:]:
+        if isinstance(existing_handler, JobLogHandler):
+            root_logger.removeHandler(existing_handler)
+    
     root_logger.addHandler(handler)
-    root_logger.setLevel(logging.INFO)
+    
+    # Get configured log level from system config, default to INFO for production
+    system_config = system_config_dict.get("config", {})
+    log_level_name = system_config.get("log_level", "INFO")
+    log_level = getattr(logging, log_level_name.upper(), logging.INFO)
+    root_logger.setLevel(log_level)
+    
+    # Force specific loggers that are important for our application to the correct level
+    important_loggers = [
+        'karaoke_gen',
+        'lyrics_transcriber', 
+        'karaoke_finalise',
+        '__main__',  # Main script logs
+    ]
+    
+    for logger_name in important_loggers:
+        important_logger = logging.getLogger(logger_name)
+        important_logger.setLevel(log_level)
+        # Ensure propagation is enabled so logs reach the root handler
+        important_logger.propagate = True
 
+    # Suppress noisy debug logs from Modal's internal libraries
+    noisy_loggers = [
+        'hpack',
+        'modal',  # Suppress most Modal internal logs
+        'urllib3',  # HTTP request logs
+        'requests',  # HTTP request logs  
+    ]
+    
+    for logger_name in noisy_loggers:
+        noisy_logger = logging.getLogger(logger_name)
+        # Set these loggers to WARNING level to suppress DEBUG/INFO spam
+        noisy_logger.setLevel(logging.WARNING)
+    
+
+        
     return handler
 
 
@@ -230,12 +346,22 @@ def log_message(job_id: str, level: str, message: str):
     timestamp = datetime.datetime.now().isoformat()
     log_entry = {"timestamp": timestamp, "level": level, "message": message}
 
-    # Get existing logs or create new list
-    existing_logs = job_logs_dict.get(job_id, [])
-    existing_logs.append(log_entry)
-    job_logs_dict[job_id] = existing_logs
-
+    # Print to stdout for Modal's native logging
     print(f"[{level}] {message}")
+    
+    # Also write to local log file
+    try:
+        log_file_path = Path(f"/output/{job_id}/job_logs.jsonl")
+        
+        # Ensure the directory exists
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Append to the log file (JSONL format)
+        with open(log_file_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry) + "\n")
+    except Exception as e:
+        # If local file write fails, just print the error but don't crash
+        print(f"[WARNING] Could not write to local log file: {e}")
 
 
 # Cache Utility Functions
@@ -325,11 +451,85 @@ def setup_cache_manager(job_id: str) -> CacheManager:
     return cache_manager
 
 
+def setup_rclone_config(job_id: str) -> bool:
+    """Set up rclone configuration for cloud storage access."""
+    try:
+        log_message(job_id, "INFO", "Setting up rclone configuration")
+        
+        # Check if rclone.conf exists in the config volume
+        rclone_source_file = Path("/config/rclone.conf")
+        if not rclone_source_file.exists():
+            log_message(job_id, "WARNING", "No rclone.conf file found in /config/")
+            return False
+            
+        # Create rclone config directory
+        rclone_config_dir = Path.home() / ".config" / "rclone"
+        rclone_config_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy rclone configuration from config volume
+        rclone_config_file = rclone_config_dir / "rclone.conf"
+        import shutil
+        shutil.copy2(rclone_source_file, rclone_config_file)
+            
+        log_message(job_id, "INFO", f"rclone configuration copied to {rclone_config_file}")
+        
+        # Test rclone configuration
+        import subprocess
+        result = subprocess.run(["rclone", "listremotes"], capture_output=True, text=True)
+        if result.returncode == 0:
+            remotes = result.stdout.strip().split('\n') if result.stdout.strip() else []
+            log_message(job_id, "INFO", f"rclone configured successfully. Available remotes: {remotes}")
+            return True
+        else:
+            log_message(job_id, "ERROR", f"rclone configuration test failed: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        log_message(job_id, "ERROR", f"Failed to setup rclone configuration: {str(e)}")
+        return False
+
+
+def get_finalization_config(job_id: str) -> Dict[str, Any]:
+    """Get finalization configuration for KaraokeFinalise."""
+    config = finalization_config_dict.get("config", {})
+    
+    # Set up default configuration
+    default_config = {
+        "enable_youtube_upload": False,
+        "enable_discord_notifications": False,
+        "enable_folder_organisation": False,
+        "enable_public_share_copy": False,
+        "enable_rclone_sync": False,
+        "enable_email_drafts": False,
+        "brand_prefix": "NOMAD",
+        "organised_dir": "/output/organized",
+        "organised_dir_rclone_root": "andrewdropboxfull:Tracks-Organized",
+        "public_share_dir": "/output/public-share",
+        "rclone_destination": "googledrive:Nomad Karaoke",
+        "youtube_client_secrets_file": "/config/karaoke-finalise-client-secret.json",
+        "youtube_description_file": "/config/youtube-video-description.txt",
+        "discord_webhook_url": os.environ.get("DISCORD_WEBHOOK_URL", ""),
+        "email_template_file": "/config/email-template.txt",
+    }
+    
+    # Merge with stored configuration, but don't overwrite environment variables with empty strings
+    merged_config = {**default_config, **config}
+    
+    # Special handling for discord_webhook_url: prefer environment variable if stored config is empty
+    if not merged_config.get("discord_webhook_url") and os.environ.get("DISCORD_WEBHOOK_URL"):
+        merged_config["discord_webhook_url"] = os.environ.get("DISCORD_WEBHOOK_URL")
+    
+    log_message(job_id, "DEBUG", f"Finalization config loaded: {list(merged_config.keys())}")
+    
+    return merged_config
+
+
 # Add a cache warming function for common use cases
 @app.function(
     image=karaoke_image,
     volumes=VOLUME_CONFIG,
     timeout=300,  # 5 minute timeout for cache operations
+    retries=0,
 )
 def warm_cache():
     """Warm up the cache with commonly used data."""
@@ -371,6 +571,7 @@ def warm_cache():
     volumes=VOLUME_CONFIG,
     secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
+    retries=0,
 )
 async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[str] = None, override_artist: Optional[str] = None, override_title: Optional[str] = None, styles_file_path: Optional[str] = None, styles_archive_path: Optional[str] = None):
     """First phase: Download audio, separate, and transcribe lyrics."""
@@ -378,9 +579,9 @@ async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[
     import traceback
 
     try:
-        # Set up logging to capture all messages
+        # Set up logging to capture ALL log messages from all modules
         log_handler = setup_job_logging(job_id)
-
+        
         from core import ServerlessKaraokeProcessor
 
         log_message(job_id, "INFO", f"Starting job {job_id} for URL: {youtube_url}")
@@ -433,10 +634,6 @@ async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[
 
         log_message(job_id, "SUCCESS", f"Processing completed for job {job_id}. Ready for review.")
 
-        # Clean up logging handler
-        root_logger = logging.getLogger()
-        root_logger.removeHandler(log_handler)
-
         return {"status": "success", "message": "Processing completed, ready for review"}
 
     except Exception as e:
@@ -448,21 +645,24 @@ async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[
 
         update_job_status_with_timeline(job_id, "error", progress=0, url=youtube_url, error=error_msg, traceback=error_traceback)
 
+        raise Exception(f"Phase 1 failed: {error_msg}")
+    finally:
         # Clean up logging handler
         try:
             root_logger = logging.getLogger()
-            root_logger.removeHandler(log_handler)
+            if 'log_handler' in locals():
+                root_logger.removeHandler(log_handler)
         except:
             pass
-
-        raise Exception(f"Phase 1 failed: {error_msg}")
 
 
 @app.function(
     image=karaoke_image,
     gpu="any",
     volumes=VOLUME_CONFIG,
+    secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
+    retries=0,
 )
 def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, Any]] = None):
     """Second phase: Generate 'With Vocals' video with corrected lyrics (no finalization yet)."""
@@ -471,9 +671,9 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
     from pathlib import Path
 
     try:
-        # Set up logging to capture all messages
+        # Set up logging to capture ALL log messages from all modules
         log_handler = setup_job_logging(job_id)
-
+        
         from lyrics_transcriber.output.generator import OutputGenerator
         from lyrics_transcriber.core.config import OutputConfig
         from lyrics_transcriber.types import CorrectionResult
@@ -533,8 +733,8 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
             run_correction=False,  # Already done in Phase 1
         )
 
-        # Initialize output generator
-        output_generator = OutputGenerator(config=output_config, logger=logging.getLogger(__name__))
+        # Initialize output generator (logs will go to Modal's stdout, not captured in job log file)
+        output_generator = OutputGenerator(config=output_config, logger=None)
 
         # Find the audio file - look for the actual downloaded file
         track_dir = Path(track_output_dir)
@@ -593,10 +793,6 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
 
         log_message(job_id, "SUCCESS", f"Phase 2 completed for job {job_id}! Ready for instrumental selection.")
 
-        # Clean up logging handler
-        root_logger = logging.getLogger()
-        root_logger.removeHandler(log_handler)
-
         return {
             "status": "success",
             "message": "Video generation completed, ready for instrumental selection",
@@ -620,21 +816,24 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
             **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated"]},
         )
 
+        raise Exception(f"Phase 2 failed: {error_msg}")
+    finally:
         # Clean up logging handler
         try:
             root_logger = logging.getLogger()
-            root_logger.removeHandler(log_handler)
+            if 'log_handler' in locals():
+                root_logger.removeHandler(log_handler)
         except:
             pass
-
-        raise Exception(f"Phase 2 failed: {error_msg}")
 
 
 @app.function(
     image=karaoke_image,
     gpu="any",
     volumes=VOLUME_CONFIG,
+    secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
+    retries=0,
 )
 def process_part_three(job_id: str, selected_instrumental: Optional[str] = None):
     """Third phase: Generate final video formats and packages with selected instrumental."""
@@ -643,9 +842,9 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
     from pathlib import Path
 
     try:
-        # Set up logging to capture all messages
+        # Set up logging to capture ALL log messages from all modules
         log_handler = setup_job_logging(job_id)
-
+        
         log_message(job_id, "INFO", f"Starting phase 3 (finalization) for job {job_id}")
         if selected_instrumental:
             log_message(job_id, "INFO", f"Using selected instrumental: {selected_instrumental}")
@@ -695,24 +894,84 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
         # Change to the track directory for processing
         original_cwd = os.getcwd()
         os.chdir(track_output_dir)
+        log_message(job_id, "INFO", f"Changed working directory to: {track_output_dir}")
 
         try:
-            # Set up KaraokeFinalise with serverless-friendly settings
+            # Get finalization configuration
+            config = get_finalization_config(job_id)
+            
+            # Set up rclone if needed
+            rclone_available = False
+            if config.get("enable_rclone_sync") or config.get("enable_folder_organisation"):
+                rclone_available = setup_rclone_config(job_id)
+                if not rclone_available:
+                    log_message(job_id, "WARNING", "rclone setup failed, disabling cloud sync features")
+            
+            # Set up organized and public share directories
+            organized_dir = None
+            public_share_dir = None
+            
+            if config.get("enable_folder_organisation"):
+                organized_dir = config.get("organised_dir")
+                if organized_dir:
+                    Path(organized_dir).mkdir(parents=True, exist_ok=True)
+                    log_message(job_id, "INFO", f"Created organized directory: {organized_dir}")
+                    
+            if config.get("enable_public_share_copy"):
+                public_share_dir = config.get("public_share_dir")
+                if public_share_dir:
+                    Path(public_share_dir).mkdir(parents=True, exist_ok=True)
+                    # Create subdirectories expected by KaraokeFinalise
+                    (Path(public_share_dir) / "MP4").mkdir(exist_ok=True)
+                    (Path(public_share_dir) / "MP4-720p").mkdir(exist_ok=True)
+                    (Path(public_share_dir) / "CDG").mkdir(exist_ok=True)
+                    log_message(job_id, "INFO", f"Created public share directory structure: {public_share_dir}")
+            
+            log_message(job_id, "INFO", "Initializing KaraokeFinalise with configuration...")
+            
+            # Set up KaraokeFinalise with full configuration (logs go to Modal stdout)
             finalizer = KaraokeFinalise(
-                logger=logging.getLogger(__name__),
+                logger=None,
                 log_level=logging.INFO,
                 dry_run=False,
                 instrumental_format="flac",
                 enable_cdg=True,  # Enable CDG creation
                 enable_txt=True,  # Enable TXT creation
+                brand_prefix=config.get("brand_prefix") if config.get("enable_folder_organisation") else None,
+                organised_dir=organized_dir if config.get("enable_folder_organisation") else None,
+                organised_dir_rclone_root=config.get("organised_dir_rclone_root") if config.get("enable_folder_organisation") and rclone_available else None,
+                public_share_dir=public_share_dir if config.get("enable_public_share_copy") else None,
+                youtube_client_secrets_file=config.get("youtube_client_secrets_file") if config.get("enable_youtube_upload") and Path(config.get("youtube_client_secrets_file", "")).exists() else None,
+                youtube_description_file=config.get("youtube_description_file") if config.get("enable_youtube_upload") and Path(config.get("youtube_description_file", "")).exists() else None,
+                rclone_destination=config.get("rclone_destination") if config.get("enable_rclone_sync") and rclone_available else None,
+                discord_webhook_url=config.get("discord_webhook_url") if config.get("enable_discord_notifications") and config.get("discord_webhook_url") else None,
+                email_template_file=config.get("email_template_file") if config.get("enable_email_drafts") and Path(config.get("email_template_file", "")).exists() else None,
                 cdg_styles=cdg_styles,  # Pass CDG styles configuration
-                non_interactive=True,  # Important: disable user prompts
+                non_interactive=True,  # CRITICAL: disable user prompts
+                keep_brand_code=False,  # Don't keep existing brand code, generate new one
             )
+            
+            # Log which features are enabled
+            features_enabled = []
+            if finalizer.youtube_upload_enabled:
+                features_enabled.append("YouTube upload")
+            if finalizer.discord_notication_enabled:
+                features_enabled.append("Discord notifications")
+            if finalizer.folder_organisation_enabled:
+                features_enabled.append("folder organization")
+            if finalizer.public_share_copy_enabled:
+                features_enabled.append("public share copy")
+            if finalizer.public_share_rclone_enabled:
+                features_enabled.append("rclone sync")
+                
+            log_message(job_id, "INFO", f"KaraokeFinalise configured with features: {', '.join(features_enabled) if features_enabled else 'basic video generation only'}")
 
             # Get the "With Vocals" video from phase 2
             with_vocals_file = f"{artist} - {title} (With Vocals).mkv"
             if not Path(with_vocals_file).exists():
                 raise Exception(f"With Vocals video not found: {with_vocals_file}")
+
+            log_message(job_id, "INFO", f"Found With Vocals video: {with_vocals_file}")
 
             # Find instrumental files
             base_name = f"{artist} - {title}"
@@ -726,9 +985,37 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
                     Path(expected_instrumental).symlink_to(selected_instrumental)
                     log_message(job_id, "INFO", f"Created symlink: {expected_instrumental} -> {selected_instrumental}")
 
-            # Let KaraokeFinalise handle all the video format creation and packaging
-            log_message(job_id, "INFO", "Running KaraokeFinalise.process() for video formats and packages")
-            result = finalizer.process(replace_existing=False)
+            log_message(job_id, "INFO", "About to start KaraokeFinalise.process() - this may take several minutes...")
+            
+            # Add timeout monitoring
+            import signal
+            import time
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutError("KaraokeFinalise.process() timed out")
+            
+            # Set a 45-minute timeout for the process call
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(45 * 60)  # 45 minutes
+            
+            try:
+                # Let KaraokeFinalise handle all the video format creation and packaging
+                log_message(job_id, "INFO", "Running KaraokeFinalise.process() for video formats and packages")
+                result = finalizer.process(replace_existing=False)
+                
+                # Cancel the timeout
+                signal.alarm(0)
+                
+                log_message(job_id, "SUCCESS", "KaraokeFinalise.process() completed successfully")
+                
+            except TimeoutError as e:
+                signal.alarm(0)
+                log_message(job_id, "ERROR", "KaraokeFinalise.process() timed out after 45 minutes")
+                raise Exception("Finalization process timed out")
+            except Exception as e:
+                signal.alarm(0)
+                log_message(job_id, "ERROR", f"KaraokeFinalise.process() failed: {str(e)}")
+                raise
 
             # Extract the created files from the result
             final_files = {
@@ -779,6 +1066,7 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
         finally:
             # Always return to original directory
             os.chdir(original_cwd)
+            log_message(job_id, "DEBUG", f"Restored working directory to: {original_cwd}")
 
         log_message(
             job_id,
@@ -810,10 +1098,6 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
 
         log_message(job_id, "SUCCESS", f"Job {job_id} completed successfully!")
 
-        # Clean up logging handler
-        root_logger = logging.getLogger()
-        root_logger.removeHandler(log_handler)
-
         return {"status": "success", "message": "Finalization completed", "final_files": final_files}
 
     except Exception as e:
@@ -833,20 +1117,22 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
             **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated"]},
         )
 
+        raise Exception(f"Phase 3 failed: {error_msg}")
+    finally:
         # Clean up logging handler
         try:
             root_logger = logging.getLogger()
-            root_logger.removeHandler(log_handler)
+            if 'log_handler' in locals():
+                root_logger.removeHandler(log_handler)
         except:
             pass
-
-        raise Exception(f"Phase 3 failed: {error_msg}")
 
 
 @app.function(
     image=karaoke_image,
     volumes=VOLUME_CONFIG,
     timeout=60,  # Short timeout since we're not running a persistent server
+    retries=0,
 )
 def prepare_review_data(job_id: str):
     """Prepare correction data for external review interface."""
@@ -975,6 +1261,7 @@ def prepare_review_data(job_id: str):
     volumes=VOLUME_CONFIG,
     secrets=[modal.Secret.from_name("env-vars")],
     timeout=1800,
+    retries=0,
 )
 async def process_part_one_uploaded(
     job_id: str,
@@ -989,9 +1276,9 @@ async def process_part_one_uploaded(
     import traceback
 
     try:
-        # Set up logging to capture all messages
+        # Set up logging to capture ALL log messages from all modules
         log_handler = setup_job_logging(job_id)
-
+        
         # Set up cache manager
         cache_manager = setup_cache_manager(job_id)
 
@@ -1017,17 +1304,22 @@ async def process_part_one_uploaded(
         log_message(job_id, "INFO", f"File verified: {audio_path.name} ({file_size} bytes)")
 
         # Generate audio hash for caching
+        log_message(job_id, "DEBUG", "About to generate audio hash for caching...")
         audio_hash = cache_manager.get_audio_hash(audio_file_path)
-        log_message(job_id, "INFO", f"Audio hash: {audio_hash}")
+        log_message(job_id, "INFO", f"Audio hash generated: {audio_hash}")
 
         # Check if we have cached results for this exact audio
+        log_message(job_id, "DEBUG", "Checking for cached transcription results...")
         cached_transcription = cache_manager.get_cached_transcription_result(audio_hash)
         if cached_transcription:
             log_message(job_id, "INFO", "Found cached transcription result, skipping processing")
             # You could return cached results here, but for now we'll continue processing
             # This is useful for development/testing scenarios
+        else:
+            log_message(job_id, "DEBUG", "No cached results found, proceeding with processing")
 
         # Update status
+        log_message(job_id, "DEBUG", "Updating job status to processing...")
         update_job_status_with_timeline(
             job_id,
             "processing",
@@ -1038,9 +1330,12 @@ async def process_part_one_uploaded(
             audio_hash=audio_hash,  # Store audio hash for potential future use
             created_at=datetime.datetime.now().isoformat(),
         )
+        log_message(job_id, "DEBUG", "Job status updated successfully")
 
         # Initialize processor - this now uses the same code path as the CLI
+        log_message(job_id, "DEBUG", "Initializing ServerlessKaraokeProcessor...")
         processor = ServerlessKaraokeProcessor(model_dir="/models", output_dir="/output")
+        log_message(job_id, "DEBUG", "ServerlessKaraokeProcessor initialized successfully")
 
         # Process using the full KaraokePrep workflow (same as CLI)
         log_message(job_id, "INFO", "Starting full karaoke processing workflow...")
@@ -1077,10 +1372,6 @@ async def process_part_one_uploaded(
 
         log_message(job_id, "SUCCESS", f"Processing completed for job {job_id}. Ready for review.")
 
-        # Clean up logging handler
-        root_logger = logging.getLogger()
-        root_logger.removeHandler(log_handler)
-
         return {"status": "success", "message": "Processing completed, ready for review"}
 
     except Exception as e:
@@ -1092,14 +1383,15 @@ async def process_part_one_uploaded(
 
         update_job_status_with_timeline(job_id, "error", progress=0, artist=artist, title=title, error=error_msg, traceback=error_traceback)
 
+        raise Exception(f"Phase 1 failed: {error_msg}")
+    finally:
         # Clean up logging handler
         try:
             root_logger = logging.getLogger()
-            root_logger.removeHandler(log_handler)
+            if 'log_handler' in locals():
+                root_logger.removeHandler(log_handler)
         except:
             pass
-
-        raise Exception(f"Phase 1 failed: {error_msg}")
 
 
 # Removed setup_lyrics_review function - now using full KaraokePrep workflow
@@ -1676,6 +1968,197 @@ async def delete_cookies(admin: dict = Depends(authenticate_admin)):
         return JSONResponse({"success": False, "message": f"Error deleting cookies: {str(e)}"}, status_code=500)
 
 
+# Finalization Configuration Management (Admin Only)
+@api_app.get("/api/admin/finalization/config")
+async def get_finalization_config_endpoint(admin: dict = Depends(authenticate_admin)):
+    """Get current finalization configuration (admin only)."""
+    try:
+        config = finalization_config_dict.get("config", {})
+        
+        # Check which config files exist
+        config_files_status = {}
+        config_files = {
+            "youtube_client_secrets_file": "/config/karaoke-finalise-client-secret.json",
+            "youtube_description_file": "/config/youtube-video-description.txt", 
+            "email_template_file": "/config/email-template.txt",
+            "rclone_config_file": "/config/rclone.conf"
+        }
+        
+        for file_key, file_path in config_files.items():
+            config_files_status[file_key] = {
+                "path": file_path,
+                "exists": Path(file_path).exists(),
+                "size": Path(file_path).stat().st_size if Path(file_path).exists() else 0
+            }
+        
+        return JSONResponse({
+            "success": True,
+            "config": config,
+            "config_files": config_files_status,
+            "discord_webhook_configured": bool(os.environ.get("DISCORD_WEBHOOK_URL"))
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error getting configuration: {str(e)}"}, status_code=500)
+
+
+class FinalizationConfigRequest(BaseModel):
+    enable_youtube_upload: bool = False
+    enable_discord_notifications: bool = False
+    enable_folder_organisation: bool = False
+    enable_public_share_copy: bool = False
+    enable_rclone_sync: bool = False
+    enable_email_drafts: bool = False
+    brand_prefix: str = "NOMAD"
+    organised_dir: str = "/output/organized"
+    organised_dir_rclone_root: str = "andrewdropboxfull:Tracks-Organized"
+    public_share_dir: str = "/output/public-share" 
+    rclone_destination: str = "googledrive:Nomad Karaoke"
+    discord_webhook_url: str = ""
+
+
+@api_app.post("/api/admin/finalization/config")
+async def update_finalization_config(request: FinalizationConfigRequest, admin: dict = Depends(authenticate_admin)):
+    """Update finalization configuration (admin only)."""
+    try:
+        new_config = request.dict()
+        new_config["updated_at"] = time.time()
+        new_config["updated_by"] = admin["token"][:8] + "..."
+        
+        finalization_config_dict["config"] = new_config
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Finalization configuration updated successfully",
+            "config": new_config
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error updating configuration: {str(e)}"}, status_code=500)
+
+
+# rclone config is now managed via Modal CLI uploads to /config/rclone.conf
+
+
+@api_app.post("/api/admin/finalization/test-config")
+async def test_finalization_config(admin: dict = Depends(authenticate_admin)):
+    """Test finalization configuration (admin only)."""
+    try:
+        test_job_id = f"test-{int(time.time())}"
+        
+        # Test basic configuration loading
+        config = get_finalization_config(test_job_id)
+        
+        test_results = {
+            "config_loaded": True,
+            "rclone_test": False,
+            "youtube_secrets_test": False,
+            "discord_webhook_test": False,
+            "file_checks": {}
+        }
+        
+        # Test rclone setup
+        if config.get("enable_rclone_sync") or config.get("enable_folder_organisation"):
+            test_results["rclone_test"] = setup_rclone_config(test_job_id)
+        
+        # Test YouTube secrets file
+        youtube_secrets_file = config.get("youtube_client_secrets_file", "")
+        if youtube_secrets_file and Path(youtube_secrets_file).exists():
+            try:
+                import json
+                with open(youtube_secrets_file, 'r') as f:
+                    json.load(f)
+                test_results["youtube_secrets_test"] = True
+            except:
+                test_results["youtube_secrets_test"] = False
+        
+        # Test Discord webhook
+        discord_webhook = config.get("discord_webhook_url", "")
+        if discord_webhook and config.get("enable_discord_notifications"):
+            test_results["discord_webhook_test"] = discord_webhook.startswith("https://discord.com/api/webhooks/")
+        
+        # Check config files
+        config_files = ["youtube_client_secrets_file", "youtube_description_file", "email_template_file"]
+        for file_key in config_files:
+            file_path = config.get(file_key, "")
+            test_results["file_checks"][file_key] = {
+                "configured": bool(file_path),
+                "exists": Path(file_path).exists() if file_path else False
+            }
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Configuration test completed",
+            "test_results": test_results,
+            "config_summary": {
+                "enabled_features": [k for k, v in config.items() if k.startswith("enable_") and v],
+                "brand_prefix": config.get("brand_prefix"),
+                "organized_dir": config.get("organised_dir"),
+                "rclone_destination": config.get("rclone_destination")
+            }
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error testing configuration: {str(e)}"}, status_code=500)
+
+
+# System Configuration Management (Admin Only)
+@api_app.get("/api/admin/system/log-level")
+async def get_log_level(admin: dict = Depends(authenticate_admin)):
+    """Get current system log level (admin only)."""
+    try:
+        system_config = system_config_dict.get("config", {})
+        current_log_level = system_config.get("log_level", "INFO")
+        
+        return JSONResponse({
+            "success": True,
+            "log_level": current_log_level,
+            "available_levels": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+            "description": f"Current log level: {current_log_level}"
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error getting log level: {str(e)}"}, status_code=500)
+
+
+class LogLevelRequest(BaseModel):
+    log_level: str
+
+
+@api_app.post("/api/admin/system/log-level")
+async def set_log_level(request: LogLevelRequest, admin: dict = Depends(authenticate_admin)):
+    """Set system log level (admin only)."""
+    try:
+        log_level = request.log_level.upper()
+        
+        # Validate log level
+        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        if log_level not in valid_levels:
+            return JSONResponse({
+                "success": False, 
+                "message": f"Invalid log level '{log_level}'. Must be one of: {', '.join(valid_levels)}"
+            }, status_code=400)
+        
+        # Get existing config and update log level
+        system_config = system_config_dict.get("config", {})
+        system_config["log_level"] = log_level
+        system_config["updated_at"] = time.time()
+        system_config["updated_by"] = admin["token"][:8] + "..."
+        
+        # Save updated config
+        system_config_dict["config"] = system_config
+        
+        return JSONResponse({
+            "success": True,
+            "message": f"Log level set to {log_level}",
+            "log_level": log_level,
+            "note": f"New log level will apply to new jobs. Existing jobs will continue with their current log level."
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error setting log level: {str(e)}"}, status_code=500)
+
+
 class YouTubeMetadataRequest(BaseModel):
     url: str
 
@@ -1788,8 +2271,8 @@ async def submit_job(request: JobSubmissionRequest, user: dict = Depends(authent
             remaining_uses=user["remaining_uses"],
         )
 
-        # Initialize job logs
-        job_logs_dict[job_id] = []
+        # Job logs are now handled by Modal's native logging
+        # No need to initialize job_logs_dict
 
         # Spawn the background job
         process_part_one.spawn(job_id, request.url)
@@ -1918,8 +2401,8 @@ async def submit_youtube_job(
             override_title=override_title,
         )
 
-        # Initialize job logs
-        job_logs_dict[job_id] = []
+        # Job logs are now handled by Modal's native logging
+        # No need to initialize job_logs_dict
         
         # Ensure files are committed to volume before spawning GPU function
         if styles_file_path or styles_archive_path:
@@ -2184,10 +2667,9 @@ async def delete_job(job_id: str, user: dict = Depends(authenticate_user)):
         if not check_job_access(job_id, user):
             raise HTTPException(status_code=403, detail="Access denied to this job")
 
-        # Remove from status and logs
+        # Remove from status
         del job_status_dict[job_id]
-        if job_id in job_logs_dict:
-            del job_logs_dict[job_id]
+        # Note: Logs are now stored in Modal's native logging, no cleanup needed
 
         return JSONResponse({"status": "success", "message": f"Job {job_id} deleted"})
     except HTTPException:
@@ -2228,8 +2710,8 @@ async def retry_job(job_id: str, user: dict = Depends(authenticate_user)):
             remaining_uses=user["remaining_uses"],
         )
 
-        # Clear error logs and add retry log
-        job_logs_dict[job_id] = [{"timestamp": datetime.datetime.now().isoformat(), "level": "INFO", "message": "Job retry initiated"}]
+        # Note: Job retry will be logged via Modal's native logging
+        # No need to manually initialize logs
 
         # Determine job type and spawn the appropriate processing function
         if job_data.get("filename"):
@@ -2271,25 +2753,128 @@ async def retry_job(job_id: str, user: dict = Depends(authenticate_user)):
 
 
 @api_app.get("/api/logs")
-async def get_all_logs(user: dict = Depends(authenticate_admin)):
-    """Get logs for all jobs (admin only)."""
+async def get_all_logs(
+    user: dict = Depends(authenticate_admin),
+    include: str = "",
+    exclude: str = "",
+    level: str = "",
+    limit: int = 1000,
+    regex: bool = False
+):
+    """Get logs for all jobs by querying Modal directly (admin only)."""
     try:
-        logs = dict(job_logs_dict.items())
-        return JSONResponse(logs)
+        # Get all jobs and their associated container info
+        all_jobs = dict(job_status_dict.items())
+        
+        logs_by_job = {}
+        
+        # For each job, try to get its logs from Modal
+        for job_id, job_data in all_jobs.items():
+            try:
+                job_logs = await get_modal_logs_for_job(
+                    job_id, job_data, 
+                    include_filter=include,
+                    exclude_filter=exclude,
+                    level_filter=level,
+                    limit=limit,
+                    use_regex=regex
+                )
+                if job_logs:
+                    logs_by_job[job_id] = job_logs
+            except Exception as e:
+                # If we can't get logs for a specific job, skip it but don't fail the whole request
+                logs_by_job[job_id] = [{"timestamp": "unknown", "level": "ERROR", "message": f"Could not fetch logs: {str(e)}"}]
+        
+        return JSONResponse(logs_by_job)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @api_app.get("/api/logs/{job_id}")
-async def get_job_logs(job_id: str, user: dict = Depends(authenticate_user)):
-    """Get logs for a specific job."""
+async def get_job_logs(
+    job_id: str, 
+    user: dict = Depends(authenticate_user),
+    include: str = "",
+    exclude: str = "",
+    level: str = "",
+    limit: int = 1000,
+    regex: bool = False
+):
+    """Get logs for a specific job by querying Modal directly."""
     try:
         # Check if user has access to this job
         if not check_job_access(job_id, user):
             raise HTTPException(status_code=403, detail="Access denied to this job")
 
-        logs = job_logs_dict.get(job_id, [])
-        return JSONResponse(logs)
+        # Get job data to find associated containers
+        job_data = job_status_dict.get(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Get logs from Modal with filtering
+        logs = await get_modal_logs_for_job(
+            job_id, job_data,
+            include_filter=include,
+            exclude_filter=exclude, 
+            level_filter=level,
+            limit=limit,
+            use_regex=regex
+        )
+        
+        # Return logs with metadata about filtering
+        return JSONResponse({
+            "logs": logs,
+            "total_count": len(logs),
+            "filters_applied": {
+                "include": include,
+                "exclude": exclude,
+                "level": level,
+                "limit": limit,
+                "regex": regex
+            }
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@api_app.get("/api/logs/{job_id}/raw")
+async def get_raw_job_logs(job_id: str, user: dict = Depends(authenticate_user)):
+    """Get raw log file content for debugging (admin only)."""
+    try:
+        # Check if user has access to this job
+        if not check_job_access(job_id, user):
+            raise HTTPException(status_code=403, detail="Access denied to this job")
+
+        # Reload volume and wait for sync
+        output_volume.reload()
+        import asyncio
+        await asyncio.sleep(0.5)
+        
+        log_file_path = Path(f"/output/{job_id}/job_logs.jsonl")
+        
+        if not log_file_path.exists():
+            return JSONResponse({
+                "exists": False,
+                "path": str(log_file_path),
+                "content": None,
+                "size": 0
+            })
+        
+        file_size = log_file_path.stat().st_size
+        
+        with open(log_file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        return JSONResponse({
+            "exists": True,
+            "path": str(log_file_path),
+            "content": content,
+            "size": file_size,
+            "lines": len(content.splitlines()) if content else 0
+        })
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -2521,9 +3106,17 @@ async def get_audio_file(job_id: str):
 @api_app.post("/api/corrections/{job_id}/preview-video")
 async def generate_preview_video(job_id: str, request: Request):
     """Generate a preview video with corrected lyrics."""
+    import time
+    start_time = time.time()
+    
     try:
+        log_message(job_id, "INFO", f"🎬 [STAGE 1] Preview video request received at {datetime.datetime.now().isoformat()}")
+        
         # Reload volume to see files from other containers
+        volume_reload_start = time.time()
         output_volume.reload()
+        volume_reload_duration = time.time() - volume_reload_start
+        log_message(job_id, "DEBUG", f"📁 Volume reload completed in {volume_reload_duration:.3f}s")
 
         job_data = job_status_dict.get(job_id)
         if not job_data:
@@ -2533,21 +3126,32 @@ async def generate_preview_video(job_id: str, request: Request):
             raise HTTPException(status_code=400, detail="Job is not in review state")
 
         # Get the corrected data from the request
+        request_parse_start = time.time()
         corrected_data = await request.json()
+        request_parse_duration = time.time() - request_parse_start
+        log_message(job_id, "DEBUG", f"📋 Request data parsed in {request_parse_duration:.3f}s")
 
-        log_message(job_id, "DEBUG", f"Generating preview video with corrected data")
+        log_message(job_id, "INFO", f"🚀 [STAGE 1] Starting Modal function for preview video generation")
 
         # Call the Modal function to generate preview video
+        modal_call_start = time.time()
         result = generate_preview_video_modal.remote(job_id, corrected_data)
+        modal_call_duration = time.time() - modal_call_start
+        
+        total_duration = time.time() - start_time
+        log_message(job_id, "INFO", f"✅ [STAGE 1] Preview video API call completed in {total_duration:.3f}s (Modal function: {modal_call_duration:.3f}s)")
 
         return JSONResponse(
             {"status": "success", "message": "Preview video generated successfully", "preview_hash": result["preview_hash"]}
         )
 
     except HTTPException:
+        total_duration = time.time() - start_time
+        log_message(job_id, "ERROR", f"❌ [STAGE 1] Preview video request failed after {total_duration:.3f}s (HTTPException)")
         raise
     except Exception as e:
-        log_message(job_id, "ERROR", f"Error generating preview video: {str(e)}")
+        total_duration = time.time() - start_time
+        log_message(job_id, "ERROR", f"❌ [STAGE 1] Preview video request failed after {total_duration:.3f}s: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error generating preview video: {str(e)}")
 
 
@@ -2623,17 +3227,26 @@ async def get_audio_by_hash(job_id: str, audio_hash: str):
 @api_app.get("/api/corrections/{job_id}/preview-video/{preview_hash}")
 async def get_preview_video(job_id: str, preview_hash: str):
     """Get generated preview video by hash."""
+    import time
+    request_start_time = time.time()
+    
     try:
         from pathlib import Path
 
+        log_message(job_id, "INFO", f"📺 [STAGE 4] Preview video fetch request received at {datetime.datetime.now().isoformat()} for hash: {preview_hash}")
+
         # Reload volume to see files from other containers
+        volume_reload_start = time.time()
         output_volume.reload()
+        volume_reload_duration = time.time() - volume_reload_start
+        log_message(job_id, "DEBUG", f"📁 [STAGE 4] Volume reload completed in {volume_reload_duration:.3f}s")
 
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
 
         # Look for the preview video file
+        file_search_start = time.time()
         track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
         preview_dir = Path(track_output_dir) / "previews"
 
@@ -2641,33 +3254,35 @@ async def get_preview_video(job_id: str, preview_hash: str):
             raise HTTPException(status_code=404, detail="Preview directory not found")
 
         # Find preview video file with matching hash
-        log_message(job_id, "DEBUG", f"Looking for preview video in {preview_dir}")
-        log_message(job_id, "DEBUG", f"Preview hash: {preview_hash}")
+        log_message(job_id, "DEBUG", f"🔍 [STAGE 4] Looking for preview video in {preview_dir}")
+        log_message(job_id, "DEBUG", f"🎯 [STAGE 4] Preview hash: {preview_hash}")
 
         # List all files in preview directory for debugging
         if preview_dir.exists():
             all_files = list(preview_dir.glob("*"))
-            log_message(job_id, "DEBUG", f"Files in preview directory: {[f.name for f in all_files]}")
+            log_message(job_id, "DEBUG", f"📂 [STAGE 4] Files in preview directory: {[f.name for f in all_files]}")
 
         preview_files = list(preview_dir.glob(f"preview_{preview_hash}*"))
-        log_message(job_id, "DEBUG", f"Found preview files matching pattern: {[f.name for f in preview_files]}")
+        log_message(job_id, "DEBUG", f"📋 [STAGE 4] Found preview files matching pattern: {[f.name for f in preview_files]}")
 
         video_file = None
         for file in preview_files:
-            log_message(job_id, "DEBUG", f"Checking file: {file.name}, suffix: {file.suffix}")
+            log_message(job_id, "DEBUG", f"🔍 [STAGE 4] Checking file: {file.name}, suffix: {file.suffix}")
             if file.suffix in [".mp4", ".mkv", ".avi"]:
                 video_file = file
-                log_message(job_id, "DEBUG", f"Selected video file: {video_file}")
+                log_message(job_id, "DEBUG", f"✅ [STAGE 4] Selected video file: {video_file}")
                 break
 
         if not video_file or not video_file.exists():
-            log_message(job_id, "ERROR", f"Preview video not found. Pattern: preview_{preview_hash}*, Directory: {preview_dir}")
+            log_message(job_id, "ERROR", f"❌ [STAGE 4] Preview video not found. Pattern: preview_{preview_hash}*, Directory: {preview_dir}")
             if preview_dir.exists():
                 all_files = list(preview_dir.glob("*"))
-                log_message(job_id, "ERROR", f"Available files: {[f.name for f in all_files]}")
+                log_message(job_id, "ERROR", f"📂 [STAGE 4] Available files: {[f.name for f in all_files]}")
             raise HTTPException(status_code=404, detail="Preview video not found")
 
-        log_message(job_id, "DEBUG", f"Serving preview video: {video_file}")
+        file_search_duration = time.time() - file_search_start
+        log_message(job_id, "DEBUG", f"🔎 [STAGE 4] File search completed in {file_search_duration:.3f}s")
+        log_message(job_id, "INFO", f"📤 [STAGE 4] Serving preview video: {video_file.name}")
 
         # Detect proper MIME type based on actual file extension
         file_extension = video_file.suffix.lower()
@@ -2683,8 +3298,13 @@ async def get_preview_video(job_id: str, preview_hash: str):
         log_message(job_id, "DEBUG", f"Using media type: {media_type} for file: {video_file.name}")
 
         # Get file size for Content-Length header
+        file_stat_start = time.time()
         file_size = video_file.stat().st_size
-        log_message(job_id, "DEBUG", f"Video file size: {file_size} bytes")
+        file_stat_duration = time.time() - file_stat_start
+        log_message(job_id, "DEBUG", f"📊 [STAGE 4] Video file size: {file_size} bytes (stat took {file_stat_duration:.3f}s)")
+
+        total_request_duration = time.time() - request_start_time
+        log_message(job_id, "INFO", f"✅ [STAGE 4] Preview video fetch completed in {total_request_duration:.3f}s - starting file transfer")
 
         return FileResponse(
             path=str(video_file),
@@ -2700,9 +3320,12 @@ async def get_preview_video(job_id: str, preview_hash: str):
         )
 
     except HTTPException:
+        error_duration = time.time() - request_start_time
+        log_message(job_id, "ERROR", f"❌ [STAGE 4] Preview video fetch failed after {error_duration:.3f}s (HTTPException)")
         raise
     except Exception as e:
-        log_message(job_id, "ERROR", f"Error serving preview video: {str(e)}")
+        error_duration = time.time() - request_start_time
+        log_message(job_id, "ERROR", f"❌ [STAGE 4] Preview video fetch failed after {error_duration:.3f}s: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error serving preview video: {str(e)}")
 
 
@@ -2767,8 +3390,7 @@ async def clear_error_jobs(admin: dict = Depends(authenticate_admin)):
 
         for job_id in jobs_to_delete:
             del job_status_dict[job_id]
-            if job_id in job_logs_dict:
-                del job_logs_dict[job_id]
+            # Note: Logs are now stored in Modal's native logging, no cleanup needed
 
         return JSONResponse({"status": "success", "message": f"Cleared {len(jobs_to_delete)} error jobs"})
     except Exception as e:
@@ -2940,12 +3562,26 @@ async def delete_audioshake_cache(audio_hash: str, admin: dict = Depends(authent
 
 @api_app.get("/api/admin/export-logs")
 async def export_logs(admin: dict = Depends(authenticate_admin)):
-    """Export all logs as JSON file."""
+    """Export all job data and detailed logs as JSON file."""
     try:
+        # Get all jobs
+        all_jobs = dict(job_status_dict.items())
+        
+        # Get logs for all jobs from local log files
+        logs_by_job = {}
+        for job_id, job_data in all_jobs.items():
+            try:
+                job_logs = await get_modal_logs_for_job(job_id, job_data)
+                logs_by_job[job_id] = job_logs
+            except Exception as e:
+                logs_by_job[job_id] = [{"timestamp": "unknown", "level": "ERROR", "message": f"Could not fetch logs: {str(e)}"}]
+        
         logs_data = {
             "exported_at": datetime.datetime.now().isoformat(),
-            "jobs": dict(job_status_dict.items()),
-            "logs": dict(job_logs_dict.items()),
+            "export_method": "local_log_files",
+            "jobs": all_jobs,
+            "logs": logs_by_job,
+            "note": "Detailed logs from local job log files, supplemented with timeline data"
         }
 
         import tempfile
@@ -3272,8 +3908,8 @@ async def submit_file(
             remaining_uses=user["remaining_uses"],
         )
 
-        # Initialize job logs
-        job_logs_dict[job_id] = []
+        # Job logs are now handled by Modal's native logging
+        # No need to initialize job_logs_dict
 
         # Ensure files are committed to volume before spawning GPU function
         output_volume.commit()
@@ -3323,6 +3959,7 @@ def api_endpoint():
     image=karaoke_image,
     volumes=VOLUME_CONFIG,
     timeout=300,  # 5 minutes for correction processing
+    retries=0,
 )
 def add_lyrics_source(job_id: str, source: str, lyrics_text: str):
     """Add new lyrics source and rerun correction."""
@@ -3332,9 +3969,9 @@ def add_lyrics_source(job_id: str, source: str, lyrics_text: str):
     from lyrics_transcriber.correction.operations import CorrectionOperations
 
     try:
-        # Set up logging
+        # Set up logging to capture ALL log messages from all modules
         log_handler = setup_job_logging(job_id)
-
+        
         # Reload volume to see files from other containers
         output_volume.reload()
 
@@ -3369,7 +4006,7 @@ def add_lyrics_source(job_id: str, source: str, lyrics_text: str):
             source=source,
             lyrics_text=lyrics_text,
             cache_dir="/cache",
-            logger=logging.getLogger(__name__),
+            logger=None,
         )
 
         # Save updated correction data
@@ -3382,42 +4019,33 @@ def add_lyrics_source(job_id: str, source: str, lyrics_text: str):
 
         log_message(job_id, "SUCCESS", f"Successfully added lyrics source '{source}' and updated corrections")
 
-        # Clean up logging handler
-        root_logger = logging.getLogger()
-        root_logger.removeHandler(log_handler)
-
         return {"status": "success", "data": updated_result.to_dict()}
 
     except ValueError as e:
         error_msg = str(e)
         log_message(job_id, "ERROR", f"Failed to add lyrics source: {error_msg}")
 
-        # Clean up logging handler
-        try:
-            root_logger = logging.getLogger()
-            root_logger.removeHandler(log_handler)
-        except:
-            pass
-
         raise Exception(f"Failed to add lyrics source: {error_msg}")
     except Exception as e:
         error_msg = str(e)
         log_message(job_id, "ERROR", f"Failed to add lyrics source: {error_msg}")
 
+        raise Exception(f"Failed to add lyrics source: {error_msg}")
+    finally:
         # Clean up logging handler
         try:
             root_logger = logging.getLogger()
-            root_logger.removeHandler(log_handler)
+            if 'log_handler' in locals():
+                root_logger.removeHandler(log_handler)
         except:
             pass
-
-        raise Exception(f"Failed to add lyrics source: {error_msg}")
 
 
 @app.function(
     image=karaoke_image,
     volumes=VOLUME_CONFIG,
     timeout=300,  # 5 minutes for correction processing
+    retries=0,
 )
 def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
     """Update enabled correction handlers and rerun correction."""
@@ -3427,9 +4055,9 @@ def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
     from lyrics_transcriber.correction.operations import CorrectionOperations
 
     try:
-        # Set up logging
+        # Set up logging to capture ALL log messages from all modules
         log_handler = setup_job_logging(job_id)
-
+        
         # Reload volume to see files from other containers
         output_volume.reload()
 
@@ -3460,7 +4088,7 @@ def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
 
         # Use shared operation for updating handlers
         updated_result = CorrectionOperations.update_correction_handlers(
-            correction_result=correction_result, enabled_handlers=enabled_handlers, cache_dir="/cache", logger=logging.getLogger(__name__)
+            correction_result=correction_result, enabled_handlers=enabled_handlers, cache_dir="/cache", logger=None
         )
 
         # Save updated correction data
@@ -3473,49 +4101,58 @@ def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
 
         log_message(job_id, "SUCCESS", f"Successfully updated handlers: {enabled_handlers}")
 
-        # Clean up logging handler
-        root_logger = logging.getLogger()
-        root_logger.removeHandler(log_handler)
-
         return {"status": "success", "data": updated_result.to_dict()}
 
     except Exception as e:
         error_msg = str(e)
         log_message(job_id, "ERROR", f"Failed to update handlers: {error_msg}")
 
+        raise Exception(f"Failed to update handlers: {error_msg}")
+    finally:
         # Clean up logging handler
         try:
             root_logger = logging.getLogger()
-            root_logger.removeHandler(log_handler)
+            if 'log_handler' in locals():
+                root_logger.removeHandler(log_handler)
         except:
             pass
-
-        raise Exception(f"Failed to update handlers: {error_msg}")
 
 
 @app.function(
     image=karaoke_image,
     volumes=VOLUME_CONFIG,
     timeout=300,  # 5 minutes for preview video generation
+    retries=0,
 )
 def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
     """Generate a preview video with current corrections."""
     import json
+    import time
     from pathlib import Path
     from lyrics_transcriber.types import CorrectionResult
     from lyrics_transcriber.core.config import OutputConfig
     from lyrics_transcriber.correction.operations import CorrectionOperations
 
+    function_start_time = time.time()
+    
     try:
-        # Set up logging
+        # Set up logging to capture ALL log messages from all modules
         log_handler = setup_job_logging(job_id)
+        
+        log_message(job_id, "INFO", f"🎥 [STAGE 2] Modal function started at {datetime.datetime.now().isoformat()}")
 
         # Reload volume to see files from other containers
+        volume_reload_start = time.time()
         output_volume.reload()
+        volume_reload_duration = time.time() - volume_reload_start
+        log_message(job_id, "DEBUG", f"📁 [STAGE 2] Volume reload completed in {volume_reload_duration:.3f}s")
 
-        log_message(job_id, "INFO", "Generating preview video with corrected data")
+        log_message(job_id, "INFO", "🎬 [STAGE 2] Starting preview video generation with corrected data")
 
-        # Get job data
+        # Get job data and prepare configuration
+        config_prep_start = time.time()
+        log_message(job_id, "INFO", f"⚙️ [STAGE 2] Starting config preparation at {datetime.datetime.now().isoformat()}")
+        
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise Exception(f"Job {job_id} not found")
@@ -3561,21 +4198,17 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
 
         # Set up preview config
         styles_file = job_data.get("styles_file_path") or str(Path(track_output_dir) / "styles_updated.json")
-        log_message(job_id, "DEBUG", f"Using styles file for preview: {styles_file}")
 
         # Verify the styles file exists
         if not Path(styles_file).exists():
-            log_message(job_id, "ERROR", f"Styles file does not exist: {styles_file}")
+            log_message(job_id, "WARNING", f"Styles file not found: {styles_file}")
             # Try to find any styles file in the directory
             possible_styles = list(Path(track_output_dir).glob("**/styles*.json"))
             if possible_styles:
-                log_message(job_id, "INFO", f"Found alternative styles files: {[str(f) for f in possible_styles]}")
                 styles_file = str(possible_styles[0])
                 log_message(job_id, "INFO", f"Using alternative styles file: {styles_file}")
             else:
                 log_message(job_id, "WARNING", "No styles files found, using default styles")
-        else:
-            log_message(job_id, "DEBUG", f"Styles file exists and is accessible: {styles_file}")
 
         # Create previews directory for storing preview videos
         preview_dir = Path(track_output_dir) / "previews"
@@ -3596,8 +4229,14 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
             run_transcription=False,
             run_correction=False,
         )
+        
+        config_prep_duration = time.time() - config_prep_start
+        log_message(job_id, "INFO", f"✅ [STAGE 2] Config preparation completed in {config_prep_duration:.3f}s")
 
         # Use shared operation for preview generation
+        video_generation_start = time.time()
+        log_message(job_id, "INFO", f"⚙️ [STAGE 2] Starting video generation (FFmpeg) at {datetime.datetime.now().isoformat()}")
+        
         result = CorrectionOperations.generate_preview_video(
             correction_result=base_correction_result,
             updated_data=updated_data,
@@ -3605,33 +4244,46 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
             audio_filepath=str(audio_file),
             artist=artist,
             title=title,
-            logger=logging.getLogger(__name__),
+            logger=None,  # Don't use Python logging - we use log_message() instead
         )
+        
+        video_generation_duration = time.time() - video_generation_start
+        log_message(job_id, "SUCCESS", f"✅ [STAGE 2] Video generation completed in {video_generation_duration:.3f}s: {result['video_path']}")
 
-        log_message(job_id, "SUCCESS", f"Generated preview video: {result['video_path']}")
+        # Flush stdout before volume commit to ensure all logs are visible
+        log_message(job_id, "INFO", f"📝 [STAGE 3] Flushing stdout before volume commit")
+        import sys
+        sys.stdout.flush()
 
         # Ensure volume changes are committed before returning
+        volume_commit_start = time.time()
+        log_message(job_id, "INFO", f"💾 [STAGE 3] Starting volume commit at {datetime.datetime.now().isoformat()}")
         output_volume.commit()
-        log_message(job_id, "DEBUG", "Volume committed after preview video generation")
+        volume_commit_duration = time.time() - volume_commit_start
+        log_message(job_id, "INFO", f"✅ [STAGE 3] Volume commit completed in {volume_commit_duration:.3f}s")
 
-        # Clean up logging handler
-        root_logger = logging.getLogger()
-        root_logger.removeHandler(log_handler)
+        # Final flush after volume commit
+        sys.stdout.flush()
+
+        function_total_duration = time.time() - function_start_time
+        log_message(job_id, "INFO", f"🎉 [STAGE 2] Modal function completed successfully in {function_total_duration:.3f}s")
 
         return result
 
     except Exception as e:
         error_msg = str(e)
-        log_message(job_id, "ERROR", f"Failed to generate preview video: {error_msg}")
+        function_error_duration = time.time() - function_start_time
+        log_message(job_id, "ERROR", f"❌ [STAGE 2] Modal function failed after {function_error_duration:.3f}s: {error_msg}")
 
+        raise Exception(f"Failed to generate preview video: {error_msg}")
+    finally:
         # Clean up logging handler
         try:
             root_logger = logging.getLogger()
-            root_logger.removeHandler(log_handler)
+            if 'log_handler' in locals():
+                root_logger.removeHandler(log_handler)
         except:
             pass
-
-        raise Exception(f"Failed to generate preview video: {error_msg}")
 
 
 @api_app.get("/api/jobs/{job_id}/files")
@@ -4037,7 +4689,214 @@ def format_duration(seconds: int) -> str:
         return f"{hours}h {remaining_minutes}m"
 
 
-# Add new endpoints after the existing review endpoints
+async def get_modal_logs_for_job(
+    job_id: str, 
+    job_data: Dict[str, Any], 
+    include_filter: str = "",
+    exclude_filter: str = "",
+    level_filter: str = "",
+    limit: int = 1000,
+    use_regex: bool = False
+) -> List[Dict[str, Any]]:
+    """Get detailed job logs from local log file plus timeline information with server-side filtering."""
+    from datetime import datetime
+    import re
+    import asyncio
+    
+    log_entries = []
+    
+    # First, try to read detailed logs from the local log file
+    try:
+        # CRITICAL: Reload volume and wait a moment for sync to complete
+        output_volume.reload()
+        await asyncio.sleep(0.5)  # Give volume sync time to complete
+        
+        log_file_path = Path(f"/output/{job_id}/job_logs.jsonl")
+        
+        if log_file_path.exists():
+            with open(log_file_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            log_entry = json.loads(line)
+                            log_entries.append(log_entry)
+                        except json.JSONDecodeError:
+                            # Skip malformed lines
+                            continue
+        
+    except Exception as e:
+        # If we can't read the log file, add an error entry
+        log_entries.append({
+            "timestamp": datetime.now().isoformat(),
+            "level": "WARNING",
+            "message": f"Could not read detailed logs: {str(e)}"
+        })
+    
+    # If we don't have any detailed logs, fall back to timeline-based logs
+    if not log_entries or len(log_entries) <= 1:  # Only header or empty
+        log_entries = []
+        
+        # Add job creation info  
+        if job_data.get("created_at"):
+            artist = job_data.get("artist", "Unknown")
+            title = job_data.get("title", "Unknown")
+            log_entries.append({
+                "timestamp": job_data["created_at"],
+                "level": "INFO",
+                "message": f"🎵 Job created: {artist} - {title}"
+            })
+            
+            # Add URL or filename info
+            if job_data.get("url"):
+                log_entries.append({
+                    "timestamp": job_data["created_at"],
+                    "level": "INFO", 
+                    "message": f"🔗 Source: {job_data['url']}"
+                })
+            elif job_data.get("filename"):
+                log_entries.append({
+                    "timestamp": job_data["created_at"],
+                    "level": "INFO",
+                    "message": f"📁 Uploaded file: {job_data['filename']}"
+                })
+        
+        # Add timeline entries
+        timeline = job_data.get("timeline", [])
+        for phase in timeline:
+            status = phase["status"]
+            started_at = phase["started_at"]
+            ended_at = phase.get("ended_at")
+            duration = phase.get("duration_seconds")
+            
+            # Status start message
+            status_emoji = {
+                "queued": "⏳", "processing": "⚙️", "awaiting_review": "👀",
+                "reviewing": "✏️", "ready_for_finalization": "🎬", "rendering": "🎨",
+                "finalizing": "🎯", "complete": "✅", "error": "❌"
+            }.get(status, "📝")
+            
+            log_entries.append({
+                "timestamp": started_at,
+                "level": "INFO",
+                "message": f"{status_emoji} Phase started: {status.replace('_', ' ').title()}"
+            })
+            
+            # Status end message with duration
+            if ended_at and duration is not None:
+                duration_str = format_duration(duration)
+                log_entries.append({
+                    "timestamp": ended_at,
+                    "level": "INFO", 
+                    "message": f"✓ Phase completed: {status.replace('_', ' ').title()} ({duration_str})"
+                })
+    
+    # Always add current status at the end
+    current_status = job_data.get("status", "unknown")
+    progress = job_data.get("progress", 0)
+    last_updated = job_data.get("last_updated", datetime.now().isoformat())
+    
+    status_emoji = {
+        "queued": "⏳", "processing": "⚙️", "awaiting_review": "👀",
+        "reviewing": "✏️", "ready_for_finalization": "🎬", "rendering": "🎨", 
+        "finalizing": "🎯", "complete": "✅", "error": "❌"
+    }.get(current_status, "📝")
+    
+    log_entries.append({
+        "timestamp": last_updated,
+        "level": "INFO",
+        "message": f"{status_emoji} Current Status: {current_status.replace('_', ' ').title()} ({progress}%)"
+    })
+    
+    # Add error info if present
+    if job_data.get("error"):
+        log_entries.append({
+            "timestamp": last_updated,
+            "level": "ERROR",
+            "message": f"❌ Error: {job_data['error']}"
+        })
+    
+    # Sort by timestamp (oldest first for chronological order)
+    log_entries.sort(key=lambda x: x["timestamp"])
+    
+    # Apply server-side filtering
+    filtered_entries = apply_server_side_log_filters(
+        log_entries, include_filter, exclude_filter, level_filter, use_regex
+    )
+    
+    # Apply limit (get most recent entries if limit is specified)
+    if limit > 0 and len(filtered_entries) > limit:
+        filtered_entries = filtered_entries[-limit:]
+    
+    return filtered_entries
+
+
+def apply_server_side_log_filters(
+    log_entries: List[Dict[str, Any]], 
+    include_filter: str, 
+    exclude_filter: str, 
+    level_filter: str, 
+    use_regex: bool
+) -> List[Dict[str, Any]]:
+    """Apply server-side filtering to log entries."""
+    import re
+    
+    filtered_entries = []
+    
+    # Define log levels in order from lowest to highest severity
+    log_levels = {
+        'DEBUG': 0,
+        'INFO': 1,
+        'WARNING': 2,
+        'ERROR': 3,
+        'CRITICAL': 4
+    }
+    
+    for log_entry in log_entries:
+        # Level filtering (show selected level and above)
+        if level_filter:
+            entry_level = log_entry.get("level", "INFO")
+            entry_level_value = log_levels.get(entry_level, 1)
+            selected_level_value = log_levels.get(level_filter, 1)
+            
+            if entry_level_value < selected_level_value:
+                continue
+        
+        # Combine searchable text
+        search_text = f"{log_entry.get('level', '')} {log_entry.get('message', '')}".lower()
+        
+        # Apply exclude filter first
+        if exclude_filter:
+            try:
+                if use_regex:
+                    if re.search(exclude_filter, search_text, re.IGNORECASE):
+                        continue
+                else:
+                    if exclude_filter.lower() in search_text:
+                        continue
+            except re.error:
+                # If regex is invalid, fall back to string matching
+                if exclude_filter.lower() in search_text:
+                    continue
+        
+        # Apply include filter
+        if include_filter:
+            try:
+                if use_regex:
+                    if not re.search(include_filter, search_text, re.IGNORECASE):
+                        continue
+                else:
+                    if include_filter.lower() not in search_text:
+                        continue
+            except re.error:
+                # If regex is invalid, fall back to string matching
+                if include_filter.lower() not in search_text:
+                    continue
+        
+        # If we reach here, the entry passed all filters
+        filtered_entries.append(log_entry)
+    
+    return filtered_entries
 
 
 @api_app.get("/api/corrections/{job_id}/instrumentals")
@@ -4172,3 +5031,266 @@ async def get_instrumental_preview(job_id: str, filename: str):
     except Exception as e:
         log_message(job_id, "ERROR", f"Error serving instrumental preview: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error serving instrumental preview: {str(e)}")
+
+
+# Add job cloning functions after the other admin endpoints
+
+class CloneJobRequest(BaseModel):
+    source_job_id: str
+    target_phase: str
+    clone_name: Optional[str] = None
+
+
+@api_app.post("/api/admin/jobs/{job_id}/clone")
+async def clone_job(job_id: str, request: CloneJobRequest, admin: dict = Depends(authenticate_admin)):
+    """Clone a job at a specific phase (admin only)."""
+    try:
+        result = clone_job_at_phase.remote(job_id, request.target_phase, request.clone_name)
+        
+        return JSONResponse({
+            "success": True,
+            "message": f"Job cloned successfully",
+            "new_job_id": result["new_job_id"],
+            "target_phase": request.target_phase
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error cloning job: {str(e)}"}, status_code=500)
+
+
+@api_app.get("/api/admin/jobs/{job_id}/clone-info")
+async def get_clone_info(job_id: str, admin: dict = Depends(authenticate_admin)):
+    """Get information about available clone points for a job (admin only)."""
+    try:
+        job_data = job_status_dict.get(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        current_status = job_data.get("status", "unknown")
+        timeline = job_data.get("timeline", [])
+        
+        # Define available clone points based on current job status
+        available_phases = []
+        
+        # Add clone points based on what phases the job has completed
+        completed_phases = [phase["status"] for phase in timeline if phase.get("ended_at")]
+        
+        if "processing" in completed_phases or current_status in ["awaiting_review", "reviewing", "ready_for_finalization", "rendering", "finalizing", "complete"]:
+            available_phases.append({
+                "phase": "awaiting_review",
+                "name": "After Phase 1 (Processing Complete)",
+                "description": "Clone to test lyrics review and Phase 2 (video generation)"
+            })
+        
+        if "reviewing" in completed_phases or current_status in ["ready_for_finalization", "rendering", "finalizing", "complete"]:
+            available_phases.append({
+                "phase": "ready_for_finalization", 
+                "name": "After Phase 2 (Video Generated)",
+                "description": "Clone to test instrumental selection and Phase 3 (finalization)"
+            })
+        
+        if current_status in ["rendering", "finalizing", "complete"]:
+            available_phases.append({
+                "phase": "reviewing",
+                "name": "During Review Phase",
+                "description": "Clone to test different review corrections and instrumental selections"
+            })
+        
+        return JSONResponse({
+            "success": True,
+            "job_id": job_id,
+            "current_status": current_status,
+            "available_phases": available_phases,
+            "artist": job_data.get("artist", "Unknown"),
+            "title": job_data.get("title", "Unknown")
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error getting clone info: {str(e)}"}, status_code=500)
+
+
+@app.function(
+    image=karaoke_image,
+    volumes=VOLUME_CONFIG,
+    timeout=300,  # 5 minute timeout for file copying
+    retries=0,
+)
+def clone_job_at_phase(source_job_id: str, target_phase: str, clone_name: Optional[str] = None):
+    """Clone a job at a specific phase for testing purposes."""
+    import shutil
+    import uuid
+    from pathlib import Path
+    
+    try:
+        # Generate new job ID
+        new_job_id = str(uuid.uuid4())[:8]
+        
+        # Set up logging to capture ALL log messages from all modules
+        log_handler = setup_job_logging(new_job_id)
+        
+        log_message(new_job_id, "INFO", f"Cloning job {source_job_id} at phase {target_phase}")
+        
+        # Get source job data
+        source_job_data = job_status_dict.get(source_job_id)
+        if not source_job_data:
+            raise Exception(f"Source job {source_job_id} not found")
+        
+        # Reload volumes to see latest files
+        output_volume.reload()
+        cache_volume.reload()
+        
+        # Define source and target directories
+        source_dir = Path(f"/output/{source_job_id}")
+        target_dir = Path(f"/output/{new_job_id}")
+        
+        if not source_dir.exists():
+            raise Exception(f"Source job directory not found: {source_dir}")
+        
+        # Create target directory
+        target_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy all files from source to target
+        log_message(new_job_id, "INFO", f"Copying files from {source_dir} to {target_dir}")
+        for item in source_dir.rglob("*"):
+            if item.is_file():
+                # Calculate relative path and create target path
+                relative_path = item.relative_to(source_dir)
+                target_path = target_dir / relative_path
+                
+                # Create parent directories if needed
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Copy file
+                shutil.copy2(item, target_path)
+        
+        # Create cloned job data
+        clone_data = source_job_data.copy()
+        
+        # Update job metadata
+        clone_data["status"] = target_phase
+        clone_data["progress"] = get_progress_for_phase(target_phase)
+        clone_data["track_output_dir"] = str(target_dir)
+        clone_data["created_at"] = datetime.datetime.now().isoformat()
+        clone_data["last_updated"] = datetime.datetime.now().isoformat()
+        clone_data["cloned_from"] = source_job_id
+        clone_data["clone_target_phase"] = target_phase
+        
+        # Add clone name if provided
+        if clone_name:
+            original_title = clone_data.get("title", "Unknown")
+            clone_data["title"] = f"{original_title} (Clone: {clone_name})"
+        else:
+            original_title = clone_data.get("title", "Unknown") 
+            clone_data["title"] = f"{original_title} (Clone from {target_phase})"
+        
+        # Update file paths in job data to point to new directory
+        if "corrections_file" in clone_data:
+            old_path = clone_data["corrections_file"]
+            if old_path and old_path.startswith(f"/output/{source_job_id}"):
+                clone_data["corrections_file"] = old_path.replace(f"/output/{source_job_id}", f"/output/{new_job_id}")
+        
+        if "styles_file_path" in clone_data:
+            old_path = clone_data["styles_file_path"]
+            if old_path and old_path.startswith(f"/output/{source_job_id}"):
+                clone_data["styles_file_path"] = old_path.replace(f"/output/{source_job_id}", f"/output/{new_job_id}")
+        
+        # Create a new timeline for the cloned job
+        current_time = datetime.datetime.now().isoformat()
+        clone_data["timeline"] = [{
+            "status": target_phase,
+            "started_at": current_time,
+            "ended_at": None,
+            "duration_seconds": None
+        }]
+        
+        # Store cloned job data
+        job_status_dict[new_job_id] = clone_data
+        
+        # Clone job logging will be handled by Modal's native logging
+        # Initial clone message will appear in Modal logs
+        
+        # Commit volume changes to persist the cloned files
+        output_volume.commit()
+        log_message(new_job_id, "INFO", "Volume committed after cloning")
+        
+        log_message(new_job_id, "SUCCESS", f"Job successfully cloned from {source_job_id} at phase {target_phase}")
+        
+        return {
+            "status": "success",
+            "new_job_id": new_job_id,
+            "target_phase": target_phase,
+            "message": f"Job cloned successfully from {source_job_id}"
+        }
+        
+    except Exception as e:
+        error_msg = str(e)
+        log_message(new_job_id if 'new_job_id' in locals() else "unknown", "ERROR", f"Job cloning failed: {error_msg}")
+        raise Exception(f"Job cloning failed: {error_msg}")
+    finally:
+        # Clean up logging handler
+        try:
+            root_logger = logging.getLogger()
+            if 'log_handler' in locals():
+                root_logger.removeHandler(log_handler)
+        except:
+            pass
+
+
+def get_progress_for_phase(phase: str) -> int:
+    """Get appropriate progress percentage for a given phase."""
+    phase_progress = {
+        "queued": 0,
+        "processing": 25,
+        "awaiting_review": 75,
+        "reviewing": 77,
+        "ready_for_finalization": 85,
+        "rendering": 90,
+        "finalizing": 95,
+        "complete": 100,
+        "error": 0
+    }
+    return phase_progress.get(phase, 0)
+
+
+@api_app.post("/api/admin/jobs/{job_id}/resume-at-phase")
+async def resume_job_at_phase(job_id: str, request: dict, admin: dict = Depends(authenticate_admin)):
+    """Resume a cloned job at a specific phase (admin only)."""
+    try:
+        target_phase = request.get("target_phase")
+        selected_instrumental = request.get("selected_instrumental")
+        corrected_data = request.get("corrected_data", {})
+        
+        if not target_phase:
+            raise HTTPException(status_code=400, detail="target_phase is required")
+        
+        job_data = job_status_dict.get(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Spawn the appropriate processing function based on target phase
+        if target_phase == "ready_for_finalization" and selected_instrumental:
+            # Resume at phase 3 with instrumental selection
+            process_part_three.spawn(job_id, selected_instrumental)
+            message = f"Resumed job {job_id} at phase 3 (finalization) with instrumental: {selected_instrumental}"
+            
+        elif target_phase == "reviewing" and corrected_data:
+            # Resume at phase 2 with corrected data
+            process_part_two.spawn(job_id, corrected_data)
+            message = f"Resumed job {job_id} at phase 2 (video generation) with corrections"
+            
+        elif target_phase == "awaiting_review":
+            # Job is ready for manual review - no automatic resumption needed
+            message = f"Job {job_id} is ready for review at phase 1 completion"
+            
+        else:
+            raise HTTPException(status_code=400, detail=f"Cannot resume at phase {target_phase} with provided parameters")
+        
+        return JSONResponse({
+            "success": True,
+            "message": message,
+            "job_id": job_id,
+            "target_phase": target_phase
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error resuming job: {str(e)}"}, status_code=500)

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎤 Nomad Karaoke Generator</title>
+    <title>Nomad Karaoke Generator</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -231,6 +231,9 @@
                         <button onclick="showCookieManagement()" class="btn btn-primary">
                             🍪 Manage YouTube Cookies
                         </button>
+                        <button onclick="showLogLevelSettings()" class="btn btn-primary">
+                            🔍 Log Level Settings
+                        </button>
                         <button onclick="refreshData()" class="btn btn-primary">
                             🔄 Refresh Data
                         </button>
@@ -316,9 +319,54 @@
                     <button onclick="scrollToBottom()" class="modal-control-btn secondary" title="Scroll to bottom">⬇️</button>
                     <button onclick="copyLogsToClipboard()" class="modal-control-btn secondary" title="Copy all logs to clipboard">📋 Copy</button>
                     <button onclick="toggleAutoScroll()" class="modal-control-btn toggle-active" id="auto-scroll-btn" title="Toggle auto-scroll">🔄 Auto</button>
+                    <button onclick="toggleLogAutoRefresh()" class="modal-control-btn toggle-active" id="log-auto-refresh-btn" title="Toggle automatic log refresh">🔄 Refresh</button>
                     <button onclick="closeLogTailModal()" class="modal-close">✕</button>
                 </div>
             </div>
+            
+            <!-- Log Filter Bar (Server-side Filtering) -->
+            <div class="log-filter-bar">
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label class="filter-label">🔍 Include:</label>
+                        <input type="text" id="log-include-filter" class="filter-input" placeholder="Include logs containing..." oninput="applyLogFilters()">
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">🚫 Exclude:</label>
+                        <input type="text" id="log-exclude-filter" class="filter-input" placeholder="Exclude logs containing..." oninput="applyLogFilters()">
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">📊 Level:</label>
+                        <select id="log-level-filter" onchange="applyLogFilters()" class="filter-level-select">
+                            <option value="">All Levels</option>
+                            <option value="DEBUG">DEBUG+ (all levels)</option>
+                            <option value="INFO">INFO+ (info, warning, error, critical)</option>
+                            <option value="WARNING">WARNING+ (warning, error, critical)</option>
+                            <option value="ERROR">ERROR+ (error, critical)</option>
+                            <option value="CRITICAL">CRITICAL only</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">📄 Limit:</label>
+                        <input type="number" id="log-limit-input" class="filter-limit-input" value="1000" min="10" max="10000" step="100" onchange="applyLogFilters()" title="Maximum number of logs to show">
+                        <div class="limit-presets">
+                            <button onclick="setLogLimit(100)" class="limit-preset-btn">100</button>
+                            <button onclick="setLogLimit(1000)" class="limit-preset-btn">1K</button>
+                            <button onclick="setLogLimit(5000)" class="limit-preset-btn">5K</button>
+                        </div>
+                    </div>
+                    <div class="filter-actions">
+                        <button onclick="toggleRegexMode()" class="filter-regex-btn" id="regex-mode-btn" title="Toggle regex mode">.*</button>
+                        <button onclick="refreshLogs()" class="filter-refresh-btn" title="Refresh logs">🔄</button>
+                        <button onclick="clearAllFilters()" class="filter-clear-btn" title="Clear all filters">🗑️</button>
+                    </div>
+                </div>
+                
+                <div class="filter-stats-row">
+                    <span class="filter-stats" id="filter-stats">Loading...</span>
+                </div>
+            </div>
+            
             <div class="modal-body">
                 <div id="modal-logs" class="modal-logs font-md">
                     <div class="logs-loading">Starting log tail...</div>
