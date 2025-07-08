@@ -30,18 +30,34 @@ body {
 .container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 20px;
+    padding: 0 20px;
 }
 
 /* Header */
 .header {
-    text-align: center;
     background: rgba(255, 255, 255, 0.95);
-    padding: 2rem;
+    padding: 1rem;
     border-radius: 15px;
     margin-bottom: 2rem;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     backdrop-filter: blur(10px);
+}
+
+.header-content {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+}
+
+.header-logo {
+    height: 80px;
+    width: auto;
+    flex-shrink: 0;
+}
+
+.header-text {
+    flex: 1;
+    text-align: left;
 }
 
 .header h1 {
@@ -203,6 +219,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 0;
+    margin-bottom: 0.5rem;
 }
 
 .name-fields-row {
@@ -225,6 +242,7 @@ body {
     border-radius: 8px;
     padding: 1.5rem;
     border: 1px solid #e9ecef;
+    display: none;
 }
 
 .styles-header {
@@ -449,13 +467,13 @@ body {
 
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 0.5rem;
 }
 
 .stat-card {
     background: rgba(255, 255, 255, 0.95);
-    padding: 1.5rem;
+    padding: 0.5rem;
     border-radius: 10px;
     text-align: center;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
@@ -1343,6 +1361,24 @@ body {
     
     .modal {
         padding: 10px;
+    }
+    
+    .header {
+        padding: 1.5rem;
+    }
+
+    .header-content {
+        flex-direction: column;
+        text-align: center;
+        gap: 1rem;
+    }
+
+    .header-logo {
+        height: 60px;
+    }
+
+    .header-text {
+        text-align: center;
     }
     
     .header h1 {
@@ -3647,14 +3683,12 @@ html {
     }
     
     .user-status-bar {
-        flex-direction: column;
-        gap: 15px;
         text-align: center;
     }
     
     .user-info {
         flex-direction: column;
-        gap: 10px;
+        gap: 0;
     }
     
     /* Notification controls responsive */
