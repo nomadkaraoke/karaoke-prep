@@ -297,29 +297,54 @@ async def test_full_cli_integration(tmp_path, mocker):
                  if cmd_str_decoded.strip().startswith("ffmpeg"):
                      should_execute = True
 
-        # Special handling for ffmpeg WAV conversion command - simulate creating WAV file instead of running actual ffmpeg
-        if isinstance(cmd_arg, list) and len(cmd_arg) > 3 and cmd_arg[0] == "ffmpeg" and any(".wav" in arg for arg in cmd_arg):
-            print(f"SIDE_EFFECT: Simulating ffmpeg WAV conversion instead of executing: {cmd_str}")
-            # Extract the output WAV path
-            output_wav_path = None
-            for i, arg in enumerate(cmd_arg):
-                if arg.endswith(".wav") and i > 0 and cmd_arg[i-1] != "-i":
-                    output_wav_path = arg
-                    break
+        # Special handling for ALL ffmpeg commands - create dummy output files instead of running actual ffmpeg
+        if isinstance(cmd_arg, list) and len(cmd_arg) > 0 and cmd_arg[0] == "ffmpeg":
+            print(f"SIDE_EFFECT: Simulating ffmpeg command instead of executing: {cmd_str}")
+            
+            # Handle WAV conversion
+            if any(".wav" in arg for arg in cmd_arg):
+                # Extract the output WAV path
+                output_wav_path = None
+                for i, arg in enumerate(cmd_arg):
+                    if arg.endswith(".wav") and i > 0 and cmd_arg[i-1] != "-i":
+                        output_wav_path = arg
+                        break
+                    
+                if output_wav_path:
+                    # Create the output directory if it doesn't exist
+                    os.makedirs(os.path.dirname(output_wav_path), exist_ok=True)
+                    # Create a dummy WAV file with minimal header (44 bytes, 8000Hz, mono, PCM)
+                    with open(output_wav_path, 'wb') as f:
+                        # Simple WAV header + minimal audio data
+                        f.write(b'RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00@\x1f\x00\x00@\x1f\x00\x00\x01\x00\x08\x00data\x00\x00\x00\x00')
+                        # Add some silence (1 second at 8000Hz)
+                        f.write(b'\x80' * 8000)
+                    print(f"SIDE_EFFECT: Created dummy WAV file at {output_wav_path}")
+                    return subprocess.CompletedProcess(args=cmd_arg, returncode=0, stdout="", stderr="")
+            
+            # Handle video conversion (MP4, MKV output)
+            elif any(arg.endswith((".mp4", ".mkv")) for arg in cmd_arg):
+                # Extract the output video path
+                output_video_path = None
+                for i, arg in enumerate(cmd_arg):
+                    if arg.endswith((".mp4", ".mkv")) and i > 0 and cmd_arg[i-1] != "-i":
+                        output_video_path = arg
+                        break
                 
-            if output_wav_path:
-                # Create the output directory if it doesn't exist
-                os.makedirs(os.path.dirname(output_wav_path), exist_ok=True)
-                # Create a dummy WAV file with minimal header (44 bytes, 8000Hz, mono, PCM)
-                with open(output_wav_path, 'wb') as f:
-                    # Simple WAV header + minimal audio data
-                    f.write(b'RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00@\x1f\x00\x00@\x1f\x00\x00\x01\x00\x08\x00data\x00\x00\x00\x00')
-                    # Add some silence (1 second at 8000Hz)
-                    f.write(b'\x80' * 8000)
-                print(f"SIDE_EFFECT: Created dummy WAV file at {output_wav_path}")
-                return subprocess.CompletedProcess(args=cmd_arg, returncode=0, stdout="", stderr="")
+                if output_video_path:
+                    # Create the output directory if it doesn't exist
+                    os.makedirs(os.path.dirname(output_video_path), exist_ok=True)
+                    # Create a dummy video file
+                    with open(output_video_path, 'w') as f:
+                        f.write('dummy video content for testing')
+                    print(f"SIDE_EFFECT: Created dummy video file at {output_video_path}")
+                    return subprocess.CompletedProcess(args=cmd_arg, returncode=0, stdout="", stderr="")
+            
+            # Default ffmpeg mock - just return success
+            print(f"SIDE_EFFECT: Default ffmpeg mock - returning success for: {cmd_str}")
+            return subprocess.CompletedProcess(args=cmd_arg, returncode=0, stdout="", stderr="")
         
-        # For other ffmpeg commands, or if we couldn't extract the WAV path, proceed to normal execution
+        # For other non-ffmpeg commands that should be executed, proceed to normal execution
         if should_execute:
             print(f"SIDE_EFFECT: Executing original: {cmd_str}")
             # Pass original args and kwargs to the original function
@@ -333,6 +358,14 @@ async def test_full_cli_integration(tmp_path, mocker):
                 # Remove our custom flag that subprocess.run doesn't understand
                 if '_os_system_call' in run_kwargs:
                     del run_kwargs['_os_system_call']
+
+                # Handle shell parameter to avoid conflicts
+                if 'shell' in run_kwargs:
+                    # If shell was already specified, use that value
+                    use_shell = run_kwargs['shell']
+                else:
+                    # Otherwise set it based on command type
+                    run_kwargs['shell'] = use_shell
 
                 # Determine if output should be captured based on original kwargs or if it's ffmpeg/ffprobe
                 should_capture = False
@@ -358,8 +391,9 @@ async def test_full_cli_integration(tmp_path, mocker):
                 current_mocked_dir = mock_current_dir_state()
                 print(f"SIDE_EFFECT: Executing {cmd_arg[0]} in mocked CWD: {current_mocked_dir}")
 
-                # Call the original subprocess run within the mocked CWD
-                result = original_subprocess_run(*args, shell=use_shell, cwd=current_mocked_dir, **run_kwargs)
+                # Set CWD in kwargs and call original subprocess run
+                run_kwargs['cwd'] = current_mocked_dir
+                result = original_subprocess_run(*args, **run_kwargs)
 
                 # Log results if captured
                 if should_capture and hasattr(result, 'returncode'): # Check if it's a CompletedProcess
@@ -772,21 +806,160 @@ async def test_full_cli_integration(tmp_path, mocker):
     # Mock all FFmpeg command execution in finalisation to prevent system dependencies
     execute_command_calls = []  # Track calls for testing
     
-    def mock_execute_command(command, description):
-        """Mock execute_command to prevent actual FFmpeg execution and create dummy output files"""
-        print(f"MOCK execute_command: {description}")
-        print(f"MOCK execute_command: Would run: {command[:100]}...")  # Show first 100 chars
+    # Mock the specific video conversion methods that call FFmpeg directly
+    def mock_convert_mov_to_mp4(*args, **kwargs):
+        """Mock MOV to MP4 conversion - create dummy output file"""
+        print("MOCK convert_mov_to_mp4: Creating dummy MP4 output")
+        # The method signature is convert_mov_to_mp4(self, input_file, output_file)
+        if len(args) >= 3:  # self, input_file, output_file
+            input_file = args[1]
+            output_file = args[2]
+        else:
+            input_file = kwargs.get('input_file', "ABBA - Waterloo (With Vocals).mkv")
+            output_file = kwargs.get('output_file', f"{input_file.replace('.mkv', '').replace('.mov', '')}.mp4")
         
-        # Track this call for testing
-        execute_command_calls.append((command, description))
+        with open(output_file, "w") as f:
+            f.write("dummy mp4 content for testing")
+        print(f"MOCK convert_mov_to_mp4: Created {output_file}")
+        return output_file
+    
+    def mock_execute_command_with_fallback(*args, **kwargs):
+        """Mock execute_command_with_fallback to avoid FFmpeg calls and create expected output files"""
+        print("MOCK execute_command_with_fallback: Mocking hardware/software fallback")
+        
+        # The arguments are (self, gpu_command, cpu_command, description)
+        if len(args) >= 4:
+            description = args[3]
+        else:
+            description = kwargs.get('description', 'Unknown FFmpeg operation')
+        
+        print(f"MOCK execute_command_with_fallback: {description}")
         
         # Create dummy output files that the finalisation process expects
         if "Creating MP4 version with PCM audio" in description:
             output_file = "ABBA - Waterloo (Final Karaoke Lossless 4k).mp4"
             with open(output_file, "w") as f:
                 f.write("dummy lossless mp4 content")
-            print(f"MOCK execute_command: Created {output_file}")
+            print(f"MOCK execute_command_with_fallback: Created {output_file}")
         elif "Creating MP4 version with AAC audio" in description:
+            output_file = "ABBA - Waterloo (Final Karaoke Lossy 4k).mp4"
+            with open(output_file, "w") as f:
+                f.write("dummy lossy mp4 content")
+            print(f"MOCK execute_command_with_fallback: Created {output_file}")
+        elif "Creating MKV version with FLAC audio" in description:
+            output_file = "ABBA - Waterloo (Final Karaoke Lossless 4k).mkv"
+            with open(output_file, "w") as f:
+                f.write("dummy mkv content")
+            print(f"MOCK execute_command_with_fallback: Created {output_file}")
+        elif "Encoding 720p version" in description:
+            output_file = "ABBA - Waterloo (Final Karaoke Lossy 720p).mp4"
+            with open(output_file, "w") as f:
+                f.write("dummy 720p mp4 content")
+            print(f"MOCK execute_command_with_fallback: Created {output_file}")
+        elif "Converting MOV video to MP4" in description:
+            output_file = "ABBA - Waterloo (With Vocals).mp4"
+            with open(output_file, "w") as f:
+                f.write("dummy with vocals mp4 content")
+            print(f"MOCK execute_command_with_fallback: Created {output_file}")
+        
+        return
+    
+    def mock_remux_with_instrumental(*args, **kwargs):
+        """Mock remux_with_instrumental to create dummy output file"""
+        print("MOCK remux_with_instrumental: Creating dummy karaoke MP4")
+        # The method signature is remux_with_instrumental(self, with_vocals_file, instrumental_audio, output_file)
+        if len(args) >= 4:  # self, with_vocals_file, instrumental_audio, output_file
+            output_file = args[3]
+        else:
+            output_file = kwargs.get('output_file', "ABBA - Waterloo (Karaoke).mp4")
+        
+        with open(output_file, "w") as f:
+            f.write("dummy karaoke mp4 content for testing")
+        print(f"MOCK remux_with_instrumental: Created {output_file}")
+        return output_file
+    
+    # Mock the specific encoding methods that create the output files we need
+    def mock_encode_lossless_mp4(*args, **kwargs):
+        """Mock encode_lossless_mp4 to create expected output file"""
+        print("MOCK encode_lossless_mp4: Creating lossless MP4 output")
+        output_file = "ABBA - Waterloo (Final Karaoke Lossless 4k).mp4"
+        with open(output_file, "w") as f:
+            f.write("dummy lossless mp4 content for testing")
+        print(f"MOCK encode_lossless_mp4: Created {output_file}")
+        return
+    
+    def mock_encode_lossy_mp4(*args, **kwargs):
+        """Mock encode_lossy_mp4 to create expected output file"""
+        print("MOCK encode_lossy_mp4: Creating lossy MP4 output")
+        output_file = "ABBA - Waterloo (Final Karaoke Lossy 4k).mp4"
+        with open(output_file, "w") as f:
+            f.write("dummy lossy mp4 content for testing")
+        print(f"MOCK encode_lossy_mp4: Created {output_file}")
+        return
+    
+    def mock_encode_lossless_mkv(*args, **kwargs):
+        """Mock encode_lossless_mkv to create expected output file"""
+        print("MOCK encode_lossless_mkv: Creating lossless MKV output")
+        output_file = "ABBA - Waterloo (Final Karaoke Lossless 4k).mkv"
+        with open(output_file, "w") as f:
+            f.write("dummy mkv content for testing")
+        print(f"MOCK encode_lossless_mkv: Created {output_file}")
+        return
+    
+    def mock_encode_720p_version(*args, **kwargs):
+        """Mock encode_720p_version to create expected output file"""
+        print("MOCK encode_720p_version: Creating 720p MP4 output")
+        output_file = "ABBA - Waterloo (Final Karaoke Lossy 720p).mp4"
+        with open(output_file, "w") as f:
+            f.write("dummy 720p mp4 content for testing")
+        print(f"MOCK encode_720p_version: Created {output_file}")
+        return
+    
+    # Mock the video conversion methods in the finalisation module
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.convert_mov_to_mp4', 
+                 side_effect=mock_convert_mov_to_mp4)
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.remux_with_instrumental', 
+                 side_effect=mock_remux_with_instrumental)
+    
+    # Mock the specific encoding methods that create the output files
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.encode_lossless_mp4', 
+                 side_effect=mock_encode_lossless_mp4)
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.encode_lossy_mp4', 
+                 side_effect=mock_encode_lossy_mp4)
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.encode_lossless_mkv', 
+                 side_effect=mock_encode_lossless_mkv)
+    mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.encode_720p_version', 
+                 side_effect=mock_encode_720p_version)
+    
+
+
+    def mock_execute_command_general(*args, **kwargs):
+        """Mock execute_command for general shell commands and create expected output files"""
+        print("MOCK execute_command: Mocking general command execution")
+        
+        # Debug the arguments
+        print(f"MOCK execute_command: args = {args}")
+        print(f"MOCK execute_command: kwargs = {kwargs}")
+        
+        # The arguments are (command, description) when called directly
+        if len(args) >= 2:
+            command = args[0]
+            description = args[1]
+        elif len(args) == 1:
+            command = args[0]
+            description = kwargs.get('description', 'Unknown description')
+        else:
+            command = kwargs.get('command', 'Unknown command')
+            description = kwargs.get('description', 'Unknown description')
+        
+        print(f"MOCK execute_command: {description}")
+        print(f"MOCK execute_command: Command: {command}")
+        
+        # Track this call for testing
+        execute_command_calls.append((command, description))
+        
+        # Create dummy output files that the finalisation process expects
+        if "Creating MP4 version with AAC audio" in description:
             output_file = "ABBA - Waterloo (Final Karaoke Lossy 4k).mp4"
             with open(output_file, "w") as f:
                 f.write("dummy lossy mp4 content")
@@ -796,16 +969,11 @@ async def test_full_cli_integration(tmp_path, mocker):
             with open(output_file, "w") as f:
                 f.write("dummy mkv content")
             print(f"MOCK execute_command: Created {output_file}")
-        elif "Encoding 720p version" in description:
-            output_file = "ABBA - Waterloo (Final Karaoke Lossy 720p).mp4"
-            with open(output_file, "w") as f:
-                f.write("dummy 720p mp4 content")
-            print(f"MOCK execute_command: Created {output_file}")
         
-        return  # Just return without executing
-
+        return
+    
     mocker.patch('karaoke_gen.karaoke_finalise.karaoke_finalise.KaraokeFinalise.execute_command', 
-                 side_effect=mock_execute_command)
+                 side_effect=mock_execute_command_general)
 
     # Mock convert_file for lyrics format conversion
     def mock_convert_file(*args, **kwargs):
@@ -984,10 +1152,10 @@ async def test_full_cli_integration(tmp_path, mocker):
     mock_requests_post.assert_called_once_with(discord_webhook_url, json=mocker.ANY)
     assert 'https://www.youtube.com/watch?v=manual_mock_video_id' in mock_requests_post.call_args[1]['json']['content']
 
-    # Rclone Sync - check if execute_command was called with rclone sync
-    # The rclone sync is executed through the mocked execute_command method  
+    # Rclone Sync - check if execute_command was called with rclone copy
+    # The rclone copy is executed through the mocked execute_command method  
     rclone_sync_called = any(
-        'rclone sync' in command and str(public_share_dir) in command and rclone_destination in command
+        'rclone copy' in command and str(public_share_dir) in command and rclone_destination in command
         for command, description in execute_command_calls
     )
     

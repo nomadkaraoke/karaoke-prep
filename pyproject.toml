@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "karaoke-gen"
-version = "0.56.0"
+version = "0.57.0"
 description = "Generate karaoke videos with synchronized lyrics. Handles the entire process from downloading audio and lyrics to creating the final video with title screens."
 authors = ["Andrew Beveridge <andrew@beveridge.uk>"]
 license = "MIT"
@@ -36,7 +36,7 @@ toml = ">=0.10"
 argparse = ">=1.4.0"
 psutil = "^7.0.0"
 pyperclip = "*"
-pytest-asyncio = "^0.23.5"
+pytest-asyncio = "*"
 ffmpeg-python = "^0.2.0"
 modal = "^1.0.5"
 python-multipart = "^0.0.20"
@@ -47,7 +47,7 @@ poetry = "*"
 pytest = ">=7.0"
 pytest-cov = ">=4.0"
 pytest-mock = ">=3.10"
-pytest-asyncio = ">=0.21.0"
+pytest-asyncio = "*"
 
 
 [tool.poetry.scripts]

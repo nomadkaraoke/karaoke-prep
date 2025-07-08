@@ -269,7 +269,12 @@ class JobLogHandler(logging.Handler):
         """Filter out noisy logs from Modal's internal libraries and operations."""
         
         # Filter by logger name (module)
-        noisy_modules = ['hpack']
+        noisy_modules = [
+            'hpack',
+            'ssa',
+            'byteflow',
+            'PngImagePlugin'
+        ]
         if any(record.name.startswith(module) for module in noisy_modules):
             return True
 
@@ -353,6 +358,9 @@ def setup_job_logging(job_id: str):
     # Suppress noisy debug logs from Modal's internal libraries
     noisy_loggers = [
         'hpack',
+        'ssa',
+        'byteflow',
+        'PngImagePlugin',
         'modal',  # Suppress most Modal internal logs
         'urllib3',  # HTTP request logs
         'requests',  # HTTP request logs  
@@ -4203,7 +4211,30 @@ async def complete_review(job_id: str, request: Request):
 
         # Get the corrected lyrics data from request
         request_data = await request.json()
-        corrected_data = request_data.get("corrected_data", {})
+        
+        # Handle both formats:
+        # 1. Direct format (React frontend): { corrections: ..., corrected_segments: ... }
+        # 2. Wrapped format (Web frontend): { corrected_data: { corrections: ..., corrected_segments: ... } }
+        if "corrected_data" in request_data:
+            # Wrapped format from web frontend
+            corrected_data = request_data.get("corrected_data", {})
+            log_message(job_id, "DEBUG", "Received corrected data in wrapped format (web frontend)")
+        elif "corrections" in request_data or "corrected_segments" in request_data:
+            # Direct format from React frontend  
+            corrected_data = request_data
+            log_message(job_id, "DEBUG", "Received corrected data in direct format (React frontend)")
+        else:
+            # No corrected data provided
+            corrected_data = {}
+            log_message(job_id, "DEBUG", "No corrected data provided in request")
+
+        # Log the corrected data details for debugging
+        if corrected_data:
+            corrections_count = len(corrected_data.get("corrections", {}))
+            segments_count = len(corrected_data.get("corrected_segments", []))
+            log_message(job_id, "INFO", f"Received corrected data: {corrections_count} corrections, {segments_count} segments")
+        else:
+            log_message(job_id, "INFO", "No corrected data received - will use original transcription")
 
         log_message(job_id, "INFO", "Review completed, starting Phase 2 (video generation only)")
 

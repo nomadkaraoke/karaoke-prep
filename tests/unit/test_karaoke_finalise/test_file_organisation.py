@@ -235,7 +235,8 @@ def test_copy_final_files_dry_run(mock_copy, mock_makedirs, mock_isdir, finalise
 @patch('os.remove')
 @patch('os.path.join', side_effect=os.path.join)
 @patch.object(KaraokeFinalise, 'execute_command')
-def test_sync_public_share_dir_to_rclone(mock_execute, mock_join, mock_remove, mock_walk, finaliser_for_org):
+@patch('shlex.quote', side_effect=lambda x: f"'{x}'")  # Mock shlex.quote for predictable output
+def test_sync_public_share_dir_to_rclone(mock_quote, mock_execute, mock_join, mock_remove, mock_walk, finaliser_for_org):
     """Test syncing public share dir, including .DS_Store removal."""
     # Simulate finding a .DS_Store file
     mock_walk.return_value = [
@@ -252,6 +253,10 @@ def test_sync_public_share_dir_to_rclone(mock_execute, mock_join, mock_remove, m
     finaliser_for_org.logger.info.assert_any_call(f"Deleted .DS_Store file: {ds_store_path}")
     expected_cmd = f"rclone copy -v '{PUBLIC_SHARE_DIR}' '{RCLONE_DEST}'"
     mock_execute.assert_called_once_with(expected_cmd, "Copying to cloud destination")
+    mock_quote.assert_has_calls([
+        call(PUBLIC_SHARE_DIR),
+        call(RCLONE_DEST)
+    ], any_order=True)
 
 @patch('time.sleep')
 @patch('subprocess.run')

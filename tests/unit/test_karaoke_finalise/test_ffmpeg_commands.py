@@ -73,7 +73,8 @@ def test_execute_command_runs_command(mock_subprocess_run, finaliser_with_aac):
     
     mock_subprocess_run.assert_called_once_with(command, shell=True, capture_output=True, text=True, timeout=600)
     finaliser_with_aac.logger.info.assert_any_call(description)
-    finaliser_with_aac.logger.debug.assert_any_call(f"Running software encoding: {command}")
+    finaliser_with_aac.logger.debug.assert_any_call(f"Executing command: {command}")
+    finaliser_with_aac.logger.info.assert_any_call("✓ Command completed successfully")
 
 @patch('subprocess.run')
 def test_execute_command_dry_run(mock_subprocess_run, finaliser_with_aac):
@@ -85,7 +86,7 @@ def test_execute_command_dry_run(mock_subprocess_run, finaliser_with_aac):
     
     mock_subprocess_run.assert_not_called()
     finaliser_with_aac.logger.info.assert_any_call(description)
-    finaliser_with_aac.logger.info.assert_any_call(f"DRY RUN: Would run CPU command: {command}")
+    finaliser_with_aac.logger.info.assert_any_call(f"DRY RUN: Would execute: {command}")
 
 # --- prepare_concat_filter Tests ---
 

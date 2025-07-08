@@ -690,9 +690,46 @@ class KaraokeFinalise:
         return base_name, artist, title
 
     def execute_command(self, command, description):
-        """Legacy method for backwards compatibility - delegates to execute_command_with_fallback"""
-        # For backwards compatibility, treat as CPU command
-        self.execute_command_with_fallback(command, command, description)
+        """Execute a shell command and log the output. For general commands (rclone, etc.)"""
+        self.logger.info(f"{description}")
+        self.logger.debug(f"Executing command: {command}")
+        
+        if self.dry_run:
+            self.logger.info(f"DRY RUN: Would execute: {command}")
+            return
+        
+        try:
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=600)
+            
+            # Log command output for debugging
+            if result.stdout and result.stdout.strip():
+                self.logger.debug(f"Command STDOUT: {result.stdout.strip()}")
+            if result.stderr and result.stderr.strip():
+                self.logger.debug(f"Command STDERR: {result.stderr.strip()}")
+            
+            if result.returncode != 0:
+                error_msg = f"Command failed with exit code {result.returncode}"
+                self.logger.error(error_msg)
+                self.logger.error(f"Command: {command}")
+                if result.stdout:
+                    self.logger.error(f"STDOUT: {result.stdout}")
+                if result.stderr:
+                    self.logger.error(f"STDERR: {result.stderr}")
+                raise Exception(f"{error_msg}: {command}")
+            else:
+                self.logger.info(f"✓ Command completed successfully")
+                
+        except subprocess.TimeoutExpired:
+            error_msg = f"Command timed out after 600 seconds"
+            self.logger.error(error_msg)
+            raise Exception(f"{error_msg}: {command}")
+        except Exception as e:
+            if "Command failed" not in str(e):
+                error_msg = f"Command failed with exception: {e}"
+                self.logger.error(error_msg)
+                raise Exception(f"{error_msg}: {command}")
+            else:
+                raise
 
     def remux_with_instrumental(self, with_vocals_file, instrumental_audio, output_file):
         """Remux the video with instrumental audio to create karaoke version"""
@@ -1027,7 +1064,7 @@ class KaraokeFinalise:
                     os.remove(file_path)
                     self.logger.info(f"Deleted .DS_Store file: {file_path}")
 
-        rclone_cmd = f"rclone copy -v '{self.public_share_dir}' '{self.rclone_destination}'"
+        rclone_cmd = f"rclone copy -v {shlex.quote(self.public_share_dir)} {shlex.quote(self.rclone_destination)}"
         self.execute_command(rclone_cmd, "Copying to cloud destination")
 
     def post_discord_notification(self):
@@ -1062,6 +1099,13 @@ class KaraokeFinalise:
         try:
             self.logger.info(f"Running command: {rclone_link_cmd}")
             result = subprocess.run(rclone_link_cmd, shell=True, check=True, capture_output=True, text=True)
+            
+            # Log command output for debugging
+            if result.stdout and result.stdout.strip():
+                self.logger.debug(f"Command STDOUT: {result.stdout.strip()}")
+            if result.stderr and result.stderr.strip():
+                self.logger.debug(f"Command STDERR: {result.stderr.strip()}")
+                
             self.brand_code_dir_sharing_link = result.stdout.strip()
             self.logger.info(f"Got organised folder sharing link: {self.brand_code_dir_sharing_link}")
         except subprocess.CalledProcessError as e:
@@ -1084,15 +1128,21 @@ class KaraokeFinalise:
         pattern = re.compile(rf"^{re.escape(self.brand_prefix)}-(\d{{4}})")
 
         # Use rclone lsf --dirs-only for clean, machine-readable directory listing
-        rclone_list_cmd = f"rclone lsf --dirs-only '{self.organised_dir_rclone_root}'"
+        rclone_list_cmd = f"rclone lsf --dirs-only {shlex.quote(self.organised_dir_rclone_root)}"
         
         if self.dry_run:
             self.logger.info(f"DRY RUN: Would run: {rclone_list_cmd}")
             return f"{self.brand_prefix}-0001"
 
         try:
-            self.logger.debug(f"Running command: {rclone_list_cmd}")
+            self.logger.info(f"Running command: {rclone_list_cmd}")
             result = subprocess.run(rclone_list_cmd, shell=True, check=True, capture_output=True, text=True)
+            
+            # Log command output for debugging
+            if result.stdout and result.stdout.strip():
+                self.logger.debug(f"Command STDOUT: {result.stdout.strip()}")
+            if result.stderr and result.stderr.strip():
+                self.logger.debug(f"Command STDERR: {result.stderr.strip()}")
             
             # Parse the output to find matching directories
             matching_dirs = []
@@ -1100,7 +1150,6 @@ class KaraokeFinalise:
                 if line.strip():
                     # Remove trailing slash and whitespace
                     dir_name = line.strip().rstrip('/')
-                    self.logger.debug(f"Processing directory {line_num}: '{dir_name}'")
                     
                     # Check if directory matches our brand pattern
                     match = pattern.match(dir_name)
@@ -1108,7 +1157,6 @@ class KaraokeFinalise:
                         num = int(match.group(1))
                         max_num = max(max_num, num)
                         matching_dirs.append((dir_name, num))
-                        self.logger.debug(f"Found matching directory: '{dir_name}' with number {num}")
 
             self.logger.info(f"Found {len(matching_dirs)} matching directories with pattern {self.brand_prefix}-XXXX")
 
@@ -1141,7 +1189,7 @@ class KaraokeFinalise:
         current_dir = os.getcwd()
         
         # Use rclone copy to upload the entire current directory to the remote destination
-        rclone_upload_cmd = f"rclone copy -v '{current_dir}' '{remote_dest}'"
+        rclone_upload_cmd = f"rclone copy -v {shlex.quote(current_dir)} {shlex.quote(remote_dest)}"
         
         if self.dry_run:
             self.logger.info(f"DRY RUN: Would upload current directory to: {remote_dest}")
@@ -1156,7 +1204,7 @@ class KaraokeFinalise:
         """Generate a sharing link for the remote organized folder using rclone."""
         self.logger.info(f"Getting sharing link for remote organized folder: {remote_path}")
 
-        rclone_link_cmd = f"rclone link '{remote_path}'"
+        rclone_link_cmd = f"rclone link {shlex.quote(remote_path)}"
 
         if self.dry_run:
             self.logger.info(f"DRY RUN: Would get sharing link with: {rclone_link_cmd}")
@@ -1170,6 +1218,13 @@ class KaraokeFinalise:
         try:
             self.logger.info(f"Running command: {rclone_link_cmd}")
             result = subprocess.run(rclone_link_cmd, shell=True, check=True, capture_output=True, text=True)
+            
+            # Log command output for debugging
+            if result.stdout and result.stdout.strip():
+                self.logger.debug(f"Command STDOUT: {result.stdout.strip()}")
+            if result.stderr and result.stderr.strip():
+                self.logger.debug(f"Command STDERR: {result.stderr.strip()}")
+                
             self.brand_code_dir_sharing_link = result.stdout.strip()
             self.logger.info(f"Got organized folder sharing link: {self.brand_code_dir_sharing_link}")
         except subprocess.CalledProcessError as e:

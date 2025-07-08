@@ -633,10 +633,6 @@ class ServerlessKaraokeProcessor:
             if font_files:
                 self._fix_font_names_in_styles(output_styles_path, font_files)
                 
-                # Run test render to verify font rendering works
-                test_output_dir = str(Path(output_styles_path).parent)
-                self.test_font_render(font_files, test_output_dir)
-            
             # Log the content of the updated file for debugging
             self.logger.debug("Updated styles file content:")
             with open(output_styles_path, 'r') as f:
@@ -907,121 +903,6 @@ class ServerlessKaraokeProcessor:
             import traceback
             self.logger.error(f"Traceback: {traceback.format_exc()}")
             # Don't raise - this shouldn't stop the job
-
-    def test_font_render(self, font_files: List[str], output_dir: str) -> None:
-        """
-        Create a test video with ASS subtitles to verify font rendering works correctly.
-        """
-        import subprocess
-        import tempfile
-        
-        try:
-            test_dir = Path(output_dir) / "font_tests"
-            test_dir.mkdir(exist_ok=True)
-            
-            self.logger.info("=== Starting Font Render Test ===")
-            
-            for font_file in font_files:
-                try:
-                    # Get actual font name
-                    result = subprocess.run([
-                        'fc-query', '--format=%{family}\\n', font_file
-                    ], capture_output=True, text=True, timeout=10)
-                    
-                    if result.returncode == 0:
-                        font_name = result.stdout.strip()
-                        
-                        # Create test ASS file
-                        ass_content = f"""[Script Info]
-Title: Font Test
-ScriptType: v4.00+
-
-[V4+ Styles]
-Format: Name, Fontname, Fontpath, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: TestStyle,{font_name},{font_file},48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.00,0:00:03.00,TestStyle,,0,0,0,,Font Test: {font_name}
-Dialogue: 0,0:00:03.00,0:00:06.00,TestStyle,,0,0,0,,The quick brown fox jumps
-Dialogue: 0,0:00:06.00,0:00:09.00,TestStyle,,0,0,0,,ABCDEFGHIJKLMNOP
-"""
-                        
-                        ass_file = test_dir / f"test_{Path(font_file).stem}.ass"
-                        with open(ass_file, 'w') as f:
-                            f.write(ass_content)
-                        
-                        # Create test video
-                        output_video = test_dir / f"test_{Path(font_file).stem}.mp4"
-                        
-                        cmd = [
-                            'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-                            '-f', 'lavfi', '-i', 'color=black:size=640x360:duration=10:rate=25',
-                            '-vf', f"ass={ass_file}",
-                            '-c:v', 'libx264', '-preset', 'ultrafast',
-                            str(output_video)
-                        ]
-                        
-                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                        
-                        if result.returncode == 0:
-                            self.logger.info(f"✓ Test video created successfully: {output_video}")
-                            self.logger.info(f"  Font: {font_name} ({Path(font_file).name})")
-                        else:
-                            self.logger.error(f"✗ Test video failed for {font_name}: {result.stderr}")
-                            
-                except Exception as e:
-                    self.logger.error(f"Test render failed for {font_file}: {str(e)}")
-            
-            self.logger.info("=== Font Render Test Complete ===")
-            
-        except Exception as e:
-            self.logger.error(f"Font test render failed: {str(e)}")
-            # Don't raise - this is just a test
-
-    def debug_ass_file(self, ass_file_path: str) -> None:
-        """
-        Debug ASS file content to see what font is actually being used.
-        """
-        try:
-            if not Path(ass_file_path).exists():
-                self.logger.warning(f"ASS file not found: {ass_file_path}")
-                return
-                
-            self.logger.info(f"=== Debugging ASS File: {ass_file_path} ===")
-            
-            with open(ass_file_path, 'r') as f:
-                lines = f.readlines()
-            
-            # Look for Style lines
-            for i, line in enumerate(lines):
-                if line.startswith('Style:'):
-                    self.logger.info(f"Line {i+1}: {line.strip()}")
-                    
-                    # Parse the style line
-                    parts = line.strip().split(',')
-                    if len(parts) >= 4:
-                        style_name = parts[0].split(':')[1] if ':' in parts[0] else parts[0]
-                        fontname = parts[1] if len(parts) > 1 else "N/A"
-                        fontpath = parts[2] if len(parts) > 2 else "N/A"
-                        fontsize = parts[3] if len(parts) > 3 else "N/A"
-                        
-                        self.logger.info(f"  Style Name: {style_name}")
-                        self.logger.info(f"  Font Name: {fontname}")
-                        self.logger.info(f"  Font Path: {fontpath}")
-                        self.logger.info(f"  Font Size: {fontsize}")
-                        
-                        # Check if font path exists
-                        if fontpath.startswith('/') and fontpath != "N/A":
-                            exists = Path(fontpath).exists()
-                            self.logger.info(f"  Font File Exists: {exists}")
-                            if not exists:
-                                self.logger.warning(f"  ⚠ Font file missing: {fontpath}")
-            
-            self.logger.info("=== End ASS File Debug ===")
-            
-        except Exception as e:
-            self.logger.error(f"Error debugging ASS file: {str(e)}")
 
     def ensure_fonts_available(self, styles_file_path: str) -> None:
         """
