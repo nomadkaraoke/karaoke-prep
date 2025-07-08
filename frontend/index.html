@@ -91,9 +91,10 @@
                                     <label for="title">Song Title</label>
                                     <input type="text" id="title" class="form-control" placeholder="Enter song title" required>
                                 </div>
-                                <div class="example-actions">
-                                    <button type="button" onclick="loadExampleData()" class="example-btn">
-                                        🎵 Load Example<br><small>(ABBA - Waterloo)</small>
+                                <div class="form-group">
+                                    <label for="loadexample">Load Example</label>
+                                    <button id="loadexample" type="button" onclick="loadExampleData()" class="example-btn">
+                                        🎵 ABBA - Waterloo<br><small>(30 second clip)</small></small>
                                     </button>
                                 </div>
                             </div>
@@ -397,29 +398,21 @@
         <div class="modal-content instrumental-modal-content">
             <div class="modal-header">
                 <h3 class="modal-title">🎵 Choose Instrumental Track</h3>
+                <div class="instrumental-selection-subtitle">
+                    <p class="subtitle">Preview and select your preferred instrumental track</p>
+                </div>
                 <div class="modal-controls">
                     <button onclick="closeInstrumentalSelectionModal()" class="modal-close">✕</button>
                 </div>
             </div>
             <div class="modal-body">
-                <div class="instrumental-selection-intro">
-                    <p>Select which instrumental version to use for your final karaoke video. You can preview each option before making your choice.</p>
-                </div>
-
-                <!-- YouTube Authentication Section -->
-                <div class="youtube-auth-section">
-                    <h4>📺 YouTube Upload (Optional)</h4>
-                    <div id="youtube-auth-status" class="youtube-auth-status">
-                        <div class="auth-loading">Checking YouTube authentication...</div>
-                    </div>
-                </div>
-
                 <div id="instrumental-selection-content" class="instrumental-selection-content">
                     <div class="instrumental-loading">Loading instrumental options...</div>
                 </div>
+                
                 <div class="instrumental-selection-actions">
                     <button id="confirm-instrumental-btn" onclick="confirmInstrumentalSelection()" class="btn btn-primary" disabled>
-                        ✅ Use Selected Instrumental & Complete
+                        🎵 Continue with Selected Track
                     </button>
                     <button onclick="closeInstrumentalSelectionModal()" class="btn btn-secondary">
                         Cancel

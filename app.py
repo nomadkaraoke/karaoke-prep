@@ -900,6 +900,16 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
         artist = job_data.get("artist", "Unknown")
         title = job_data.get("title", "Unknown")
 
+        # Get user's finalization preferences
+        finalization_options = job_data.get("finalization_options", {})
+        user_upload_to_youtube = finalization_options.get("upload_to_youtube", False)
+        
+        log_message(job_id, "INFO", f"User's YouTube upload preference: {user_upload_to_youtube}")
+        if user_upload_to_youtube:
+            log_message(job_id, "INFO", "User requested YouTube upload - will attempt upload if credentials available")
+        else:
+            log_message(job_id, "INFO", "User opted out of YouTube upload - will skip upload even if configured")
+
         # Load CDG styles from the styles JSON file for KaraokeFinalise
         log_message(job_id, "INFO", "Loading CDG styles from styles configuration")
 
@@ -966,10 +976,10 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
             
             log_message(job_id, "INFO", "Initializing KaraokeFinalise with configuration...")
             
-            # Get user credentials for YouTube upload if enabled
+            # Get user credentials for YouTube upload if enabled and user wants it
             youtube_credentials = None
-            if config.get("enable_youtube_upload"):
-                log_message(job_id, "DEBUG", f"YouTube upload enabled in config, checking for user credentials")
+            if config.get("enable_youtube_upload") and user_upload_to_youtube:
+                log_message(job_id, "DEBUG", f"YouTube upload enabled in config and requested by user, checking for user credentials")
                 
                 # Get user from job data if available
                 user_token = job_data.get("user_token")
@@ -999,8 +1009,10 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
                     log_message(job_id, "WARNING", "No user token in job data, disabling YouTube upload")
                     # Debug: show what keys are available in job_data
                     log_message(job_id, "DEBUG", f"Available job_data keys: {list(job_data.keys())}")
+            elif config.get("enable_youtube_upload") and not user_upload_to_youtube:
+                log_message(job_id, "INFO", "YouTube upload enabled in config but user opted out, skipping upload")
             else:
-                log_message(job_id, "DEBUG", "YouTube upload not enabled in config")
+                log_message(job_id, "DEBUG", "YouTube upload not enabled in config or not requested by user")
 
             # Set up KaraokeFinalise with full configuration (logs go to Modal stdout)
             finalizer = KaraokeFinalise(
@@ -4228,6 +4240,10 @@ async def complete_review(job_id: str, request: Request):
             corrected_data = {}
             log_message(job_id, "DEBUG", "No corrected data provided in request")
 
+        # Get additional options for the new two-step flow
+        selected_instrumental = request_data.get("selected_instrumental")
+        upload_to_youtube = request_data.get("upload_to_youtube", False)
+
         # Log the corrected data details for debugging
         if corrected_data:
             corrections_count = len(corrected_data.get("corrections", {}))
@@ -4236,7 +4252,26 @@ async def complete_review(job_id: str, request: Request):
         else:
             log_message(job_id, "INFO", "No corrected data received - will use original transcription")
 
+        # Log additional parameters if provided (for backward compatibility)
+        if selected_instrumental:
+            log_message(job_id, "INFO", f"Selected instrumental for completion: {selected_instrumental}")
+        
+        if upload_to_youtube:
+            log_message(job_id, "INFO", "YouTube upload requested for completion")
+
         log_message(job_id, "INFO", "Review completed, starting Phase 2 (video generation only)")
+
+        # For the new two-step flow, we store the finalization options in job data
+        # and only proceed to Phase 2 (video generation), then let the frontend
+        # handle the instrumental selection and YouTube upload decision separately
+        if selected_instrumental or upload_to_youtube:
+            # Store finalization options for later use in Phase 3
+            job_data["finalization_options"] = {
+                "selected_instrumental": selected_instrumental,
+                "upload_to_youtube": upload_to_youtube
+            }
+            job_status_dict[job_id] = job_data
+            log_message(job_id, "INFO", "Stored finalization options for Phase 3")
 
         # Spawn Phase 2 to generate the "With Vocals" video only
         process_part_two.spawn(job_id, corrected_data)
@@ -4252,7 +4287,7 @@ async def complete_review(job_id: str, request: Request):
 
 @api_app.post("/api/corrections/{job_id}/finalize")
 async def finalize_with_instrumental(job_id: str, request: Request):
-    """Complete Phase 3 (finalization) with selected instrumental."""
+    """Complete Phase 3 (finalization) with selected instrumental and YouTube upload decision."""
     try:
         job_data = job_status_dict.get(job_id)
         if not job_data:
@@ -4261,18 +4296,32 @@ async def finalize_with_instrumental(job_id: str, request: Request):
         if job_data.get("status") != "ready_for_finalization":
             raise HTTPException(status_code=400, detail="Job is not ready for finalization")
 
-        # Get the selected instrumental from request
+        # Get the finalization options from request
         request_data = await request.json()
         selected_instrumental = request_data.get("selected_instrumental")
+        upload_to_youtube = request_data.get("upload_to_youtube", False)
 
-        log_message(job_id, "INFO", "Starting Phase 3 (finalization) with instrumental selection")
+        log_message(job_id, "INFO", "Starting Phase 3 (finalization) with user preferences")
         if selected_instrumental:
             log_message(job_id, "INFO", f"Using selected instrumental: {selected_instrumental}")
+        
+        if upload_to_youtube:
+            log_message(job_id, "INFO", "YouTube upload enabled for finalization")
+        else:
+            log_message(job_id, "INFO", "YouTube upload disabled for finalization")
+
+        # Store the finalization preferences in job data for process_part_three to access
+        job_data["finalization_options"] = {
+            "selected_instrumental": selected_instrumental,
+            "upload_to_youtube": upload_to_youtube
+        }
+        job_status_dict[job_id] = job_data
 
         # Spawn Phase 3 to generate final formats with selected instrumental
+        # Pass the selected instrumental as a parameter for backward compatibility
         process_part_three.spawn(job_id, selected_instrumental)
 
-        return JSONResponse({"status": "success", "message": "Finalization started with selected instrumental"})
+        return JSONResponse({"status": "success", "message": "Finalization started with selected preferences"})
 
     except HTTPException:
         raise
@@ -5394,21 +5443,16 @@ async def get_available_instrumentals(job_id: str):
                 recommended = False
                 description = ""
 
-                if "model_bs_roformer" in filename:
-                    if "+BV" in filename:
-                        instrumental_type = "With Backing Vocals"
-                        description = "Includes background vocals and harmonies"
-                    else:
-                        instrumental_type = "Clean Instrumental"
-                        description = "Pure instrumental without any vocals"
-                        recommended = True  # Clean instrumental is typically preferred
+                if "+BV" in filename:
+                    instrumental_type = "Instrumental With Backing Vocals"
+                    description = "Typically includes background vocals and harmonies - listen all the way through first to see if this sounds good!"
+                elif "model_bs_roformer" in filename:
+                    instrumental_type = "Clean Instrumental"
+                    description = "Pure instrumental without any vocals - safe option if you're not sure"
+                    recommended = True  # Clean instrumental is safest option
                 elif "htdemucs" in filename:
                     instrumental_type = "Other Stems"
                     description = "Alternative separation model"
-                elif "mel_band_roformer" in filename:
-                    instrumental_type = "Karaoke Model"
-                    description = "Optimized for karaoke backing tracks"
-
                 instrumentals.append(
                     {
                         "filename": inst_file.name,

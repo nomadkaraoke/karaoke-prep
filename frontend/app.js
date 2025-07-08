@@ -4696,10 +4696,6 @@ async function showInstrumentalSelectionModal(jobId, correctedData) {
         // Show the modal
         document.getElementById('instrumental-selection-modal').style.display = 'flex';
         
-        // Check YouTube authentication status
-        const authStatus = await checkYouTubeAuthStatus();
-        displayYouTubeAuthStatus(authStatus);
-        
         // Load instrumental options
         const response = await authenticatedFetch(`${API_BASE_URL}/corrections/${jobId}/instrumentals`);
         const data = await response.json();
@@ -4768,7 +4764,6 @@ function displayInstrumentalOptions(instrumentals) {
                 <div class="instrumental-header">
                     <div class="instrumental-title">
                         <div class="instrumental-type">${instrumental.type}</div>
-                        <div class="instrumental-filename">${instrumental.filename}</div>
                     </div>
                     <div class="instrumental-controls">
                         <div class="audio-preview-controls">
@@ -4815,11 +4810,7 @@ function updateConfirmInstrumentalButton() {
     const confirmBtn = document.getElementById('confirm-instrumental-btn');
     if (confirmBtn) {
         confirmBtn.disabled = !selectedInstrumental;
-        if (selectedInstrumental) {
-            confirmBtn.textContent = `✅ Use "${selectedInstrumental.substring(0, 30)}${selectedInstrumental.length > 30 ? '...' : ''}" & Complete`;
-        } else {
-            confirmBtn.textContent = '✅ Use Selected Instrumental & Complete';
-        }
+        confirmBtn.textContent = `🎵 Continue with Selected Track`;
     }
 }
 
@@ -4829,6 +4820,113 @@ async function confirmInstrumentalSelection() {
         return;
     }
     
+    // Close the instrumental selection modal first
+    closeInstrumentalSelectionModal();
+    
+    // Show YouTube upload confirmation modal
+    showYouTubeUploadConfirmationModal();
+}
+
+async function showYouTubeUploadConfirmationModal() {
+    try {
+        // Check YouTube authentication status
+        const authStatus = await checkYouTubeAuthStatus();
+        
+        const modalHtml = `
+            <div id="youtube-upload-modal" class="modal">
+                <div class="modal-content youtube-upload-modal-content">
+                    <div class="modal-header">
+                        <h3 class="modal-title">📺 YouTube Upload (Optional)</h3>
+                        <div class="modal-controls">
+                            <button onclick="closeYouTubeUploadModal()" class="modal-close">✕</button>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <div class="youtube-upload-content">
+                            <div class="upload-intro">
+                                <p>Would you like to automatically upload your completed karaoke video to YouTube?</p>
+                            </div>
+                            
+                            <div class="youtube-auth-section">
+                                <div id="youtube-auth-status-confirm" class="youtube-auth-status">
+                                    ${createYouTubeAuthStatusHtml(authStatus)}
+                                </div>
+                            </div>
+                            
+                            <div class="upload-actions">
+                                <button onclick="completeFinalizationWithYouTube(true)" class="btn btn-primary" ${!authStatus.authenticated ? 'disabled' : ''}>
+                                    📺 Complete & Upload to YouTube
+                                </button>
+                                <button onclick="completeFinalizationWithYouTube(false)" class="btn btn-secondary">
+                                    🎵 Complete Without YouTube Upload
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Remove any existing modal
+        const existingModal = document.getElementById('youtube-upload-modal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Add modal to body
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        
+        // Show modal
+        const modal = document.getElementById('youtube-upload-modal');
+        modal.style.display = 'flex';
+        
+        // Add click outside to close
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeYouTubeUploadModal();
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error showing YouTube upload confirmation:', error);
+        // If there's an error, just proceed without YouTube upload
+        completeFinalizationWithYouTube(false);
+    }
+}
+
+function createYouTubeAuthStatusHtml(authStatus) {
+    if (authStatus.authenticated) {
+        return `
+            <div class="youtube-auth-info authenticated">
+                ✅ Authenticated with YouTube
+                <div class="auth-details">
+                    You can upload videos directly to your YouTube channel
+                </div>
+            </div>
+            <div class="youtube-auth-actions">
+                <button onclick="revokeYouTubeAuthAndUpdate()" class="btn btn-link">
+                    Revoke Authentication
+                </button>
+            </div>
+        `;
+    } else {
+        return `
+            <div class="youtube-auth-info not-authenticated">
+                ⚠️ Not authenticated with YouTube
+                <div class="auth-details">
+                    Videos will be generated but not uploaded automatically
+                </div>
+            </div>
+            <div class="youtube-auth-actions">
+                <button onclick="authenticateYouTubeAndUpdateConfirm()" class="btn btn-primary">
+                    🔑 Authenticate with YouTube
+                </button>
+            </div>
+        `;
+    }
+}
+
+async function completeFinalizationWithYouTube(uploadToYoutube) {
     try {
         // Get the current job ID from the stored value
         const jobId = window.currentInstrumentalJobId || getCurrentJobIdFromUrl();
@@ -4852,24 +4950,37 @@ async function confirmInstrumentalSelection() {
             endpoint = `/corrections/${jobId}/complete`;
             requestData = {
                 corrected_data: currentReviewData || {},
-                selected_instrumental: selectedInstrumental
+                selected_instrumental: selectedInstrumental,
+                upload_to_youtube: uploadToYoutube
             };
-            infoMessage = 'Completing review with selected instrumental...';
-            successMessage = 'Review completed with instrumental selection';
+            infoMessage = uploadToYoutube ? 
+                'Completing review and preparing for YouTube upload...' :
+                'Completing review with selected instrumental...';
+            successMessage = uploadToYoutube ?
+                'Review completed - video will be uploaded to YouTube when ready' :
+                'Review completed with instrumental selection';
         } else if (jobStatus === 'ready_for_finalization') {
             // For ready_for_finalization status: finalize with instrumental selection
             endpoint = `/corrections/${jobId}/finalize`;
             requestData = {
-                selected_instrumental: selectedInstrumental
+                selected_instrumental: selectedInstrumental,
+                upload_to_youtube: uploadToYoutube
             };
-            infoMessage = 'Finalizing with selected instrumental...';
-            successMessage = 'Finalization started with selected instrumental';
+            infoMessage = uploadToYoutube ?
+                'Finalizing and preparing for YouTube upload...' :
+                'Finalizing with selected instrumental...';
+            successMessage = uploadToYoutube ?
+                'Finalization started - video will be uploaded to YouTube when ready' :
+                'Finalization started with selected instrumental';
         } else {
             showError(`Cannot select instrumental for job in status: ${jobStatus}`);
             return;
         }
         
         showInfo(infoMessage);
+        
+        // Close the YouTube upload modal
+        closeYouTubeUploadModal();
         
         // Send request to the appropriate endpoint
         const response = await authenticatedFetch(`${API_BASE_URL}${endpoint}`, {
@@ -4882,7 +4993,6 @@ async function confirmInstrumentalSelection() {
         if (response.ok) {
             const result = await response.json();
             showSuccess(result.message || successMessage);
-            closeInstrumentalSelectionModal();
             
             // Refresh jobs to show updated status
             await loadJobs();
@@ -4892,8 +5002,50 @@ async function confirmInstrumentalSelection() {
         }
         
     } catch (error) {
-        console.error('Error confirming instrumental selection:', error);
+        console.error('Error completing finalization:', error);
         showError('Error processing request: ' + error.message);
+    }
+}
+
+function closeYouTubeUploadModal() {
+    const modal = document.getElementById('youtube-upload-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function authenticateYouTubeAndUpdateConfirm() {
+    const authBtn = document.querySelector('#youtube-upload-modal .btn-primary');
+    const originalText = authBtn ? authBtn.textContent : '';
+    
+    if (authBtn) {
+        authBtn.disabled = true;
+        authBtn.textContent = '🔄 Authenticating...';
+    }
+    
+    try {
+        const success = await authenticateWithYouTube();
+        
+        if (success) {
+            // Refresh auth status in the confirmation modal
+            const newStatus = await checkYouTubeAuthStatus();
+            const authStatusContainer = document.getElementById('youtube-auth-status-confirm');
+            if (authStatusContainer) {
+                authStatusContainer.innerHTML = createYouTubeAuthStatusHtml(newStatus);
+            }
+            
+            // Enable the YouTube upload button
+            const uploadBtn = document.querySelector('#youtube-upload-modal button[onclick="completeFinalizationWithYouTube(true)"]');
+            if (uploadBtn) {
+                uploadBtn.disabled = false;
+            }
+        }
+    } finally {
+        // Reset button if it still exists
+        if (authBtn) {
+            authBtn.disabled = false;
+            authBtn.textContent = originalText;
+        }
     }
 }
 
