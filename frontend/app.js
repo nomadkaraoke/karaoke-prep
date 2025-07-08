@@ -1479,9 +1479,6 @@ function createJobHTML(jobId, job) {
                 
                 <div class="job-actions">
                     ${createJobActions(jobId, job)}
-                    <button onclick="tailJobLogs('${jobId}')" class="btn btn-info">
-                        📜 View Logs
-                    </button>
                 </div>
             </div>
         </div>
@@ -2344,22 +2341,22 @@ function createJobActions(jobId, job) {
     
     if (status === 'ready_for_finalization') {
         // For ready_for_finalization status, show option to choose instrumental and finalize
-        actions.push(`<button onclick="showInstrumentalSelectionForJob('${jobId}')" class="btn btn-success">🎵 Choose Instrumental & Finalize</button>`);
-    }
-    
-    if (status === 'complete') {
-        actions.push(`<button onclick="downloadVideo('${jobId}')" class="btn btn-primary">📥 Download MP4 Video</button>`);
-        actions.push(`<button onclick="showFilesModal('${jobId}')" class="btn btn-info">📁 View All Files</button>`);
+        actions.push(`<button onclick="showInstrumentalSelectionForJob('${jobId}')" class="btn btn-success">🎵 Choose Instrumental</button>`);
     }
     
     // Add YouTube link button if available
     if (job.youtube_url) {
-        actions.push(`<a href="${job.youtube_url}" target="_blank" class="btn btn-success">🎥 View on YouTube</a>`);
+        actions.push(`<a href="${job.youtube_url}" target="_blank" class="btn btn-success">🎥 Watch on YouTube</a>`);
+    }
+
+    if (status === 'complete') {
+        actions.push(`<button onclick="downloadVideo('${jobId}')" class="btn btn-success">📥 Download MP4 Video</button>`);
+        actions.push(`<button onclick="showFilesModal('${jobId}')" class="btn btn-info">📁 View All Output Files</button>`);
     }
     
     // Add Dropbox sharing link button if available
     if (job.brand_code_dir_sharing_link) {
-        actions.push(`<a href="${job.brand_code_dir_sharing_link}" target="_blank" class="btn btn-info">📁 View Dropbox Folder</a>`);
+        actions.push(`<a href="${job.brand_code_dir_sharing_link}" target="_blank" class="btn btn-info">📁 Open Dropbox Folder</a>`);
     }
     
     if (status === 'error') {
@@ -2374,8 +2371,9 @@ function createJobActions(jobId, job) {
             actions.push(`<button onclick="showCloneJobModal('${jobId}')" class="btn btn-info">🔄 Clone Job</button>`);
         }
     }
-    
+
     // Always available actions
+    actions.push(`<button onclick="tailJobLogs('${jobId}')" class="btn btn-info">📜 View Logs</button>`);
     actions.push(`<button onclick="deleteJob('${jobId}')" class="btn btn-danger">🗑️ Delete</button>`);
     
     return actions.join(' ');
