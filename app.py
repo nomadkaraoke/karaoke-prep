@@ -961,23 +961,38 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
             # Get user credentials for YouTube upload if enabled
             youtube_credentials = None
             if config.get("enable_youtube_upload"):
+                log_message(job_id, "DEBUG", f"YouTube upload enabled in config, checking for user credentials")
+                
                 # Get user from job data if available
-                user_token = job_data.get("user_token")  # We'll need to store this in job data
+                user_token = job_data.get("user_token")
+                log_message(job_id, "DEBUG", f"User token from job data: {user_token[:8] + '...' if user_token else 'None'}")
+                
                 if user_token:
                     user_credentials = user_youtube_credentials_dict.get("user_credentials", {})
+                    log_message(job_id, "DEBUG", f"Found {len(user_credentials)} user credential entries in storage")
+                    
                     if user_token in user_credentials:
                         cred_data = user_credentials[user_token]
-                        # Check if credentials are not expired
                         expires_at = cred_data.get("expires_at")
+                        log_message(job_id, "DEBUG", f"Found credentials for user, expires_at: {expires_at}")
+                        
+                        # Check if credentials are not expired
                         if not expires_at or time.time() < expires_at:
                             youtube_credentials = cred_data["credentials"]
                             log_message(job_id, "INFO", "Using stored YouTube credentials for upload")
                         else:
-                            log_message(job_id, "WARNING", "YouTube credentials expired, disabling upload")
+                            log_message(job_id, "WARNING", f"YouTube credentials expired (expires_at: {expires_at}, current: {time.time()}), disabling upload")
                     else:
-                        log_message(job_id, "WARNING", "No YouTube credentials found for user, disabling upload")
+                        log_message(job_id, "WARNING", f"No YouTube credentials found for user token {user_token[:8]}..., disabling upload")
+                        # Debug: show available user tokens
+                        available_tokens = list(user_credentials.keys())
+                        log_message(job_id, "DEBUG", f"Available user tokens: {[t[:8] + '...' for t in available_tokens]}")
                 else:
                     log_message(job_id, "WARNING", "No user token in job data, disabling YouTube upload")
+                    # Debug: show what keys are available in job_data
+                    log_message(job_id, "DEBUG", f"Available job_data keys: {list(job_data.keys())}")
+            else:
+                log_message(job_id, "DEBUG", "YouTube upload not enabled in config")
 
             # Set up KaraokeFinalise with full configuration (logs go to Modal stdout)
             finalizer = KaraokeFinalise(
@@ -1000,6 +1015,7 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
                 non_interactive=True,  # CRITICAL: disable user prompts
                 keep_brand_code=False,  # Don't keep existing brand code, generate new one
                 user_youtube_credentials=youtube_credentials,  # Pass user's YouTube credentials
+                server_side_mode=True,  # CRITICAL: enable server-side mode for Modal deployment
             )
                 
             # Log which features are enabled
@@ -1178,6 +1194,10 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
             final_files=final_files,
             package_files=package_files,
             selected_instrumental=selected_instrumental,
+            # Add YouTube URL and Dropbox sharing link from KaraokeFinalise result
+            youtube_url=result.get("youtube_url"),
+            brand_code=result.get("brand_code"),
+            brand_code_dir_sharing_link=result.get("brand_code_dir_sharing_link"),
             **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated", "video_path", "lrc_path"]},
         )
 
@@ -2384,7 +2404,7 @@ class FinalizationConfigRequest(BaseModel):
     enable_email_drafts: bool = False
     brand_prefix: str = "NOMAD"
     organised_dir: str = "/output/organized"
-    organised_dir_rclone_root: str = "andrewdropboxfull:Tracks-Organized"
+    organised_dir_rclone_root: str = "andrewdropboxfull:MediaUnsynced/Karaoke/Tracks-Organized"
     public_share_dir: str = "/output/public-share" 
     rclone_destination: str = "googledrive:Nomad Karaoke"
     discord_webhook_url: str = ""
@@ -5592,6 +5612,14 @@ def clone_job_at_phase(source_job_id: str, target_phase: str):
         clone_data["last_updated"] = datetime.datetime.now().isoformat()
         clone_data["cloned_from"] = source_job_id
         clone_data["clone_target_phase"] = target_phase
+        
+        # IMPORTANT: Preserve user_token for YouTube authentication
+        # This ensures cloned jobs can still access the original user's YouTube credentials
+        if "user_token" in source_job_data:
+            clone_data["user_token"] = source_job_data["user_token"]
+            log_message(new_job_id, "INFO", f"Preserved user_token from source job for YouTube authentication")
+        else:
+            log_message(new_job_id, "WARNING", f"Source job has no user_token - YouTube upload may not work in cloned job")
         
         # Don't modify artist/title as it breaks file finding logic
         # The cloned_from and clone_target_phase fields provide sufficient tracking

@@ -1430,10 +1430,14 @@ function createJobHTML(jobId, job) {
     const timestamp = job.created_at ? formatTimestamp(job.created_at) : 'Unknown';
     const duration = formatDurationWithStatus(job);
     
-    // Format track info for display
-    const trackInfo = (job.artist && job.title) 
-        ? `${job.artist} - ${job.title}` 
-        : (job.url ? 'URL Processing' : 'Unknown Track');
+    // Format track info for display with brand code prefix
+    let trackInfo;
+    if (job.artist && job.title) {
+        const brandPrefix = job.brand_code ? `${job.brand_code} ` : '';
+        trackInfo = `${brandPrefix}${job.artist} - ${job.title}`;
+    } else {
+        trackInfo = job.url ? 'URL Processing' : 'Unknown Track';
+    }
     
     // Get timeline information
     const timelineInfo = createTimelineInfoHtml({ ...job, job_id: jobId });
@@ -2346,6 +2350,16 @@ function createJobActions(jobId, job) {
     if (status === 'complete') {
         actions.push(`<button onclick="downloadVideo('${jobId}')" class="btn btn-primary">📥 Download MP4 Video</button>`);
         actions.push(`<button onclick="showFilesModal('${jobId}')" class="btn btn-info">📁 View All Files</button>`);
+    }
+    
+    // Add YouTube link button if available
+    if (job.youtube_url) {
+        actions.push(`<a href="${job.youtube_url}" target="_blank" class="btn btn-success">🎥 View on YouTube</a>`);
+    }
+    
+    // Add Dropbox sharing link button if available
+    if (job.brand_code_dir_sharing_link) {
+        actions.push(`<a href="${job.brand_code_dir_sharing_link}" target="_blank" class="btn btn-info">📁 View Dropbox Folder</a>`);
     }
     
     if (status === 'error') {

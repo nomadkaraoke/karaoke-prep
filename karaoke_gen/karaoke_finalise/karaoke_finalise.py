@@ -45,6 +45,7 @@ class KaraokeFinalise:
         keep_brand_code=False,
         non_interactive=False,
         user_youtube_credentials=None,  # Add support for pre-stored credentials
+        server_side_mode=False,  # New parameter for server-side deployment
     ):
         self.log_level = log_level
         self.log_formatter = log_formatter
@@ -100,7 +101,8 @@ class KaraokeFinalise:
 
         self.skip_notifications = False
         self.non_interactive = non_interactive
-        self.user_youtube_credentials = user_youtube_credentials  # Store pre-provided credentials
+        self.user_youtube_credentials = user_youtube_credentials
+        self.server_side_mode = server_side_mode
 
         self.suffixes = {
             "title_mov": " (Title).mov",
@@ -262,12 +264,17 @@ class KaraokeFinalise:
             self.discord_notication_enabled = True
 
         # Enable folder organisation if brand prefix and target directory are provided and target directory is valid
+        # In server-side mode, we skip the local folder organization but may still need brand codes
         if self.brand_prefix is not None and self.organised_dir is not None:
-            if not os.path.isdir(self.organised_dir):
+            if not self.server_side_mode and not os.path.isdir(self.organised_dir):
                 raise Exception(f"Target directory does not exist: {self.organised_dir}")
 
-            self.logger.debug(f"Brand prefix and target directory provided, enabling folder organisation")
-            self.folder_organisation_enabled = True
+            if not self.server_side_mode:
+                self.logger.debug(f"Brand prefix and target directory provided, enabling local folder organisation")
+                self.folder_organisation_enabled = True
+            else:
+                self.logger.debug(f"Server-side mode: brand prefix provided for remote organization")
+                self.folder_organisation_enabled = False  # Disable local folder organization in server mode
 
         # Enable public share copy if public share directory is provided and is valid directory with MP4 and CDG subdirectories
         if self.public_share_dir is not None:
@@ -313,6 +320,9 @@ class KaraokeFinalise:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        import pickle
+        import os
 
         # Check if we have pre-stored credentials (for non-interactive mode)
         if self.user_youtube_credentials and self.non_interactive:
@@ -346,6 +356,13 @@ class KaraokeFinalise:
         
         # Token file stores the user's access and refresh tokens for YouTube.
         youtube_token_file = "/tmp/karaoke-finalise-youtube-token.pickle"
+        
+        credentials = None
+        
+        # Check if we have saved credentials
+        if os.path.exists(youtube_token_file):
+            with open(youtube_token_file, "rb") as token:
+                credentials = pickle.load(token)
 
         # If there are no valid credentials, let the user log in.
         if not credentials or not credentials.valid:
@@ -1000,9 +1017,9 @@ class KaraokeFinalise:
             self.logger.info(f"Copied final files to public share directory")
 
     def sync_public_share_dir_to_rclone_destination(self):
-        self.logger.info(f"Syncing public share directory to rclone destination...")
+        self.logger.info(f"Copying public share directory to rclone destination...")
 
-        # Delete .DS_Store files recursively before syncing
+        # Delete .DS_Store files recursively before copying
         for root, dirs, files in os.walk(self.public_share_dir):
             for file in files:
                 if file == ".DS_Store":
@@ -1010,8 +1027,8 @@ class KaraokeFinalise:
                     os.remove(file_path)
                     self.logger.info(f"Deleted .DS_Store file: {file_path}")
 
-        rclone_cmd = f"rclone sync -v '{self.public_share_dir}' '{self.rclone_destination}'"
-        self.execute_command(rclone_cmd, "Syncing with cloud destination")
+        rclone_cmd = f"rclone copy -v '{self.public_share_dir}' '{self.rclone_destination}'"
+        self.execute_command(rclone_cmd, "Copying to cloud destination")
 
     def post_discord_notification(self):
         self.logger.info(f"Posting Discord notification...")
@@ -1053,6 +1070,119 @@ class KaraokeFinalise:
             self.logger.error(f"Command output (stderr): {e.stderr}")
             self.logger.error(f"Full exception: {e}")
 
+    def get_next_brand_code_server_side(self):
+        """
+        Calculate the next sequence number based on existing directories in the remote organised_dir using rclone.
+        Assumes directories are named with the format: BRAND-XXXX Artist - Title
+        """
+        if not self.organised_dir_rclone_root:
+            raise Exception("organised_dir_rclone_root not configured for server-side brand code generation")
+
+        self.logger.info(f"Getting next brand code from remote organized directory: {self.organised_dir_rclone_root}")
+        
+        max_num = 0
+        pattern = re.compile(rf"^{re.escape(self.brand_prefix)}-(\d{{4}})")
+
+        # Use rclone lsf --dirs-only for clean, machine-readable directory listing
+        rclone_list_cmd = f"rclone lsf --dirs-only '{self.organised_dir_rclone_root}'"
+        
+        if self.dry_run:
+            self.logger.info(f"DRY RUN: Would run: {rclone_list_cmd}")
+            return f"{self.brand_prefix}-0001"
+
+        try:
+            self.logger.debug(f"Running command: {rclone_list_cmd}")
+            result = subprocess.run(rclone_list_cmd, shell=True, check=True, capture_output=True, text=True)
+            
+            # rclone lsf --dirs-only outputs one directory name per line, with trailing slash
+            self.logger.debug(f"rclone lsf --dirs-only raw output:\n{result.stdout}")
+            
+            # Parse the output to find matching directories
+            matching_dirs = []
+            for line_num, line in enumerate(result.stdout.strip().split('\n')):
+                if line.strip():
+                    # Remove trailing slash and whitespace
+                    dir_name = line.strip().rstrip('/')
+                    self.logger.debug(f"Processing directory {line_num}: '{dir_name}'")
+                    
+                    # Check if directory matches our brand pattern
+                    match = pattern.match(dir_name)
+                    if match:
+                        num = int(match.group(1))
+                        max_num = max(max_num, num)
+                        matching_dirs.append((dir_name, num))
+                        self.logger.debug(f"Found matching directory: '{dir_name}' with number {num}")
+
+            self.logger.info(f"Found {len(matching_dirs)} matching directories with pattern {self.brand_prefix}-XXXX")
+            for dir_name, num in matching_dirs:
+                self.logger.debug(f"  {dir_name} -> {num}")
+
+            next_seq_number = max_num + 1
+            brand_code = f"{self.brand_prefix}-{next_seq_number:04d}"
+            
+            self.logger.info(f"Highest existing number: {max_num}, next sequence number for brand {self.brand_prefix} calculated as: {next_seq_number}")
+            return brand_code
+            
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Failed to list remote organized directory. Exit code: {e.returncode}")
+            self.logger.error(f"Command output (stdout): {e.stdout}")
+            self.logger.error(f"Command output (stderr): {e.stderr}")
+            raise Exception(f"Failed to get brand code from remote directory: {e}")
+
+    def upload_files_to_organized_folder_server_side(self, brand_code, artist, title):
+        """
+        Upload all files from current directory to the remote organized folder using rclone.
+        Creates a brand-prefixed directory in the remote organized folder.
+        """
+        if not self.organised_dir_rclone_root:
+            raise Exception("organised_dir_rclone_root not configured for server-side file upload")
+
+        self.new_brand_code_dir = f"{brand_code} - {artist} - {title}"
+        remote_dest = f"{self.organised_dir_rclone_root}/{self.new_brand_code_dir}"
+        
+        self.logger.info(f"Uploading files to remote organized directory: {remote_dest}")
+
+        # Get current directory path to upload
+        current_dir = os.getcwd()
+        
+        # Use rclone copy to upload the entire current directory to the remote destination
+        rclone_upload_cmd = f"rclone copy -v '{current_dir}' '{remote_dest}'"
+        
+        if self.dry_run:
+            self.logger.info(f"DRY RUN: Would upload current directory to: {remote_dest}")
+            self.logger.info(f"DRY RUN: Command: {rclone_upload_cmd}")
+        else:
+            self.execute_command(rclone_upload_cmd, f"Uploading files to organized folder: {remote_dest}")
+
+        # Generate a sharing link for the uploaded folder
+        self.generate_organised_folder_sharing_link_server_side(remote_dest)
+
+    def generate_organised_folder_sharing_link_server_side(self, remote_path):
+        """Generate a sharing link for the remote organized folder using rclone."""
+        self.logger.info(f"Getting sharing link for remote organized folder: {remote_path}")
+
+        rclone_link_cmd = f"rclone link '{remote_path}'"
+
+        if self.dry_run:
+            self.logger.info(f"DRY RUN: Would get sharing link with: {rclone_link_cmd}")
+            self.brand_code_dir_sharing_link = "https://file-sharing-service.com/example"
+            return
+
+        # Add a 10-second delay to allow the remote service to index the folder before generating a link
+        self.logger.info("Waiting 10 seconds before generating link...")
+        time.sleep(10)
+
+        try:
+            self.logger.info(f"Running command: {rclone_link_cmd}")
+            result = subprocess.run(rclone_link_cmd, shell=True, check=True, capture_output=True, text=True)
+            self.brand_code_dir_sharing_link = result.stdout.strip()
+            self.logger.info(f"Got organized folder sharing link: {self.brand_code_dir_sharing_link}")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Failed to get organized folder sharing link. Exit code: {e.returncode}")
+            self.logger.error(f"Command output (stdout): {e.stdout}")
+            self.logger.error(f"Command output (stderr): {e.stderr}")
+            self.logger.error(f"Full exception: {e}")
+
     def get_existing_brand_code(self):
         """Extract brand code from current directory name"""
         current_dir = os.path.basename(os.getcwd())
@@ -1083,7 +1213,30 @@ class KaraokeFinalise:
             if self.discord_notication_enabled:
                 self.post_discord_notification()
 
-        if self.folder_organisation_enabled:
+        # Handle folder organization - different logic for server-side vs local mode
+        if self.server_side_mode and self.brand_prefix and self.organised_dir_rclone_root:
+            self.logger.info("Executing server-side organization...")
+            
+            # Generate brand code from remote directory listing
+            if self.keep_brand_code:
+                self.brand_code = self.get_existing_brand_code()
+            else:
+                self.brand_code = self.get_next_brand_code_server_side()
+
+            # Upload files to organized folder via rclone
+            self.upload_files_to_organized_folder_server_side(self.brand_code, artist, title)
+
+            # Copy files to public share if enabled
+            if self.public_share_copy_enabled:
+                self.copy_final_files_to_public_share_dirs(self.brand_code, base_name, output_files)
+
+            # Sync public share to cloud destination if enabled
+            if self.public_share_rclone_enabled:
+                self.sync_public_share_dir_to_rclone_destination()
+
+        elif self.folder_organisation_enabled:
+            self.logger.info("Executing local folder organization...")
+            
             if self.keep_brand_code:
                 self.brand_code = self.get_existing_brand_code()
                 self.new_brand_code_dir = os.path.basename(os.getcwd())
@@ -1102,6 +1255,27 @@ class KaraokeFinalise:
                 self.sync_public_share_dir_to_rclone_destination()
 
             self.generate_organised_folder_sharing_link()
+        
+        elif self.public_share_copy_enabled or self.public_share_rclone_enabled:
+            # If only public share features are enabled (no folder organization), we still need a brand code
+            self.logger.info("No folder organization enabled, but public share features require brand code...")
+            if self.brand_prefix:
+                if self.server_side_mode and self.organised_dir_rclone_root:
+                    self.brand_code = self.get_next_brand_code_server_side()
+                elif not self.server_side_mode and self.organised_dir:
+                    self.brand_code = self.get_next_brand_code()
+                else:
+                    # Fallback to timestamp-based brand code if no organized directory configured
+                    import datetime
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                    self.brand_code = f"{self.brand_prefix}-{timestamp}"
+                    self.logger.warning(f"No organized directory configured, using timestamp-based brand code: {self.brand_code}")
+
+                if self.public_share_copy_enabled:
+                    self.copy_final_files_to_public_share_dirs(self.brand_code, base_name, output_files)
+
+                if self.public_share_rclone_enabled:
+                    self.sync_public_share_dir_to_rclone_destination()
 
     def authenticate_gmail(self):
         """Authenticate and return a Gmail service object."""
@@ -1129,6 +1303,11 @@ class KaraokeFinalise:
         return build("gmail", "v1", credentials=creds)
 
     def draft_completion_email(self, artist, title, youtube_url, dropbox_url):
+        # Completely disable email drafts in server-side mode
+        if self.server_side_mode:
+            self.logger.info("Server-side mode: skipping email draft creation")
+            return
+
         if not self.email_template_file:
             self.logger.info("Email template file not provided, skipping email draft creation.")
             return
