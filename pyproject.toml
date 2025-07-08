@@ -28,7 +28,7 @@ thefuzz = ">=0.22"
 numpy = ">=2"
 audio-separator = { version = ">=0.34.0", extras = ["cpu"] }
 lyrics-converter = ">=0.2.1"
-lyrics-transcriber = ">=0.60"
+lyrics-transcriber = ">=0.61"
 kbputils = "^0.0.16"
 attrs = ">=24.2.0"
 cattrs = ">=24.1.2"

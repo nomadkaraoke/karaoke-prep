@@ -23,7 +23,7 @@ import subprocess
 from enum import Enum
 
 from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File, Depends
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
@@ -103,7 +103,7 @@ karaoke_image = (
             "python-multipart>=0.0.7",
             "requests>=2.31.0",
             # Uncomment this line to use the lyrics-transcriber package from PyPI
-            # "lyrics-transcriber>=0.60",
+            "lyrics-transcriber>=0.61",
             # To use the local version of lyrics-transcriber, comment out the line above and
             # uncomment the lyrics_transcriber_local "add_local_dir" and "run_commands" lines below
         ]
@@ -119,11 +119,11 @@ karaoke_image = (
     # Uncomment this section to use the local version of lyrics-transcriber
     # If using the PyPI version, comment out this section and
     # uncomment the normal lyrics-transcriber line above
-    .add_local_dir("lyrics_transcriber_local", "/root/lyrics_transcriber_local", copy=True)
-    .run_commands([
-        "cd /root/lyrics_transcriber_local && pip install -e .",  # Install lyrics-transcriber from local first
-        "python -c 'import lyrics_transcriber; print(f\"✓ lyrics-transcriber installed from: {lyrics_transcriber.__file__}\")'",  # Verify installation
-    ])
+    # .add_local_dir("lyrics_transcriber_local", "/root/lyrics_transcriber_local", copy=True)
+    # .run_commands([
+    #     "cd /root/lyrics_transcriber_local && pip install -e .",  # Install lyrics-transcriber from local first
+    #     "python -c 'import lyrics_transcriber; print(f\"✓ lyrics-transcriber installed from: {lyrics_transcriber.__file__}\")'",  # Verify installation
+    # ])
     # ----- lyrics_transcriber_local -----
     .add_local_dir("karaoke_gen", "/root/karaoke_gen")
     .add_local_file("core.py", "/root/core.py")
@@ -1017,12 +1017,47 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
                 
             log_message(job_id, "INFO", f"KaraokeFinalise configured with features: {', '.join(features_enabled) if features_enabled else 'basic video generation only'}")
 
-            # Get the "With Vocals" video from phase 2
-            with_vocals_file = f"{artist} - {title} (With Vocals).mkv"
-            if not Path(with_vocals_file).exists():
-                raise Exception(f"With Vocals video not found: {with_vocals_file}")
+            # Get the "With Vocals" video from phase 2 - search flexibly for the file
+            base_name = f"{artist} - {title}"
+            
+            # Try different possible "With Vocals" video patterns and locations
+            with_vocals_patterns = [
+                f"{base_name} (With Vocals).mkv",
+                f"{base_name} (With Vocals).mp4", 
+                f"*{base_name}*With Vocals*.mkv",
+                f"*{base_name}*With Vocals*.mp4"
+            ]
+            
+            with_vocals_file = None
+            current_dir = Path(".")
+            
+            # Search in current directory and subdirectories
+            for pattern in with_vocals_patterns:
+                # First try current directory
+                matching_files = list(current_dir.glob(pattern))
+                if matching_files:
+                    with_vocals_file = matching_files[0]
+                    break
+                    
+                # Then try recursive search
+                matching_files = list(current_dir.rglob(pattern))
+                if matching_files:
+                    with_vocals_file = matching_files[0] 
+                    break
+            
+            if not with_vocals_file or not with_vocals_file.exists():
+                # List all files for debugging
+                log_message(job_id, "ERROR", "With Vocals video not found. Directory contents:")
+                for file_path in current_dir.rglob("*"):
+                    if file_path.is_file():
+                        log_message(job_id, "ERROR", f"  {file_path}")
+                
+                raise Exception(f"With Vocals video not found. Searched for patterns: {with_vocals_patterns}")
 
             log_message(job_id, "INFO", f"Found With Vocals video: {with_vocals_file}")
+            
+            # Convert to string for KaraokeFinalise compatibility
+            with_vocals_file = str(with_vocals_file)
 
             # Find instrumental files
             base_name = f"{artist} - {title}"
@@ -1040,7 +1075,6 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
             
             # Add timeout monitoring
             import signal
-            import time
             
             def timeout_handler(signum, frame):
                 raise TimeoutError("KaraokeFinalise.process() timed out")
@@ -1887,7 +1921,7 @@ async def get_youtube_auth_url(user: dict = Depends(authenticate_user)):
         # Create OAuth flow
         flow = Flow.from_client_secrets_file(
             youtube_secrets_file,
-            scopes=['https://www.googleapis.com/auth/youtube.upload'],
+            scopes=['https://www.googleapis.com/auth/youtube'],
             redirect_uri=f"{get_base_api_url()}/api/youtube/oauth-callback"
         )
         
@@ -1965,7 +1999,7 @@ async def youtube_oauth_callback(request: Request):
         # Complete OAuth flow
         flow = Flow.from_client_secrets_file(
             youtube_secrets_file,
-            scopes=['https://www.googleapis.com/auth/youtube.upload'],
+            scopes=['https://www.googleapis.com/auth/youtube'],
             redirect_uri=f"{get_base_api_url()}/api/youtube/oauth-callback"
         )
         
@@ -1993,7 +2027,7 @@ async def youtube_oauth_callback(request: Request):
         user_youtube_credentials_dict["user_credentials"] = user_credentials
         
         # Return success page
-        return """
+        success_html = """
         <!DOCTYPE html>
         <html>
         <head>
@@ -2023,6 +2057,7 @@ async def youtube_oauth_callback(request: Request):
         </body>
         </html>
         """
+        return HTMLResponse(content=success_html)
         
     except Exception as e:
         error_html = f"""
@@ -2043,7 +2078,7 @@ async def youtube_oauth_callback(request: Request):
         </body>
         </html>
         """
-        return error_html
+        return HTMLResponse(content=error_html)
 
 
 @api_app.get("/api/youtube/auth-status")
@@ -2088,7 +2123,38 @@ async def revoke_youtube_auth(user: dict = Depends(authenticate_user)):
         user_token = user["token"]
         user_credentials = user_youtube_credentials_dict.get("user_credentials", {})
         
+        # First, revoke the token with Google's servers if we have credentials
         if user_token in user_credentials:
+            try:
+                from google.oauth2.credentials import Credentials
+                import requests
+                
+                cred_data = user_credentials[user_token]
+                credentials_data = cred_data["credentials"]
+                
+                # Create credentials object
+                credentials = Credentials(
+                    token=credentials_data['token'],
+                    refresh_token=credentials_data.get('refresh_token'),
+                    token_uri=credentials_data.get('token_uri'),
+                    client_id=credentials_data.get('client_id'),
+                    client_secret=credentials_data.get('client_secret'),
+                    scopes=credentials_data.get('scopes')
+                )
+                
+                # Revoke with Google's servers
+                revoke_url = f"https://oauth2.googleapis.com/revoke?token={credentials.token}"
+                response = requests.post(revoke_url)
+                
+                if response.status_code == 200:
+                    print(f"Successfully revoked token with Google for user {user_token[:8]}...")
+                else:
+                    print(f"Warning: Failed to revoke token with Google (status {response.status_code}), but proceeding with local deletion")
+                    
+            except Exception as revoke_error:
+                print(f"Warning: Error revoking token with Google: {str(revoke_error)}, but proceeding with local deletion")
+            
+            # Always delete from local storage regardless of Google revocation result
             del user_credentials[user_token]
             user_youtube_credentials_dict["user_credentials"] = user_credentials
         
@@ -2342,9 +2408,6 @@ async def update_finalization_config(request: FinalizationConfigRequest, admin: 
         
     except Exception as e:
         return JSONResponse({"success": False, "message": f"Error updating configuration: {str(e)}"}, status_code=500)
-
-
-# rclone config is now managed via Modal CLI uploads to /config/rclone.conf
 
 
 @api_app.post("/api/admin/finalization/test-config")
@@ -5382,14 +5445,13 @@ async def get_instrumental_preview(job_id: str, filename: str):
 class CloneJobRequest(BaseModel):
     source_job_id: str
     target_phase: str
-    clone_name: Optional[str] = None
 
 
 @api_app.post("/api/admin/jobs/{job_id}/clone")
 async def clone_job(job_id: str, request: CloneJobRequest, admin: dict = Depends(authenticate_admin)):
     """Clone a job at a specific phase (admin only)."""
     try:
-        result = clone_job_at_phase.remote(job_id, request.target_phase, request.clone_name)
+        result = clone_job_at_phase.remote(job_id, request.target_phase)
         
         return JSONResponse({
             "success": True,
@@ -5433,12 +5495,7 @@ async def get_clone_info(job_id: str, admin: dict = Depends(authenticate_admin))
                 "description": "Clone to test instrumental selection and Phase 3 (finalization)"
             })
         
-        if current_status in ["rendering", "finalizing", "complete"]:
-            available_phases.append({
-                "phase": "reviewing",
-                "name": "During Review Phase",
-                "description": "Clone to test different review corrections and instrumental selections"
-            })
+
         
         return JSONResponse({
             "success": True,
@@ -5459,7 +5516,7 @@ async def get_clone_info(job_id: str, admin: dict = Depends(authenticate_admin))
     timeout=300,  # 5 minute timeout for file copying
     retries=0,
 )
-def clone_job_at_phase(source_job_id: str, target_phase: str, clone_name: Optional[str] = None):
+def clone_job_at_phase(source_job_id: str, target_phase: str):
     """Clone a job at a specific phase for testing purposes."""
     import shutil
     import uuid
@@ -5495,6 +5552,9 @@ def clone_job_at_phase(source_job_id: str, target_phase: str, clone_name: Option
         
         # Copy all files from source to target
         log_message(new_job_id, "INFO", f"Copying files from {source_dir} to {target_dir}")
+        files_copied = 0
+        total_size = 0
+        
         for item in source_dir.rglob("*"):
             if item.is_file():
                 # Calculate relative path and create target path
@@ -5504,8 +5564,22 @@ def clone_job_at_phase(source_job_id: str, target_phase: str, clone_name: Option
                 # Create parent directories if needed
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 
-                # Copy file
+                # Copy file and log the operation
+                file_size = item.stat().st_size
                 shutil.copy2(item, target_path)
+                files_copied += 1
+                total_size += file_size
+                
+                # Log every file copied for debugging
+                log_message(new_job_id, "DEBUG", f"Copied: {relative_path} ({file_size} bytes)")
+                
+                # Special logging for important files
+                if "With Vocals" in item.name:
+                    log_message(new_job_id, "INFO", f"✅ Copied With Vocals file: {relative_path}")
+                elif "Instrumental" in item.name and item.suffix == ".flac":
+                    log_message(new_job_id, "INFO", f"✅ Copied instrumental file: {relative_path}")
+        
+        log_message(new_job_id, "INFO", f"File copy completed: {files_copied} files, {total_size / 1024 / 1024:.1f} MB total")
         
         # Create cloned job data
         clone_data = source_job_data.copy()
@@ -5519,13 +5593,8 @@ def clone_job_at_phase(source_job_id: str, target_phase: str, clone_name: Option
         clone_data["cloned_from"] = source_job_id
         clone_data["clone_target_phase"] = target_phase
         
-        # Add clone name if provided
-        if clone_name:
-            original_title = clone_data.get("title", "Unknown")
-            clone_data["title"] = f"{original_title} (Clone: {clone_name})"
-        else:
-            original_title = clone_data.get("title", "Unknown") 
-            clone_data["title"] = f"{original_title} (Clone from {target_phase})"
+        # Don't modify artist/title as it breaks file finding logic
+        # The cloned_from and clone_target_phase fields provide sufficient tracking
         
         # Update file paths in job data to point to new directory
         if "corrections_file" in clone_data:

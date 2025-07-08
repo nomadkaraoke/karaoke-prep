@@ -4687,7 +4687,7 @@ async function showInstrumentalSelectionModal(jobId, correctedData) {
         displayYouTubeAuthStatus(authStatus);
         
         // Load instrumental options
-        const response = await authenticatedFetch(`/api/corrections/${jobId}/instrumentals`);
+        const response = await authenticatedFetch(`${API_BASE_URL}/corrections/${jobId}/instrumentals`);
         const data = await response.json();
         
         if (data.instrumentals && data.instrumentals.length > 0) {
@@ -5051,13 +5051,6 @@ function displayCloneJobModal(cloneInfo) {
                                     ${createClonePhasesHtml(cloneInfo.available_phases)}
                                 </div>
                                 
-                                <div class="form-group">
-                                    <label for="clone-name">Clone Name (Optional)</label>
-                                    <input type="text" id="clone-name" class="form-control" 
-                                           placeholder="e.g., 'Phase 3 Test', 'Instrumental Test'">
-                                    <small class="help-text">Optional name to help identify this clone</small>
-                                </div>
-                                
                                 <div class="clone-actions">
                                     <button type="submit" class="btn btn-primary" id="clone-submit-btn" disabled>
                                         🔄 Clone Job
@@ -5141,7 +5134,6 @@ async function executeJobClone(event) {
     event.preventDefault();
     
     const selectedPhase = document.querySelector('input[name="clone-phase"]:checked');
-    const cloneName = document.getElementById('clone-name').value.trim();
     const submitBtn = document.getElementById('clone-submit-btn');
     
     if (!selectedPhase) {
@@ -5172,10 +5164,6 @@ async function executeJobClone(event) {
             source_job_id: sourceJobId,
             target_phase: targetPhase
         };
-        
-        if (cloneName) {
-            requestData.clone_name = cloneName;
-        }
         
         const response = await authenticatedFetch(`${API_BASE_URL}/admin/jobs/${sourceJobId}/clone`, {
             method: 'POST',
@@ -5494,7 +5482,7 @@ function toggleLogAutoRefresh() {
 // YouTube Authentication Functions
 async function checkYouTubeAuthStatus() {
     try {
-        const response = await authenticatedFetch('/api/youtube/auth-status');
+        const response = await authenticatedFetch(`${API_BASE_URL}/youtube/auth-status`);
         const data = await response.json();
         
         if (data.success) {
@@ -5512,7 +5500,7 @@ async function checkYouTubeAuthStatus() {
 async function authenticateWithYouTube() {
     try {
         // Get the authorization URL
-        const response = await authenticatedFetch('/api/youtube/auth-url');
+        const response = await authenticatedFetch(`${API_BASE_URL}/youtube/auth-url`);
         const data = await response.json();
         
         if (!data.success) {
@@ -5569,7 +5557,7 @@ async function authenticateWithYouTube() {
 
 async function revokeYouTubeAuth() {
     try {
-        const response = await authenticatedFetch('/api/youtube/auth', {
+        const response = await authenticatedFetch(`${API_BASE_URL}/youtube/auth`, {
             method: 'DELETE'
         });
         
