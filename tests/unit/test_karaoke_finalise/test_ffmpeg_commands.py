@@ -1,6 +1,7 @@
 import pytest
 import os
 import shlex
+import subprocess
 from unittest.mock import patch, MagicMock, call
 
 # Adjust the import path
@@ -27,39 +28,64 @@ INPUT_FILES = {
 @pytest.fixture
 def finaliser_with_aac(mock_logger):
     """Fixture for a finaliser specifically with 'aac' codec."""
-    with patch.object(KaraokeFinalise, 'detect_best_aac_codec', return_value='aac'):
+    with patch.object(KaraokeFinalise, 'detect_best_aac_codec', return_value='aac'), \
+         patch.object(KaraokeFinalise, 'detect_nvenc_support', return_value=False):
         finaliser = KaraokeFinalise(logger=mock_logger, **MINIMAL_CONFIG)
     return finaliser
 
 @pytest.fixture
 def finaliser_with_aac_at(mock_logger):
     """Fixture for a finaliser specifically with 'aac_at' codec."""
-    with patch.object(KaraokeFinalise, 'detect_best_aac_codec', return_value='aac_at'):
+    with patch.object(KaraokeFinalise, 'detect_best_aac_codec', return_value='aac_at'), \
+         patch.object(KaraokeFinalise, 'detect_nvenc_support', return_value=False):
+        finaliser = KaraokeFinalise(logger=mock_logger, **MINIMAL_CONFIG)
+    return finaliser
+
+@pytest.fixture
+def finaliser_with_nvenc_aac(mock_logger):
+    """Fixture for a finaliser with NVENC support and 'aac' codec."""
+    with patch.object(KaraokeFinalise, 'detect_best_aac_codec', return_value='aac'), \
+         patch.object(KaraokeFinalise, 'detect_nvenc_support', return_value=True):
+        finaliser = KaraokeFinalise(logger=mock_logger, **MINIMAL_CONFIG)
+    return finaliser
+
+@pytest.fixture
+def finaliser_with_nvenc_aac_at(mock_logger):
+    """Fixture for a finaliser with NVENC support and 'aac_at' codec."""
+    with patch.object(KaraokeFinalise, 'detect_best_aac_codec', return_value='aac_at'), \
+         patch.object(KaraokeFinalise, 'detect_nvenc_support', return_value=True):
         finaliser = KaraokeFinalise(logger=mock_logger, **MINIMAL_CONFIG)
     return finaliser
 
 # --- execute_command Tests ---
 
-@patch('os.system', return_value=0)
-def test_execute_command_runs_command(mock_system, finaliser_with_aac):
-    """Test execute_command calls os.system."""
+@patch('subprocess.run')
+def test_execute_command_runs_command(mock_subprocess_run, finaliser_with_aac):
+    """Test execute_command calls subprocess.run."""
+    # Setup successful subprocess.run return
+    mock_subprocess_run.return_value = subprocess.CompletedProcess(
+        args=['echo', 'test'], returncode=0, stdout='', stderr=''
+    )
+    
     command = "echo 'test'"
     description = "Running test command"
     finaliser_with_aac.execute_command(command, description)
-    mock_system.assert_called_once_with(command)
+    
+    mock_subprocess_run.assert_called_once_with(command, shell=True, capture_output=True, text=True, timeout=600)
     finaliser_with_aac.logger.info.assert_any_call(description)
-    finaliser_with_aac.logger.info.assert_any_call(f"Running command: {command}")
+    finaliser_with_aac.logger.debug.assert_any_call(f"Running software encoding: {command}")
 
-@patch('os.system')
-def test_execute_command_dry_run(mock_system, finaliser_with_aac):
+@patch('subprocess.run')
+def test_execute_command_dry_run(mock_subprocess_run, finaliser_with_aac):
     """Test execute_command logs but doesn't run in dry run mode."""
     finaliser_with_aac.dry_run = True
     command = "echo 'test'"
     description = "Running test command"
     finaliser_with_aac.execute_command(command, description)
-    mock_system.assert_not_called()
+    
+    mock_subprocess_run.assert_not_called()
     finaliser_with_aac.logger.info.assert_any_call(description)
-    finaliser_with_aac.logger.info.assert_any_call(f"DRY RUN: Would run command: {command}")
+    finaliser_with_aac.logger.info.assert_any_call(f"DRY RUN: Would run CPU command: {command}")
 
 # --- prepare_concat_filter Tests ---
 
@@ -104,30 +130,40 @@ def test_remux_with_instrumental(mock_execute, finaliser_with_aac):
     )
     mock_execute.assert_called_once_with(expected_cmd, "Remuxing video with instrumental audio")
 
-@patch.object(KaraokeFinalise, 'execute_command')
-def test_convert_mov_to_mp4_aac(mock_execute, finaliser_with_aac):
-    """Test convert_mov_to_mp4 command with basic aac codec."""
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+def test_convert_mov_to_mp4_aac(mock_execute_fallback, finaliser_with_aac):
+    """Test convert_mov_to_mp4 command with basic aac codec (CPU encoding since NVENC disabled)."""
     finaliser_with_aac.convert_mov_to_mp4(WITH_VOCALS_MOV, OUTPUT_FILES["with_vocals_mp4"])
-    expected_cmd = (
+    
+    expected_gpu_cmd = (
+        f'{finaliser_with_aac.ffmpeg_base_command}  -i "{WITH_VOCALS_MOV}" '
+        f'-c:v libx264 -preset p4 -tune hq -cq 18 -c:a aac {finaliser_with_aac.mp4_flags} "{OUTPUT_FILES["with_vocals_mp4"]}"'
+    )
+    expected_cpu_cmd = (
         f'{finaliser_with_aac.ffmpeg_base_command} -i "{WITH_VOCALS_MOV}" '
         f'-c:v libx264 -c:a aac {finaliser_with_aac.mp4_flags} "{OUTPUT_FILES["with_vocals_mp4"]}"'
     )
-    mock_execute.assert_called_once_with(expected_cmd, "Converting MOV video to MP4")
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Converting MOV video to MP4")
 
-@patch.object(KaraokeFinalise, 'execute_command')
-def test_convert_mov_to_mp4_aac_at(mock_execute, finaliser_with_aac_at):
-    """Test convert_mov_to_mp4 command with aac_at codec."""
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+def test_convert_mov_to_mp4_aac_at(mock_execute_fallback, finaliser_with_aac_at):
+    """Test convert_mov_to_mp4 command with aac_at codec (CPU encoding since NVENC disabled)."""
     finaliser_with_aac_at.convert_mov_to_mp4(WITH_VOCALS_MOV, OUTPUT_FILES["with_vocals_mp4"])
-    expected_cmd = (
+    
+    expected_gpu_cmd = (
+        f'{finaliser_with_aac_at.ffmpeg_base_command}  -i "{WITH_VOCALS_MOV}" '
+        f'-c:v libx264 -preset p4 -tune hq -cq 18 -c:a aac_at {finaliser_with_aac_at.mp4_flags} "{OUTPUT_FILES["with_vocals_mp4"]}"'
+    )
+    expected_cpu_cmd = (
         f'{finaliser_with_aac_at.ffmpeg_base_command} -i "{WITH_VOCALS_MOV}" '
         f'-c:v libx264 -c:a aac_at {finaliser_with_aac_at.mp4_flags} "{OUTPUT_FILES["with_vocals_mp4"]}"'
     )
-    mock_execute.assert_called_once_with(expected_cmd, "Converting MOV video to MP4")
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Converting MOV video to MP4")
 
-@patch.object(KaraokeFinalise, 'execute_command')
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
 @patch('shlex.quote', side_effect=lambda x: f"'{x}'") # Mock quoting for consistency
-def test_encode_lossless_mp4(mock_quote, mock_execute, finaliser_with_aac):
-    """Test encode_lossless_mp4 command."""
+def test_encode_lossless_mp4(mock_quote, mock_execute_fallback, finaliser_with_aac):
+    """Test encode_lossless_mp4 command (CPU encoding since NVENC disabled)."""
     # Simulate how paths would be prepared by the calling function
     quoted_title_mov = shlex.quote(TITLE_MOV)
     quoted_karaoke_mp4 = shlex.quote(OUTPUT_FILES["karaoke_mp4"])
@@ -137,13 +173,20 @@ def test_encode_lossless_mp4(mock_quote, mock_execute, finaliser_with_aac):
     finaliser_with_aac.encode_lossless_mp4(
         quoted_title_mov, quoted_karaoke_mp4, env_mov_input, ffmpeg_filter, OUTPUT_FILES["final_karaoke_lossless_mp4"]
     )
-    # Construct expected command using the quoted paths
-    expected_cmd = (
+    
+    # Construct expected GPU and CPU commands (both use libx264 since NVENC is disabled)
+    expected_gpu_cmd = (
+        f"{finaliser_with_aac.ffmpeg_base_command}  -i {quoted_title_mov} "
+        f" -i {quoted_karaoke_mp4} {env_mov_input} "
+        f'{ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 '
+        f'-preset lossless -c:a pcm_s16le {finaliser_with_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}"'
+    )
+    expected_cpu_cmd = (
         f"{finaliser_with_aac.ffmpeg_base_command} -i {quoted_title_mov} -i {quoted_karaoke_mp4} {env_mov_input} "
         f'{ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a pcm_s16le '
         f'{finaliser_with_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}"'
     )
-    mock_execute.assert_called_once_with(expected_cmd, "Creating MP4 version with PCM audio")
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Creating MP4 version with PCM audio")
 
 @patch.object(KaraokeFinalise, 'execute_command')
 def test_encode_lossy_mp4_aac(mock_execute, finaliser_with_aac):
@@ -175,27 +218,41 @@ def test_encode_lossless_mkv(mock_execute, finaliser_with_aac):
     )
     mock_execute.assert_called_once_with(expected_cmd, "Creating MKV version with FLAC audio for YouTube")
 
-@patch.object(KaraokeFinalise, 'execute_command')
-def test_encode_720p_version_aac(mock_execute, finaliser_with_aac):
-    """Test encode_720p_version command with basic aac."""
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+def test_encode_720p_version_aac(mock_execute_fallback, finaliser_with_aac):
+    """Test encode_720p_version command with basic aac (CPU encoding since NVENC disabled)."""
     finaliser_with_aac.encode_720p_version(OUTPUT_FILES["final_karaoke_lossless_mp4"], OUTPUT_FILES["final_karaoke_lossy_720p_mp4"])
-    expected_cmd = (
-        f'{finaliser_with_aac.ffmpeg_base_command} -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
-        f'-c:v libx264 -vf "scale=1280:720" -b:v 200k -preset medium -tune animation '
+    
+    expected_gpu_cmd = (
+        f'{finaliser_with_aac.ffmpeg_base_command}  -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
+        f'-c:v libx264 -vf "scale=1280:720" '
+        f'-preset p4 -cq 23 -b:v 2000k '
         f'-c:a aac -b:a 128k {finaliser_with_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
     )
-    mock_execute.assert_called_once_with(expected_cmd, "Encoding 720p version of the final video")
+    expected_cpu_cmd = (
+        f'{finaliser_with_aac.ffmpeg_base_command} -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
+        f'-c:v libx264 -vf "scale=1280:720" -b:v 2000k -preset medium -tune animation '
+        f'-c:a aac -b:a 128k {finaliser_with_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
+    )
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Encoding 720p version of the final video")
 
-@patch.object(KaraokeFinalise, 'execute_command')
-def test_encode_720p_version_aac_at(mock_execute, finaliser_with_aac_at):
-    """Test encode_720p_version command with aac_at."""
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+def test_encode_720p_version_aac_at(mock_execute_fallback, finaliser_with_aac_at):
+    """Test encode_720p_version command with aac_at (CPU encoding since NVENC disabled)."""
     finaliser_with_aac_at.encode_720p_version(OUTPUT_FILES["final_karaoke_lossless_mp4"], OUTPUT_FILES["final_karaoke_lossy_720p_mp4"])
-    expected_cmd = (
-        f'{finaliser_with_aac_at.ffmpeg_base_command} -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
-        f'-c:v libx264 -vf "scale=1280:720" -b:v 200k -preset medium -tune animation '
+    
+    expected_gpu_cmd = (
+        f'{finaliser_with_aac_at.ffmpeg_base_command}  -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
+        f'-c:v libx264 -vf "scale=1280:720" '
+        f'-preset p4 -cq 23 -b:v 2000k '
         f'-c:a aac_at -b:a 128k {finaliser_with_aac_at.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
     )
-    mock_execute.assert_called_once_with(expected_cmd, "Encoding 720p version of the final video")
+    expected_cpu_cmd = (
+        f'{finaliser_with_aac_at.ffmpeg_base_command} -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
+        f'-c:v libx264 -vf "scale=1280:720" -b:v 2000k -preset medium -tune animation '
+        f'-c:a aac_at -b:a 128k {finaliser_with_aac_at.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
+    )
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Encoding 720p version of the final video")
 
 
 # --- remux_and_encode_output_video_files Tests ---
@@ -212,12 +269,14 @@ def test_encode_720p_version_aac_at(mock_execute, finaliser_with_aac_at):
 @patch.object(KaraokeFinalise, 'encode_lossless_mkv')
 @patch.object(KaraokeFinalise, 'encode_720p_version')
 @patch.object(KaraokeFinalise, 'prompt_user_bool', return_value=True) # Auto-confirm overwrite/checks
-@patch.object(KaraokeFinalise, 'prompt_user_confirmation_or_raise_exception') # Mock final check
 def test_remux_and_encode_all_steps_mov_input(
-    mock_prompt_confirm, mock_prompt_bool, mock_encode_720p, mock_encode_mkv, mock_encode_lossy,
+    mock_prompt_bool, mock_encode_720p, mock_encode_mkv, mock_encode_lossy,
     mock_encode_lossless, mock_prepare_filter, mock_convert_mov, mock_remux,
     mock_abspath, mock_quote, mock_remove, mock_isfile, finaliser_with_aac):
     """Test the full remux/encode process with a .mov input requiring conversion."""
+
+    # Configure non-interactive mode to skip the final confirmation
+    finaliser_with_aac.non_interactive = True
 
     # Simulate output files *do* exist initially to trigger overwrite prompt, end_mov also exists
     # Also simulate WITH_VOCALS_MOV exists for the os.remove check after conversion
@@ -267,7 +326,6 @@ def test_remux_and_encode_all_steps_mov_input(
     mock_encode_lossy.assert_called_once_with(OUTPUT_FILES["final_karaoke_lossless_mp4"], OUTPUT_FILES["final_karaoke_lossy_mp4"])
     mock_encode_mkv.assert_called_once_with(OUTPUT_FILES["final_karaoke_lossless_mp4"], OUTPUT_FILES["final_karaoke_lossless_mkv"])
     mock_encode_720p.assert_called_once_with(OUTPUT_FILES["final_karaoke_lossless_mp4"], OUTPUT_FILES["final_karaoke_lossy_720p_mp4"])
-    mock_prompt_confirm.assert_called_once() # Final check prompt
 
 @patch('os.path.isfile')
 @patch('os.remove')
@@ -279,12 +337,15 @@ def test_remux_and_encode_all_steps_mov_input(
 @patch.object(KaraokeFinalise, 'encode_lossless_mkv')
 @patch.object(KaraokeFinalise, 'encode_720p_version')
 @patch.object(KaraokeFinalise, 'prompt_user_bool', return_value=True) # Auto-confirm overwrite/checks
-@patch.object(KaraokeFinalise, 'prompt_user_confirmation_or_raise_exception') # Mock final check
 def test_remux_and_encode_mp4_input(
-    mock_prompt_confirm, mock_prompt_bool, mock_encode_720p, mock_encode_mkv, mock_encode_lossy,
+    mock_prompt_bool, mock_encode_720p, mock_encode_mkv, mock_encode_lossy,
     mock_encode_lossless, mock_prepare_filter, mock_convert_mov, mock_remux,
     mock_remove, mock_isfile, finaliser_with_aac):
     """Test the remux/encode process skips conversion for .mp4 input."""
+    
+    # Configure non-interactive mode to skip the final confirmation
+    finaliser_with_aac.non_interactive = True
+    
     mock_isfile.return_value = False # Output files don't exist
     
     # Mock prepare_concat_filter to return basic values
@@ -307,9 +368,8 @@ def test_remux_and_encode_mp4_input(
 @patch.object(KaraokeFinalise, 'encode_lossless_mkv')
 @patch.object(KaraokeFinalise, 'encode_720p_version')
 @patch.object(KaraokeFinalise, 'prompt_user_bool', return_value=False) # User chooses *not* to overwrite
-@patch.object(KaraokeFinalise, 'prompt_user_confirmation_or_raise_exception')
 def test_remux_and_encode_skip_overwrite(
-    mock_prompt_confirm, mock_prompt_bool, mock_encode_720p, mock_encode_mkv, mock_encode_lossy,
+    mock_prompt_bool, mock_encode_720p, mock_encode_mkv, mock_encode_lossy,
     mock_encode_lossless, mock_convert_mov, mock_remux, mock_isfile, finaliser_with_aac):
     """Test skipping encoding steps if user chooses not to overwrite."""
 
@@ -325,4 +385,98 @@ def test_remux_and_encode_skip_overwrite(
     mock_encode_lossy.assert_not_called()
     mock_encode_mkv.assert_not_called()
     mock_encode_720p.assert_not_called()
-    mock_prompt_confirm.assert_not_called() # Final check prompt skipped
+
+
+# --- GPU-Accelerated Encoding Tests ---
+
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+def test_convert_mov_to_mp4_aac_nvenc(mock_execute_fallback, finaliser_with_nvenc_aac):
+    """Test convert_mov_to_mp4 command with basic aac codec and NVENC acceleration."""
+    finaliser_with_nvenc_aac.convert_mov_to_mp4(WITH_VOCALS_MOV, OUTPUT_FILES["with_vocals_mp4"])
+    
+    expected_gpu_cmd = (
+        f'{finaliser_with_nvenc_aac.ffmpeg_base_command} {finaliser_with_nvenc_aac.hwaccel_decode_flags} -i "{WITH_VOCALS_MOV}" '
+        f'-c:v h264_nvenc -preset p4 -tune hq -cq 18 -c:a aac {finaliser_with_nvenc_aac.mp4_flags} "{OUTPUT_FILES["with_vocals_mp4"]}"'
+    )
+    expected_cpu_cmd = (
+        f'{finaliser_with_nvenc_aac.ffmpeg_base_command} -i "{WITH_VOCALS_MOV}" '
+        f'-c:v libx264 -c:a aac {finaliser_with_nvenc_aac.mp4_flags} "{OUTPUT_FILES["with_vocals_mp4"]}"'
+    )
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Converting MOV video to MP4")
+
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+def test_convert_mov_to_mp4_aac_at_nvenc(mock_execute_fallback, finaliser_with_nvenc_aac_at):
+    """Test convert_mov_to_mp4 command with aac_at codec and NVENC acceleration."""
+    finaliser_with_nvenc_aac_at.convert_mov_to_mp4(WITH_VOCALS_MOV, OUTPUT_FILES["with_vocals_mp4"])
+    
+    expected_gpu_cmd = (
+        f'{finaliser_with_nvenc_aac_at.ffmpeg_base_command} {finaliser_with_nvenc_aac_at.hwaccel_decode_flags} -i "{WITH_VOCALS_MOV}" '
+        f'-c:v h264_nvenc -preset p4 -tune hq -cq 18 -c:a aac_at {finaliser_with_nvenc_aac_at.mp4_flags} "{OUTPUT_FILES["with_vocals_mp4"]}"'
+    )
+    expected_cpu_cmd = (
+        f'{finaliser_with_nvenc_aac_at.ffmpeg_base_command} -i "{WITH_VOCALS_MOV}" '
+        f'-c:v libx264 -c:a aac_at {finaliser_with_nvenc_aac_at.mp4_flags} "{OUTPUT_FILES["with_vocals_mp4"]}"'
+    )
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Converting MOV video to MP4")
+
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+@patch('shlex.quote', side_effect=lambda x: f"'{x}'")
+def test_encode_lossless_mp4_nvenc(mock_quote, mock_execute_fallback, finaliser_with_nvenc_aac):
+    """Test encode_lossless_mp4 command with NVENC acceleration."""
+    quoted_title_mov = shlex.quote(TITLE_MOV)
+    quoted_karaoke_mp4 = shlex.quote(OUTPUT_FILES["karaoke_mp4"])
+    env_mov_input = "-i 'end.mov'"
+    ffmpeg_filter = '-filter_complex "[concat]"'
+
+    finaliser_with_nvenc_aac.encode_lossless_mp4(
+        quoted_title_mov, quoted_karaoke_mp4, env_mov_input, ffmpeg_filter, OUTPUT_FILES["final_karaoke_lossless_mp4"]
+    )
+    
+    expected_gpu_cmd = (
+        f"{finaliser_with_nvenc_aac.ffmpeg_base_command} {finaliser_with_nvenc_aac.hwaccel_decode_flags} -i {quoted_title_mov} "
+        f"{finaliser_with_nvenc_aac.hwaccel_decode_flags} -i {quoted_karaoke_mp4} {env_mov_input} "
+        f'{ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v h264_nvenc '
+        f'-preset lossless -c:a pcm_s16le {finaliser_with_nvenc_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}"'
+    )
+    expected_cpu_cmd = (
+        f"{finaliser_with_nvenc_aac.ffmpeg_base_command} -i {quoted_title_mov} -i {quoted_karaoke_mp4} {env_mov_input} "
+        f'{ffmpeg_filter} -map "[outv]" -map "[outa]" -c:v libx264 -c:a pcm_s16le '
+        f'{finaliser_with_nvenc_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}"'
+    )
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Creating MP4 version with PCM audio")
+
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+def test_encode_720p_version_aac_nvenc(mock_execute_fallback, finaliser_with_nvenc_aac):
+    """Test encode_720p_version command with basic aac and NVENC acceleration."""
+    finaliser_with_nvenc_aac.encode_720p_version(OUTPUT_FILES["final_karaoke_lossless_mp4"], OUTPUT_FILES["final_karaoke_lossy_720p_mp4"])
+    
+    expected_gpu_cmd = (
+        f'{finaliser_with_nvenc_aac.ffmpeg_base_command} {finaliser_with_nvenc_aac.hwaccel_decode_flags} -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
+        f'-c:v h264_nvenc -vf "scale=1280:720" '
+        f'-preset p4 -cq 23 -b:v 2000k '
+        f'-c:a aac -b:a 128k {finaliser_with_nvenc_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
+    )
+    expected_cpu_cmd = (
+        f'{finaliser_with_nvenc_aac.ffmpeg_base_command} -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
+        f'-c:v libx264 -vf "scale=1280:720" -b:v 2000k -preset medium -tune animation '
+        f'-c:a aac -b:a 128k {finaliser_with_nvenc_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
+    )
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Encoding 720p version of the final video")
+
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+def test_encode_720p_version_aac_at_nvenc(mock_execute_fallback, finaliser_with_nvenc_aac_at):
+    """Test encode_720p_version command with aac_at and NVENC acceleration."""
+    finaliser_with_nvenc_aac_at.encode_720p_version(OUTPUT_FILES["final_karaoke_lossless_mp4"], OUTPUT_FILES["final_karaoke_lossy_720p_mp4"])
+    
+    expected_gpu_cmd = (
+        f'{finaliser_with_nvenc_aac_at.ffmpeg_base_command} {finaliser_with_nvenc_aac_at.hwaccel_decode_flags} -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
+        f'-c:v h264_nvenc -vf "scale=1280:720" '
+        f'-preset p4 -cq 23 -b:v 2000k '
+        f'-c:a aac_at -b:a 128k {finaliser_with_nvenc_aac_at.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
+    )
+    expected_cpu_cmd = (
+        f'{finaliser_with_nvenc_aac_at.ffmpeg_base_command} -i "{OUTPUT_FILES["final_karaoke_lossless_mp4"]}" '
+        f'-c:v libx264 -vf "scale=1280:720" -b:v 2000k -preset medium -tune animation '
+        f'-c:a aac_at -b:a 128k {finaliser_with_nvenc_aac_at.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
+    )
+    mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Encoding 720p version of the final video")

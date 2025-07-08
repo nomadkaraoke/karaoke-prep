@@ -250,8 +250,8 @@ def test_sync_public_share_dir_to_rclone(mock_execute, mock_join, mock_remove, m
     mock_walk.assert_called_once_with(PUBLIC_SHARE_DIR)
     mock_remove.assert_called_once_with(ds_store_path)
     finaliser_for_org.logger.info.assert_any_call(f"Deleted .DS_Store file: {ds_store_path}")
-    expected_cmd = f"rclone sync -v '{PUBLIC_SHARE_DIR}' '{RCLONE_DEST}'"
-    mock_execute.assert_called_once_with(expected_cmd, "Syncing with cloud destination")
+    expected_cmd = f"rclone copy -v '{PUBLIC_SHARE_DIR}' '{RCLONE_DEST}'"
+    mock_execute.assert_called_once_with(expected_cmd, "Copying to cloud destination")
 
 @patch('time.sleep')
 @patch('subprocess.run')

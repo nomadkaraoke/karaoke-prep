@@ -46,13 +46,21 @@ def test_prompt_user_bool_interactive(mock_input, user_input, allow_empty, expec
 def test_prompt_user_bool_non_interactive(mock_input, basic_finaliser):
     """Test prompt_user_bool always returns True in non-interactive mode."""
     basic_finaliser.non_interactive = True # Ensure non-interactive
+    
+    # Clear any previous logger calls from initialization
+    basic_finaliser.logger.info.reset_mock()
+    
     result_allow_empty = basic_finaliser.prompt_user_bool(PROMPT_MSG, allow_empty=True)
     result_not_allow_empty = basic_finaliser.prompt_user_bool(PROMPT_MSG, allow_empty=False)
 
     assert result_allow_empty is True
     assert result_not_allow_empty is True
     mock_input.assert_not_called() # Should not prompt
-    basic_finaliser.logger.info.assert_any_call(f"Non-interactive mode, automatically answering yes to: {PROMPT_MSG}")
+    
+    # Check that the specific message was called (there should be 2 calls, one for each prompt)
+    expected_call = f"Non-interactive mode, automatically answering yes to: {PROMPT_MSG}"
+    info_calls = [call[0][0] for call in basic_finaliser.logger.info.call_args_list]
+    assert info_calls.count(expected_call) == 2
 
 # --- prompt_user_confirmation_or_raise_exception Tests ---
 
@@ -80,6 +88,10 @@ def test_prompt_confirmation_failure_raises(mock_prompt_bool, basic_finaliser):
 def test_prompt_confirmation_non_interactive(mock_prompt_bool, basic_finaliser):
     """Test confirmation is bypassed in non-interactive mode."""
     basic_finaliser.non_interactive = True # Ensure non-interactive
+    
+    # Clear any previous logger calls from initialization
+    basic_finaliser.logger.info.reset_mock()
+    
     # No exception should be raised
     try:
         basic_finaliser.prompt_user_confirmation_or_raise_exception(PROMPT_MSG, EXIT_MSG)
@@ -87,4 +99,7 @@ def test_prompt_confirmation_non_interactive(mock_prompt_bool, basic_finaliser):
         pytest.fail(f"Should not have raised exception: {e}")
 
     mock_prompt_bool.assert_not_called() # Prompt should be skipped
-    basic_finaliser.logger.info.assert_called_once_with(f"Non-interactive mode, automatically confirming: {PROMPT_MSG}")
+    
+    # Check that the specific message was called
+    expected_message = f"Non-interactive mode, automatically confirming: {PROMPT_MSG}"
+    basic_finaliser.logger.info.assert_called_once_with(expected_message)

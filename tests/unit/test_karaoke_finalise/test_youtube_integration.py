@@ -51,11 +51,12 @@ def mock_youtube_service():
 def mock_google_auth():
     """Fixture to mock Google auth dependencies."""
     # Patch build, pickle, os.path, and Request. Flow is patched in specific tests.
-    with patch('karaoke_gen.karaoke_finalise.karaoke_finalise.build') as mock_build, \
+    with patch('googleapiclient.discovery.build') as mock_build, \
          patch('pickle.dump') as mock_pickle_dump, \
          patch('pickle.load') as mock_pickle_load, \
          patch('os.path.exists') as mock_path_exists, \
-         patch('google.auth.transport.requests.Request') as mock_request:
+         patch('google.auth.transport.requests.Request') as mock_request, \
+         patch('googleapiclient.discovery._retrieve_discovery_doc') as mock_retrieve_doc:
 
         # Mock credentials object centrally
         mock_credentials = MagicMock()
@@ -64,6 +65,9 @@ def mock_google_auth():
         mock_credentials.refresh_token = "fake_refresh_token"
         # Mock the refresh method on the credentials object itself
         mock_credentials.refresh = MagicMock()
+        
+        # Mock the discovery document retrieval to avoid file access issues
+        mock_retrieve_doc.return_value = '{"kind": "discovery#restDescription", "name": "youtube", "version": "v3", "rootUrl": "https://www.googleapis.com/", "servicePath": "youtube/v3/"}'
 
         # Yield the necessary mocks for tests to use
         yield {
@@ -73,6 +77,7 @@ def mock_google_auth():
             "mock_pickle_load": mock_pickle_load,
             "mock_path_exists": mock_path_exists,
             "mock_credentials": mock_credentials,
+            "mock_retrieve_doc": mock_retrieve_doc,
         }
 
 # --- Truncate Title Test ---
@@ -105,24 +110,27 @@ def test_truncate_to_nearest_word(basic_finaliser):
 @patch('karaoke_gen.karaoke_finalise.karaoke_finalise.InstalledAppFlow.from_client_secrets_file')
 @patch("builtins.open")
 def test_authenticate_youtube_new_token(mock_open, mock_from_secrets, finaliser_for_yt, mock_google_auth, mock_youtube_service):
-    """Test authentication flow when no token file exists."""
+    """Test authentication flow when no token file exists in interactive mode."""
+    # Ensure interactive mode
+    finaliser_for_yt.non_interactive = False
+    
     mock_google_auth["mock_path_exists"].return_value = False # Token file doesn't exist
     mock_google_auth["mock_build"].return_value = mock_youtube_service
 
-    # Configure mock_open side_effect to handle both secrets read and token write
+    # Configure mock_open side_effect to handle various file accesses
     mock_token_handle = mock_open().return_value
-    # The real from_client_secrets_file will call open(secrets_file, 'r') internally.
-    # We only need to mock the open(token_file, 'wb') call.
-    # Let other calls pass through to the default mock_open behavior.
     def open_side_effect(file, mode='r', *args, **kwargs):
         if file == YOUTUBE_TOKEN_FILE and mode == 'wb':
             return mock_token_handle
         # For the secrets file read, return a default mock handle
-        # (the content doesn't matter as from_client_secrets_file is mocked)
         elif file == YOUTUBE_SECRETS_FILE and mode == 'r':
-             return mock_open().return_value # Default mock handle
-        # Raise error for unexpected calls
-        raise ValueError(f"Unexpected call to open: {file}, {mode}")
+             return mock_open().return_value
+        # Handle Google API discovery document reads
+        elif file.endswith('.json') and 'discovery_cache' in file:
+            return mock_open(read_data='{"kind": "discovery#restDescription"}').return_value
+        # For any other file access, return a default mock handle
+        else:
+            return mock_open().return_value
     mock_open.side_effect = open_side_effect
 
     # Mock the flow instance that from_client_secrets_file returns
@@ -156,7 +164,10 @@ def test_authenticate_youtube_new_token(mock_open, mock_from_secrets, finaliser_
 
 # No patch for open needed here, rely on pickle.load patch from fixture
 def test_authenticate_youtube_load_valid_token(finaliser_for_yt, mock_google_auth, mock_youtube_service):
-    """Test authentication using a valid existing token file."""
+    """Test authentication using a valid existing token file in interactive mode."""
+    # Ensure interactive mode
+    finaliser_for_yt.non_interactive = False
+    
     mock_google_auth["mock_path_exists"].return_value = True # Token file exists
     # Configure pickle.load to return credentials when path exists
     mock_google_auth["mock_pickle_load"].side_effect = None # Remove FileNotFoundError side effect
@@ -184,7 +195,10 @@ def test_authenticate_youtube_load_valid_token(finaliser_for_yt, mock_google_aut
 
 # No patch for open needed for read, patch only for write
 def test_authenticate_youtube_refresh_token(finaliser_for_yt, mock_google_auth, mock_youtube_service):
-    """Test authentication refreshing an expired token."""
+    """Test authentication refreshing an expired token in interactive mode."""
+    # Ensure interactive mode
+    finaliser_for_yt.non_interactive = False
+    
     mock_google_auth["mock_path_exists"].return_value = True # Token file exists
     # Configure pickle.load to return credentials when path exists
     mock_google_auth["mock_pickle_load"].side_effect = None # Remove FileNotFoundError side effect
@@ -220,6 +234,49 @@ def test_authenticate_youtube_refresh_token(finaliser_for_yt, mock_google_auth, 
     assert mock_google_auth["mock_pickle_dump"].call_args[0][0] == mock_google_auth["mock_credentials"] # Check correct object dumped
     mock_google_auth["mock_build"].assert_called_once_with("youtube", "v3", credentials=mock_google_auth["mock_credentials"])
     assert service == mock_youtube_service
+
+def test_authenticate_youtube_non_interactive_no_credentials(finaliser_for_yt):
+    """Test authentication fails in non-interactive mode without pre-stored credentials."""
+    finaliser_for_yt.non_interactive = True
+    finaliser_for_yt.user_youtube_credentials = None
+    
+    with pytest.raises(Exception, match="YouTube authentication required but running in non-interactive mode"):
+        finaliser_for_yt.authenticate_youtube()
+
+def test_authenticate_youtube_non_interactive_with_credentials(finaliser_for_yt, mock_google_auth, mock_youtube_service):
+    """Test authentication succeeds in non-interactive mode with pre-stored credentials."""
+    finaliser_for_yt.non_interactive = True
+    finaliser_for_yt.user_youtube_credentials = {
+        'token': 'fake_token',
+        'refresh_token': 'fake_refresh_token',
+        'token_uri': 'https://oauth2.googleapis.com/token',
+        'client_id': 'fake_client_id',
+        'client_secret': 'fake_client_secret',
+        'scopes': ['https://www.googleapis.com/auth/youtube']
+    }
+    
+    mock_google_auth["mock_build"].return_value = mock_youtube_service
+    
+    with patch('google.oauth2.credentials.Credentials') as mock_creds_class:
+        mock_creds_instance = MagicMock()
+        mock_creds_instance.expired = False
+        mock_creds_class.return_value = mock_creds_instance
+        
+        service = finaliser_for_yt.authenticate_youtube()
+        
+        # Check that Credentials was created with the right parameters
+        mock_creds_class.assert_called_once_with(
+            token='fake_token',
+            refresh_token='fake_refresh_token',
+            token_uri='https://oauth2.googleapis.com/token',
+            client_id='fake_client_id',
+            client_secret='fake_client_secret',
+            scopes=['https://www.googleapis.com/auth/youtube']
+        )
+        
+        # Check that the service was built with the credentials
+        mock_google_auth["mock_build"].assert_called_once_with('youtube', 'v3', credentials=mock_creds_instance)
+        assert service == mock_youtube_service
 
 # --- Channel ID / Video Check Tests ---
 

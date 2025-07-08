@@ -1094,9 +1094,6 @@ class KaraokeFinalise:
             self.logger.debug(f"Running command: {rclone_list_cmd}")
             result = subprocess.run(rclone_list_cmd, shell=True, check=True, capture_output=True, text=True)
             
-            # rclone lsf --dirs-only outputs one directory name per line, with trailing slash
-            self.logger.debug(f"rclone lsf --dirs-only raw output:\n{result.stdout}")
-            
             # Parse the output to find matching directories
             matching_dirs = []
             for line_num, line in enumerate(result.stdout.strip().split('\n')):
@@ -1114,8 +1111,6 @@ class KaraokeFinalise:
                         self.logger.debug(f"Found matching directory: '{dir_name}' with number {num}")
 
             self.logger.info(f"Found {len(matching_dirs)} matching directories with pattern {self.brand_prefix}-XXXX")
-            for dir_name, num in matching_dirs:
-                self.logger.debug(f"  {dir_name} -> {num}")
 
             next_seq_number = max_num + 1
             brand_code = f"{self.brand_prefix}-{next_seq_number:04d}"

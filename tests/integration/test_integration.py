@@ -386,11 +386,8 @@ async def test_full_cli_integration(tmp_path, mocker):
                 # Log traceback for unexpected errors during subprocess execution
                 import traceback
                 print(traceback.format_exc())
-                # Reraise or return an error code/object depending on context
-                if isinstance(cmd_arg, str):
-                    return 1
-                else: # For subprocess.run mocks
-                    return subprocess.CompletedProcess(args=cmd_arg if isinstance(cmd_arg, list) else [cmd_arg], returncode=1, stderr=str(e))
+                # Return appropriate error object based on calling context
+                return subprocess.CompletedProcess(args=cmd_arg if isinstance(cmd_arg, list) else [cmd_arg], returncode=1, stderr=str(e))
 
         # --- Rclone commands to mock ---
         # Rclone link (string from os.system OR subprocess.run with shell=True)
@@ -409,28 +406,33 @@ async def test_full_cli_integration(tmp_path, mocker):
              print(f"SIDE_EFFECT: Mocking rclone link (list cmd): {cmd_str}")
              return subprocess.CompletedProcess(args=cmd_arg, returncode=0, stdout="https://fake.sharing.link/mock_folder", stderr="")
 
-        # Rclone sync (string for os.system OR subprocess.run with shell=True)
-        elif isinstance(cmd_arg, str) and cmd_arg.startswith('rclone sync'):
-             print(f"SIDE_EFFECT: Mocking rclone sync (string cmd): {cmd_str}")
+        # Rclone sync/copy (string for os.system OR subprocess.run with shell=True)
+        elif isinstance(cmd_arg, str) and (cmd_arg.startswith('rclone sync') or cmd_arg.startswith('rclone copy')):
+             print(f"SIDE_EFFECT: Mocking rclone sync/copy (string cmd): {cmd_str}")
              is_subprocess_run = not kwargs.get('_os_system_call', False)
              if is_subprocess_run:
                 return subprocess.CompletedProcess(args=cmd_arg, returncode=0, stdout="", stderr="")
              else: # Assume os.system call
                 return 0 # Simulate success code
 
-        # Rclone sync (list for subprocess.run without shell=True)
-        elif isinstance(cmd_arg, list) and cmd_arg[0:2] == ['rclone', 'sync']:
-             print(f"SIDE_EFFECT: Mocking rclone sync (list cmd): {cmd_str}")
+        # Rclone sync/copy (list for subprocess.run without shell=True)
+        elif isinstance(cmd_arg, list) and len(cmd_arg) >= 2 and cmd_arg[0] == 'rclone' and cmd_arg[1] in ['sync', 'copy']:
+             print(f"SIDE_EFFECT: Mocking rclone sync/copy (list cmd): {cmd_str}")
              return subprocess.CompletedProcess(args=cmd_arg, returncode=0, stdout="", stderr="")
 
         # --- Default mock behavior for other commands (like 'open -a Audacity') ---
         print(f"SIDE_EFFECT: Default mock return for unhandled command: {cmd_str}")
-        if isinstance(cmd_arg, list): # Likely from subprocess.run
+        # Check if this is a subprocess.run call by checking the _os_system_call flag
+        is_subprocess_run = not kwargs.get('_os_system_call', False)
+        
+        if is_subprocess_run:
+            # For subprocess.run, always return CompletedProcess
             # Check if check=True was passed, raise if so, otherwise return success
             if kwargs.get('check'):
                  raise subprocess.CalledProcessError(returncode=1, cmd=cmd_arg, stderr="Mocked process failed check")
-            return subprocess.CompletedProcess(args=cmd_arg, returncode=0, stdout="", stderr="")
-        else: # Likely from os.system
+            return subprocess.CompletedProcess(args=cmd_arg if isinstance(cmd_arg, list) else [cmd_arg], returncode=0, stdout="", stderr="")
+        else: 
+            # For os.system, return integer exit code
             return 0 # Default success code
 
     # We need to differentiate calls to the side effect from os.system vs subprocess.run
