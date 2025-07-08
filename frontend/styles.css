@@ -674,15 +674,24 @@ body {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    width: 30%;
-    min-width: 200px;
+    width: 280px; /* Fixed width instead of percentage */
+    min-width: 280px; /* Ensure minimum width */
+    max-width: 280px; /* Prevent width from growing */
     flex-shrink: 0;
+    align-items: flex-start; /* Left-align buttons */
 }
 
 .job-actions .btn {
     padding: 0.4rem 0.6rem;
     font-size: 0.75rem;
     white-space: nowrap;
+    text-align: left; /* Ensure text is left-aligned */
+    justify-content: flex-start; /* Left-align button content */
+    width: 100%; /* Make buttons take full width of container */
+    max-width: 100%; /* Prevent buttons from exceeding container */
+    box-sizing: border-box; /* Include padding in width calculation */
+    overflow: hidden; /* Prevent text overflow */
+    text-overflow: ellipsis; /* Add ellipsis for long text */
 }
 
 .log-entry {
@@ -1375,17 +1384,31 @@ body {
     }
     
     .job-actions {
+        border-left: none;
+        border-top: 1px solid var(--border-color);
+        flex-direction: row;
         flex-wrap: wrap;
-        justify-content: stretch;
+        justify-content: flex-start; /* Left-align buttons on mobile */
         gap: 0.5rem;
         margin-top: 0.5rem;
+        width: 100%; /* Full width on mobile */
+        min-width: auto; /* Remove min-width constraint on mobile */
+        max-width: none; /* Remove max-width constraint on mobile */
+        align-items: flex-start; /* Keep left alignment */
+        padding: 0.75rem;
     }
     
     .job-actions .btn {
-        flex: 1;
-        min-width: 0;
-        font-size: 0.8rem;
-        padding: 0.5rem 0.75rem;
+        flex: 1 1 auto; /* Allow buttons to grow and shrink */
+        min-width: 100px; /* Reasonable minimum width for mobile */
+        max-width: 200px; /* Prevent buttons from getting too wide */
+        font-size: 0.75rem;
+        padding: 0.6rem 0.4rem;
+        text-align: center;
+        white-space: nowrap; /* Prevent text wrapping */
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.3; /* Better line height for mobile */
     }
     
     .modal-content {
