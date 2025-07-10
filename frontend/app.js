@@ -5363,8 +5363,8 @@ async function confirmInstrumentalSelection() {
         return;
     }
     
-    // Close the instrumental selection modal first
-    closeInstrumentalSelectionModal();
+    // Hide the instrumental selection modal without resetting state
+    hideInstrumentalSelectionModal();
     
     // Show YouTube upload confirmation modal
     showYouTubeUploadConfirmationModal();
@@ -5539,6 +5539,11 @@ async function completeFinalizationWithYouTube(uploadToYoutube) {
             
             // Refresh jobs to show updated status
             await loadJobs();
+            
+            // Reset state after successful completion
+            selectedInstrumental = null;
+            currentReviewData = null;
+            window.currentInstrumentalJobId = null;
         } else {
             const error = await response.json();
             showError('Error processing request: ' + error.detail);
@@ -5555,6 +5560,11 @@ function closeYouTubeUploadModal() {
     if (modal) {
         modal.remove();
     }
+    
+    // Reset state when YouTube upload modal is closed
+    selectedInstrumental = null;
+    currentReviewData = null;
+    window.currentInstrumentalJobId = null;
 }
 
 async function authenticateYouTubeAndUpdateConfirm() {
@@ -5590,6 +5600,14 @@ async function authenticateYouTubeAndUpdateConfirm() {
             authBtn.textContent = originalText;
         }
     }
+}
+
+function hideInstrumentalSelectionModal() {
+    const modal = document.getElementById('instrumental-selection-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+    // Note: We don't reset state here - this is used when transitioning between modals
 }
 
 function closeInstrumentalSelectionModal() {
