@@ -9,6 +9,13 @@ let logFontSizeIndex = 2; // Default to 'font-md'
 let autoScrollEnabled = false;
 let currentUser = null; // Store current user authentication data
 
+// Global variables for instrumental selection
+let currentJobId = null;
+let selectedInstrumental = null;
+let currentAudioPlayer = null;
+let currentVisualizationMode = 'waveform'; // 'waveform' or 'spectrogram'
+let visualizationCache = new Map(); // Cache for loaded waveforms/spectrograms
+
 // Notification state tracking
 let previousJobStates = new Map(); // Track previous states to detect changes
 let notificationAudio = null; // Audio object for notification sounds
@@ -4092,11 +4099,19 @@ function showError(message) {
     showNotification(message, 'error');
 }
 
-function showInfo(message) {
-    showNotification(message, 'info');
+function showInfo(message, timeout = 5000) {
+    showNotification(message, 'info', timeout);
 }
 
-function showNotification(message, type) {
+function hideInfo() {
+    // Hide any currently displayed info notifications
+    const notifications = document.querySelectorAll('.notification.info');
+    notifications.forEach(notification => {
+        notification.remove();
+    });
+}
+
+function showNotification(message, type, timeout = 5000) {
     // Create notification element
     const notification = document.createElement('div');
     notification.className = `notification notification-${type}`;
@@ -4111,10 +4126,10 @@ function showNotification(message, type) {
         document.body.appendChild(notification);
     }
     
-    // Auto-remove after 5 seconds (increased from 3 for better UX)
+    // Auto-remove after specified timeout
     setTimeout(() => {
         notification.remove();
-    }, 5000);
+    }, timeout);
 }
 
 // Font size and scroll control functions
@@ -4683,126 +4698,656 @@ function closeAudioPreview() {
 }
 
 // Instrumental Selection Modal Functions
-let selectedInstrumental = null;
 let currentReviewData = null;
 
 async function showInstrumentalSelectionModal(jobId, correctedData) {
     try {
         currentJobId = jobId;
-        currentCorrectedData = correctedData;
         
-        // Show the modal
-        document.getElementById('instrumental-selection-modal').style.display = 'flex';
+        showInfo('Loading instrumental options...');
         
-        // Load instrumental options
         const response = await authenticatedFetch(`${API_BASE_URL}/corrections/${jobId}/instrumentals`);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to load instrumentals: ${response.status} ${response.statusText}`);
+        }
+        
         const data = await response.json();
         
-        if (data.instrumentals && data.instrumentals.length > 0) {
+        // Show the modal
+        const modal = document.getElementById('instrumental-selection-modal');
+        modal.style.display = 'flex';
+        
+        // Display the options with enhanced visualization
             displayInstrumentalOptions(data.instrumentals);
-        } else {
-            document.getElementById('instrumental-selection-content').innerHTML = `
-                <div class="no-instrumentals">
-                    <h3>❌ No Instrumental Files Found</h3>
-                    <p>No instrumental audio files were generated during processing. This may indicate an issue with audio separation.</p>
-                    <p>You can still proceed with finalization, but no instrumental will be used for the final video.</p>
-                </div>
-            `;
-            
-            // Enable the confirm button even without instrumentals
-            updateConfirmInstrumentalButton();
-        }
+        
+        // Store corrected data for later use
+        window.currentCorrectedData = correctedData;
+        
+        showSuccess(`Found ${data.instrumentals.length} instrumental options`);
         
     } catch (error) {
         console.error('Error loading instrumental options:', error);
-        showError('Failed to load instrumental options');
-        
-        document.getElementById('instrumental-selection-content').innerHTML = `
-            <div class="no-instrumentals">
-                <h3>❌ Error Loading Instrumentals</h3>
-                <p>Failed to load instrumental options: ${error.message}</p>
-                <p>You can still proceed with finalization.</p>
-            </div>
-        `;
-        
-        // Enable the confirm button even with errors
-        updateConfirmInstrumentalButton();
+        showError(`Failed to load instrumental options: ${error.message}`);
     }
 }
 
 function displayInstrumentalOptions(instrumentals) {
-    const content = document.getElementById('instrumental-selection-content');
+    const container = document.getElementById('instrumental-selection-content');
     
     if (!instrumentals || instrumentals.length === 0) {
-        content.innerHTML = `
-            <div class="no-instrumentals">
-                No instrumental files found. This might indicate an issue with the audio separation process.
-            </div>
-        `;
+        container.innerHTML = '<div class="no-instrumentals">No instrumental files found for this job.</div>';
         return;
     }
     
-    let html = '<div class="instrumental-options">';
+    // Create visualization mode toggle
+    const modeToggleHtml = `
+        <div class="visualization-mode-toggle">
+            <div class="mode-toggle-header">
+                <h4>🎵 Visualization Mode</h4>
+                <div class="mode-toggle-buttons">
+                    <button id="waveform-mode-btn" class="mode-toggle-btn active" onclick="switchVisualizationMode('waveform')">
+                        📊 Waveform
+                    </button>
+                    <button id="spectrogram-mode-btn" class="mode-toggle-btn" onclick="switchVisualizationMode('spectrogram')">
+                        🌈 Spectrogram
+                    </button>
+                </div>
+            </div>
+            <div class="mode-description">
+                <span id="mode-description-text">Waveform shows the audio amplitude over time - easier to see structure and timing</span>
+            </div>
+        </div>
+    `;
     
-    instrumentals.forEach((instrumental, index) => {
-        const isRecommended = instrumental.recommended;
-        const optionClasses = ['instrumental-option'];
-        
-        if (isRecommended) {
-            optionClasses.push('recommended');
-            // Auto-select the recommended option
-            if (!selectedInstrumental) {
-                selectedInstrumental = instrumental.filename;
-                optionClasses.push('selected');
-            }
-        }
-        
-        html += `
-            <div class="${optionClasses.join(' ')}" onclick="selectInstrumental('${escapeHtml(instrumental.filename)}', this)" data-filename="${escapeHtml(instrumental.filename)}">
+    const optionsHtml = instrumentals.map(instrumental => createInstrumentalOptionHtml(instrumental)).join('');
+    
+    container.innerHTML = `
+        ${modeToggleHtml}
+        <div class="instrumental-options">
+            ${optionsHtml}
+        </div>
+    `;
+    
+    // Initialize visualizations for all instrumentals
+    setTimeout(() => {
+        initializeAllVisualizations(instrumentals);
+    }, 100);
+}
+
+function createInstrumentalOptionHtml(instrumental) {
+    const recommendedBadge = instrumental.recommended ? '<span class="recommended-badge">⭐ RECOMMENDED</span>' : '';
+    
+    return `
+        <div class="instrumental-option ${instrumental.recommended ? 'recommended' : ''}" 
+             data-filename="${instrumental.filename}" 
+             onclick="selectInstrumental('${instrumental.filename}', this)">
+            
+            ${recommendedBadge}
+            
                 <div class="instrumental-header">
                     <div class="instrumental-title">
                         <div class="instrumental-type">${instrumental.type}</div>
+                    <div class="instrumental-filename">${instrumental.filename}</div>
                     </div>
                     <div class="instrumental-controls">
                         <div class="audio-preview-controls">
-                            <audio class="audio-preview-player" controls preload="none">
-                                <source src="${API_BASE_URL}${instrumental.audio_url}" type="audio/flac">
-                                Your browser does not support the audio element.
-                            </audio>
+                        <audio class="audio-preview-player" 
+                               data-filename="${instrumental.filename}"
+                               controls preload="none"
+                               ontimeupdate="updateVisualizationPlayhead('${instrumental.filename}', this.currentTime, this.duration)">
+                            <!-- Audio source will be added after visualizations load -->
+                            Your browser does not support the audio element.
+                        </audio>
                         </div>
                     </div>
                 </div>
+            
                 <div class="instrumental-description">${instrumental.description}</div>
+            
+            <!-- Main Instrumental Visualization -->
+            <div class="visualization-container" data-filename="${instrumental.filename}">
+                <div class="visualization-header">
+                    <div class="visualization-title">
+                        <span class="visualization-label">🎵 Main Track</span>
+                        <span class="visualization-loading" id="viz-loading-${instrumental.filename.replace(/[^a-zA-Z0-9]/g, '_')}">Loading visualization...</span>
+                    </div>
+                </div>
+                
+                <div class="visualization-display" id="viz-display-${instrumental.filename.replace(/[^a-zA-Z0-9]/g, '_')}">
+                    <div class="visualization-image-container">
+                        <canvas class="visualization-canvas" id="viz-canvas-${instrumental.filename.replace(/[^a-zA-Z0-9]/g, '_')}" 
+                                width="800" height="200"></canvas>
+                        <div class="playhead-overlay" id="playhead-${instrumental.filename.replace(/[^a-zA-Z0-9]/g, '_')}">
+                            <div class="playhead-line"></div>
+                            <div class="playhead-time">0:00</div>
+                        </div>
+                        <div class="timeline-clicks" id="timeline-${instrumental.filename.replace(/[^a-zA-Z0-9]/g, '_')}" 
+                             onclick="seekToPosition('${instrumental.filename}', event)"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Backing Vocals Visualization (if available) -->
+            ${instrumental.backing_vocals_file ? createBackingVocalsVisualizationHtml(instrumental) : ''}
+            
                 <div class="instrumental-metadata">
                     <div class="instrumental-size">${instrumental.size_mb} MB</div>
                 </div>
             </div>
         `;
+}
+
+function createBackingVocalsVisualizationHtml(instrumental) {
+    const backingVocalsId = instrumental.backing_vocals_file.replace(/[^a-zA-Z0-9]/g, '_');
+    
+    return `
+        <div class="backing-vocals-section">
+            <div class="backing-vocals-header">
+                <div class="backing-vocals-title">
+                    <span class="visualization-label">🎤 Backing Vocals Track</span>
+                    <span class="backing-vocals-info">(Used to create this instrumental)</span>
+                </div>
+                <div class="backing-vocals-controls">
+                    <audio class="audio-preview-player backing-vocals-player" 
+                           data-filename="${instrumental.backing_vocals_file}"
+                           controls preload="none"
+                           ontimeupdate="updateVisualizationPlayhead('${instrumental.backing_vocals_file}', this.currentTime, this.duration)">
+                        <!-- Audio source will be added after visualizations load -->
+                        Your browser does not support the audio element.
+                    </audio>
+                </div>
+            </div>
+            
+            <div class="visualization-container backing-vocals-viz" data-filename="${instrumental.backing_vocals_file}">
+                <div class="visualization-loading" id="bv-loading-${backingVocalsId}">Loading backing vocals visualization...</div>
+                
+                <div class="visualization-display" id="bv-display-${backingVocalsId}" style="display: none;">
+                    <div class="visualization-image-container">
+                        <canvas class="visualization-canvas" id="bv-canvas-${backingVocalsId}" 
+                                width="800" height="150"></canvas>
+                        <div class="playhead-overlay" id="bv-playhead-${backingVocalsId}">
+                            <div class="playhead-line"></div>
+                            <div class="playhead-time">0:00</div>
+                        </div>
+                        <div class="timeline-clicks" id="bv-timeline-${backingVocalsId}" 
+                             onclick="seekToBackingVocalsPosition('${instrumental.backing_vocals_file}', event)"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function switchVisualizationMode(mode) {
+    currentVisualizationMode = mode;
+    
+    // Update toggle buttons
+    document.getElementById('waveform-mode-btn').classList.toggle('active', mode === 'waveform');
+    document.getElementById('spectrogram-mode-btn').classList.toggle('active', mode === 'spectrogram');
+    
+    // Update description
+    const description = mode === 'waveform' 
+        ? 'Waveform shows the audio amplitude over time - easier to see structure and timing'
+        : 'Spectrogram shows frequency content over time - better for analyzing harmony and vocals';
+    
+    document.getElementById('mode-description-text').textContent = description;
+    
+    // Switch visualizations using cached data
+    const instrumentalOptions = document.querySelectorAll('.instrumental-option');
+    instrumentalOptions.forEach(async (option) => {
+        const filename = option.dataset.filename;
+        if (filename) {
+            await switchCachedVisualization(filename, 'instrumental');
+        }
+        
+        // Also switch backing vocals if present
+        const backingVocalsSection = option.querySelector('.backing-vocals-section');
+        if (backingVocalsSection) {
+            const backingVocalsContainer = backingVocalsSection.querySelector('.visualization-container');
+            const backingVocalsFilename = backingVocalsContainer.dataset.filename;
+            if (backingVocalsFilename) {
+                await switchCachedVisualization(backingVocalsFilename, 'backing_vocals');
+            }
+        }
     });
     
-    html += '</div>';
-    content.innerHTML = html;
+    showInfo(`Switched to ${mode} visualization mode`);
+}
+
+async function switchCachedVisualization(filename, fileType) {
+    const cacheKey = `${filename}-${currentVisualizationMode}`;
+    const cachedData = visualizationCache.get(cacheKey);
     
-    // Update confirmation button state
-    updateConfirmInstrumentalButton();
+    if (cachedData) {
+        // Use cached data
+        renderVisualizationForFile(filename, fileType, cachedData);
+    } else {
+        // Data not in cache, try to load it
+        const safeId = filename.replace(/[^a-zA-Z0-9]/g, '_');
+        let loadingElement;
+        
+        if (fileType === 'backing_vocals') {
+            loadingElement = document.getElementById(`bv-loading-${safeId}`);
+        } else {
+            loadingElement = document.getElementById(`viz-loading-${safeId}`);
+        }
+        
+        if (loadingElement) {
+            loadingElement.style.display = 'block';
+            loadingElement.textContent = `Loading ${currentVisualizationMode}...`;
+            loadingElement.style.color = '';
+        }
+        
+        try {
+            // Attempt to load the visualization data
+            await loadVisualizationData(filename, currentVisualizationMode);
+            const newCachedData = visualizationCache.get(cacheKey);
+            if (newCachedData) {
+                renderVisualizationForFile(filename, fileType, newCachedData);
+            }
+        } catch (error) {
+            console.error(`Error loading ${currentVisualizationMode} for ${filename}:`, error);
+            if (loadingElement) {
+                loadingElement.textContent = `Failed to load ${currentVisualizationMode}`;
+                loadingElement.style.color = '#ef4444';
+            }
+        }
+    }
+}
+
+async function initializeAllVisualizations(instrumentals) {
+    try {
+        // Use batch generation to avoid file locking issues
+        await generateAllVisualizations(currentJobId);
+        console.log('All visualizations loaded successfully');
+        
+    } catch (error) {
+        console.error('Error loading visualizations:', error);
+        showError('Some visualizations failed to load');
+    }
+}
+
+async function generateAllVisualizations(jobId) {
+    try {
+        showInfo('Loading pre-generated visualizations...');
+        
+        // Visualizations are now pre-generated during Phase 2 processing
+        // Just load them individually for each instrumental
+        const instrumentalElements = document.querySelectorAll('.instrumental-option');
+        
+        const loadPromises = Array.from(instrumentalElements).map(async (element) => {
+            const filename = element.dataset.filename;
+            if (filename) {
+                // Load main instrumental visualization
+                await loadVisualizationForInstrumental(filename);
+                
+                // Check for backing vocals
+                const backingVocalsElement = element.querySelector('.backing-vocals-viz');
+                if (backingVocalsElement) {
+                    const backingVocalsFilename = backingVocalsElement.dataset.filename;
+                    if (backingVocalsFilename) {
+                        await loadBackingVocalsVisualization(backingVocalsFilename);
+                    }
+                }
+            }
+        });
+        
+        await Promise.all(loadPromises);
+        console.log('All pre-generated visualizations loaded successfully');
+        
+        // Enable audio previews now that visualizations are loaded
+        enableAudioPreviews();
+        
+        hideInfo();
+        showSuccess('Visualizations loaded successfully');
+        
+    } catch (error) {
+        console.error('Error loading visualizations:', error);
+        hideInfo();
+        showError(`Failed to load visualizations: ${error.message}`);
+        // Don't throw - we can still show the modal without visualizations
+    }
+}
+
+function renderVisualizationForFile(filename, fileType, visualizationData) {
+    const safeId = filename.replace(/[^a-zA-Z0-9]/g, '_');
+    
+    let canvasElement, loadingElement, displayElement;
+    
+    if (fileType === 'backing_vocals') {
+        // Backing vocals visualization
+        canvasElement = document.getElementById(`bv-canvas-${safeId}`);
+        loadingElement = document.getElementById(`bv-loading-${safeId}`);
+        displayElement = document.getElementById(`bv-display-${safeId}`);
+    } else {
+        // Main instrumental visualization
+        canvasElement = document.getElementById(`viz-canvas-${safeId}`);
+        loadingElement = document.getElementById(`viz-loading-${safeId}`);
+        displayElement = document.getElementById(`viz-display-${safeId}`);
+    }
+    
+    if (!canvasElement) {
+        console.warn(`Canvas not found for ${filename} (${fileType})`);
+        return;
+    }
+    
+    try {
+        // Render to canvas
+        renderVisualizationToCanvas(canvasElement, visualizationData);
+        
+        // Hide loading, show display
+        if (loadingElement) loadingElement.style.display = 'none';
+        if (displayElement) displayElement.style.display = 'block';
+        
+    } catch (error) {
+        console.error(`Error rendering visualization for ${filename}:`, error);
+        
+        if (loadingElement) {
+            loadingElement.textContent = `Failed to load visualization`;
+            loadingElement.style.color = '#ef4444';
+        }
+    }
+}
+
+function enableAudioPreviews() {
+    try {
+        console.log('Enabling audio previews after visualization completion');
+        showInfo('Setting up audio previews...', 1500);
+        
+        // Enable main instrumental audio previews
+        const instrumentalAudioElements = document.querySelectorAll('.audio-preview-player:not(.backing-vocals-player)');
+        instrumentalAudioElements.forEach(audio => {
+            const filename = audio.dataset.filename;
+            if (filename && !audio.querySelector('source')) {
+                const source = document.createElement('source');
+                source.src = `${API_BASE_URL}/corrections/${currentJobId}/instrumental-preview/${filename}`;
+                source.type = 'audio/flac';
+                audio.appendChild(source);
+                
+                // Load the audio now that the source is set
+                audio.load();
+                
+                console.log(`Enabled audio preview for: ${filename}`);
+            }
+        });
+        
+        // Enable backing vocals audio previews
+        const backingVocalsAudioElements = document.querySelectorAll('.backing-vocals-player');
+        backingVocalsAudioElements.forEach(audio => {
+            const filename = audio.dataset.filename;
+            if (filename && !audio.querySelector('source')) {
+                const source = document.createElement('source');
+                source.src = `${API_BASE_URL}/corrections/${currentJobId}/backing-vocals-preview/${filename}`;
+                source.type = 'audio/flac';
+                audio.appendChild(source);
+                
+                // Load the audio now that the source is set
+                audio.load();
+                
+                console.log(`Enabled backing vocals audio preview for: ${filename}`);
+            }
+        });
+        
+        console.log('All audio previews enabled successfully');
+        showInfo('Audio previews ready - you can now play and compare tracks', 2000);
+        
+    } catch (error) {
+        console.error('Error enabling audio previews:', error);
+        // Don't throw error - audio previews are non-critical
+    }
+}
+
+async function loadVisualizationForInstrumental(filename) {
+    const safeId = filename.replace(/[^a-zA-Z0-9]/g, '_');
+    const loadingElement = document.getElementById(`viz-loading-${safeId}`);
+    const displayElement = document.getElementById(`viz-display-${safeId}`);
+    const canvasElement = document.getElementById(`viz-canvas-${safeId}`);
+    
+    if (!canvasElement) {
+        console.warn(`Canvas not found for ${filename}`);
+        return;
+    }
+    
+    try {
+        // Load both waveform and spectrogram data to cache for smooth switching
+        await Promise.all([
+            loadVisualizationData(filename, 'waveform'),
+            loadVisualizationData(filename, 'spectrogram')
+        ]);
+        
+        // Display the current visualization mode
+        const cacheKey = `${filename}-${currentVisualizationMode}`;
+        if (visualizationCache.has(cacheKey)) {
+            const cachedData = visualizationCache.get(cacheKey);
+            renderVisualizationToCanvas(canvasElement, cachedData);
+            
+            if (loadingElement) loadingElement.style.display = 'none';
+            if (displayElement) displayElement.style.display = 'block';
+        }
+        
+    } catch (error) {
+        console.error(`Error loading visualizations for ${filename}:`, error);
+        
+        if (loadingElement) {
+            loadingElement.textContent = `Failed to load visualizations`;
+            loadingElement.style.color = '#ef4444';
+        }
+    }
+}
+
+async function loadVisualizationData(filename, visualizationType) {
+    try {
+        const cacheKey = `${filename}-${visualizationType}`;
+        
+        // Skip if already cached
+        if (visualizationCache.has(cacheKey)) {
+            return;
+        }
+        
+        // Use unified endpoint for all files
+        const endpoint = `${API_BASE_URL}/corrections/${currentJobId}/visualization/${visualizationType}/${filename}`;
+        
+        const response = await authenticatedFetch(endpoint);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to load ${visualizationType}: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Cache the data
+        visualizationCache.set(cacheKey, data);
+        const fileType = filename.includes('Backing Vocals') ? 'backing vocals' : 'instrumental';
+        console.log(`Cached ${visualizationType} data for ${filename} (${fileType})`);
+        
+    } catch (error) {
+        console.error(`Error loading ${visualizationType} for ${filename}:`, error);
+        // Don't throw - allow other visualization types to load
+    }
+}
+
+async function loadBackingVocalsVisualization(backingVocalsFilename) {
+    const safeId = backingVocalsFilename.replace(/[^a-zA-Z0-9]/g, '_');
+    const loadingElement = document.getElementById(`bv-loading-${safeId}`);
+    const displayElement = document.getElementById(`bv-display-${safeId}`);
+    const canvasElement = document.getElementById(`bv-canvas-${safeId}`);
+    
+    if (!canvasElement) {
+        console.warn(`Backing vocals canvas not found for ${backingVocalsFilename}`);
+        return;
+    }
+    
+    try {
+        // Load both waveform and spectrogram data to cache for smooth switching
+        await Promise.all([
+            loadVisualizationData(backingVocalsFilename, 'waveform'),
+            loadVisualizationData(backingVocalsFilename, 'spectrogram')
+        ]);
+        
+        // Display the current visualization mode
+        const cacheKey = `${backingVocalsFilename}-${currentVisualizationMode}`;
+        if (visualizationCache.has(cacheKey)) {
+            const cachedData = visualizationCache.get(cacheKey);
+            renderVisualizationToCanvas(canvasElement, cachedData);
+            
+            if (loadingElement) loadingElement.style.display = 'none';
+            if (displayElement) displayElement.style.display = 'block';
+        }
+        
+    } catch (error) {
+        console.error(`Error loading backing vocals visualizations for ${backingVocalsFilename}:`, error);
+        
+        if (loadingElement) {
+            loadingElement.textContent = 'Failed to load backing vocals visualizations';
+            loadingElement.style.color = '#ef4444';
+        }
+    }
+}
+
+function renderVisualizationToCanvas(canvas, data) {
+    if (!canvas || !data || !data.waveform_data && !data.spectrogram_data) {
+        console.warn('Invalid canvas or data for rendering');
+        return;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    
+    // Create image from base64 data
+    const img = new Image();
+    img.onload = function() {
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw the visualization image
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        
+        // Store duration for playhead calculations
+        canvas.dataset.duration = data.duration || 0;
+    };
+    
+    // Use appropriate data based on visualization mode
+    const imageData = data.waveform_data || data.spectrogram_data;
+    img.src = `data:image/png;base64,${imageData}`;
+}
+
+function updateVisualizationPlayhead(filename, currentTime, duration) {
+    // Update playhead for main instrumental
+    const safeId = filename.replace(/[^a-zA-Z0-9]/g, '_');
+    
+    // Try both main instrumental and backing vocals playhead elements
+    const playheadElement = document.getElementById(`playhead-${safeId}`) || 
+                          document.getElementById(`bv-playhead-${safeId}`);
+    
+    if (!playheadElement || !duration || duration === 0) {
+        return;
+    }
+    
+    // Calculate position as percentage
+    const position = (currentTime / duration) * 100;
+    
+    // Update playhead line position
+    const playheadLine = playheadElement.querySelector('.playhead-line');
+    if (playheadLine) {
+        playheadLine.style.left = `${position}%`;
+    }
+    
+    // Update time display
+    const playheadTime = playheadElement.querySelector('.playhead-time');
+    if (playheadTime) {
+        const minutes = Math.floor(currentTime / 60);
+        const seconds = Math.floor(currentTime % 60);
+        playheadTime.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        playheadTime.style.left = `${Math.min(position, 90)}%`; // Keep text visible
+    }
+}
+
+function seekToPosition(filename, event) {
+    // Prevent event bubbling to avoid triggering selectInstrumental
+    event.stopPropagation();
+    event.preventDefault();
+    
+    const timelineElement = event.currentTarget;
+    const rect = timelineElement.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    
+    // Calculate percentage with improved accuracy
+    // The backend now generates images with minimal left padding for precise seeking
+    let percentage = clickX / rect.width;
+    
+    // Ensure percentage is within bounds
+    percentage = Math.max(0, Math.min(1, percentage));
+    
+    // Find the corresponding audio player
+    const audioPlayer = document.querySelector(`audio[data-filename="${filename}"]`);
+    if (audioPlayer && audioPlayer.duration) {
+        const newTime = percentage * audioPlayer.duration;
+        audioPlayer.currentTime = newTime;
+        
+        // Start playback automatically
+        audioPlayer.play().catch(error => {
+            console.warn('Could not start playback:', error);
+            // Still update playhead even if playback fails
+            updateVisualizationPlayhead(filename, newTime, audioPlayer.duration);
+        });
+    }
+}
+
+function seekToBackingVocalsPosition(backingVocalsFilename, event) {
+    // Prevent event bubbling to avoid triggering selectInstrumental
+    event.stopPropagation();
+    event.preventDefault();
+    
+    const timelineElement = event.currentTarget;
+    const rect = timelineElement.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    
+    // Calculate percentage with improved accuracy
+    // The backend now generates images with minimal left padding for precise seeking
+    let percentage = clickX / rect.width;
+    
+    // Ensure percentage is within bounds
+    percentage = Math.max(0, Math.min(1, percentage));
+    
+    // Find the corresponding backing vocals audio player
+    const audioPlayer = document.querySelector(`audio[data-filename="${backingVocalsFilename}"]`);
+    if (audioPlayer && audioPlayer.duration) {
+        const newTime = percentage * audioPlayer.duration;
+        audioPlayer.currentTime = newTime;
+        
+        // Start playback automatically
+        audioPlayer.play().catch(error => {
+            console.warn('Could not start backing vocals playback:', error);
+            // Still update playhead even if playback fails
+            updateVisualizationPlayhead(backingVocalsFilename, newTime, audioPlayer.duration);
+        });
+    }
 }
 
 function selectInstrumental(filename, element) {
     // Remove selection from all options
-    const allOptions = document.querySelectorAll('.instrumental-option');
-    allOptions.forEach(option => option.classList.remove('selected'));
+    document.querySelectorAll('.instrumental-option').forEach(opt => {
+        opt.classList.remove('selected');
+    });
     
     // Add selection to clicked option
     element.classList.add('selected');
-    
-    // Store selected instrumental
     selectedInstrumental = filename;
     
-    // Update confirmation button
+    // Update confirm button
     updateConfirmInstrumentalButton();
+    
+    // Pause any currently playing audio
+    document.querySelectorAll('.audio-preview-player').forEach(audio => {
+        if (!audio.paused) {
+            audio.pause();
+        }
+    });
     
     showInfo(`Selected: ${filename}`);
 }
+
+// ... existing code ...
 
 function updateConfirmInstrumentalButton() {
     const confirmBtn = document.getElementById('confirm-instrumental-btn');

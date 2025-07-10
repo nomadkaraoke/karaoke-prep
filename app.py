@@ -5,6 +5,7 @@ This module contains the Modal application structure for running karaoke generat
 as serverless functions with GPU acceleration and API endpoints for the frontend.
 """
 
+import base64
 import modal
 import uuid
 import json
@@ -97,13 +98,14 @@ karaoke_image = (
             "librosa>=0.10",
             "demucs>=4.0.1",
             "psutil>=5.9.0",
+            "matplotlib>=3",
             # FastAPI dependencies
             "fastapi>=0.104.0",
             "uvicorn>=0.24.0",
             "python-multipart>=0.0.7",
             "requests>=2.31.0",
             # Uncomment this line to use the lyrics-transcriber package from PyPI
-            "lyrics-transcriber>=0.61",
+            "lyrics-transcriber>=0.62",
             # To use the local version of lyrics-transcriber, comment out the line above and
             # uncomment the lyrics_transcriber_local "add_local_dir" and "run_commands" lines below
         ]
@@ -805,6 +807,15 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
             shutil.copy2(output_files.lrc, parent_lrc_path)
 
         log_message(job_id, "SUCCESS", f"Video generation completed - ready for instrumental selection")
+
+        # Generate visualizations for instrumental files proactively
+        log_message(job_id, "INFO", "Pre-generating waveform and spectrogram visualizations...")
+        try:
+            generate_visualizations_for_job(job_id, track_output_dir)
+            log_message(job_id, "SUCCESS", "All visualizations pre-generated successfully")
+        except Exception as viz_error:
+            log_message(job_id, "WARNING", f"Failed to pre-generate visualizations: {str(viz_error)}")
+            # Don't fail the whole job if visualization generation fails
 
         # Commit volume changes to persist the "With Vocals" video for Phase 3
         log_message(job_id, "INFO", "Committing volume changes to persist Phase 2 video files...")
@@ -3463,9 +3474,6 @@ async def get_audio_file(job_id: str):
         import shutil
         import tempfile
 
-        # Reload output volume to see latest audio files (no conflicts since previews are in separate volume)
-        output_volume.reload()
-
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -3579,10 +3587,6 @@ async def get_audio_by_hash(job_id: str, audio_hash: str):
     try:
         from pathlib import Path
         import hashlib
-        import shutil
-
-        # Reload output volume to see latest audio files (no conflicts since previews are in separate volume)
-        output_volume.reload()
 
         job_data = job_status_dict.get(job_id)
         if not job_data:
@@ -4533,81 +4537,291 @@ def add_lyrics_source(job_id: str, source: str, lyrics_text: str):
             pass
 
 
-@app.function(
-    image=karaoke_image,
-    volumes=VOLUME_CONFIG,
-    timeout=300,  # 5 minutes for correction processing
-    retries=0,
-)
-def update_correction_handlers(job_id: str, enabled_handlers: List[str]):
-    """Update enabled correction handlers and rerun correction."""
-    import json
-    from pathlib import Path
-    from lyrics_transcriber.types import CorrectionResult
-    from lyrics_transcriber.correction.operations import CorrectionOperations
-
+@api_app.get("/api/corrections/{job_id}/instrumentals")
+async def get_available_instrumentals(job_id: str):
+    """Get list of available instrumental files for a job."""
+    track_output_dir = None  # Initialize to avoid UnboundLocalError
     try:
-        # Set up logging to capture ALL log messages from all modules
-        log_handler = setup_job_logging(job_id)
-        
-        # Reload volume to see files from other containers
-        output_volume.reload()
-
-        log_message(job_id, "INFO", f"Updating correction handlers: {enabled_handlers}")
-
-        # Get job data
         job_data = job_status_dict.get(job_id)
         if not job_data:
-            raise Exception(f"Job {job_id} not found")
+            raise HTTPException(status_code=404, detail="Job not found")
 
-        # Get correction data file path
-        corrections_file_path = job_data.get("corrections_file")
-        if not corrections_file_path:
-            track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
-            artist = job_data.get("artist", "Unknown")
-            title = job_data.get("title", "Unknown")
-            corrections_file_path = str(Path(track_output_dir) / "lyrics" / f"{artist} - {title} (Lyrics Corrections).json")
+        if job_data.get("status") not in ["reviewing", "awaiting_review", "ready_for_finalization"]:
+            raise HTTPException(status_code=400, detail="Job is not ready for instrumental selection")
 
-        # Load current correction data
-        corrections_json_path = Path(corrections_file_path)
-        if not corrections_json_path.exists():
-            raise Exception(f"Corrections data not found at {corrections_json_path}")
+        # Get job details
+        track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
+        track_dir = Path(track_output_dir)
+        stems_dir = track_dir / "stems"
 
-        with open(corrections_json_path, "r") as f:
-            corrections_data = json.load(f)
+        # Find all instrumental files
+        instrumental_files = list(track_dir.glob(f"*Instrumental*.flac"))
 
-        correction_result = CorrectionResult.from_dict(corrections_data)
+        if not instrumental_files:
+            raise HTTPException(status_code=404, detail="No instrumental files found")
 
-        # Use shared operation for updating handlers
-        updated_result = CorrectionOperations.update_correction_handlers(
-            correction_result=correction_result, enabled_handlers=enabled_handlers, cache_dir="/cache", logger=None
+        # Create list of instrumental options with metadata
+        instrumentals = []
+        for inst_file in instrumental_files:
+            try:
+                file_stat = inst_file.stat()
+                file_size_mb = round(file_stat.st_size / 1024 / 1024, 1)
+
+                # Determine instrumental type based on filename
+                filename = inst_file.name
+                instrumental_type = "Unknown"
+                recommended = False
+                description = ""
+                backing_vocals_file = None
+
+                if "+BV" in filename:
+                    instrumental_type = "Instrumental With Backing Vocals"
+                    description = "Typically includes background vocals and harmonies - listen all the way through first to see if this sounds good!"
+                    
+                    # Find corresponding backing vocals file
+                    # Extract model name from instrumental filename
+                    # Pattern: "Artist - Title (Instrumental +BV model).flac"
+                    if "+BV " in filename:
+                        model_part = filename.split("+BV ")[1].replace(").flac", "")
+                        backing_vocals_pattern = f"*Backing Vocals*{model_part}*.flac"
+                        backing_vocals_files = list(stems_dir.glob(backing_vocals_pattern))
+                        if backing_vocals_files:
+                            backing_vocals_file = backing_vocals_files[0].name
+                            
+                elif "model_bs_roformer" in filename:
+                    instrumental_type = "Clean Instrumental"
+                    description = "Pure instrumental without any vocals - safe option if you're not sure"
+                    recommended = True  # Clean instrumental is safest option
+                elif "htdemucs" in filename:
+                    instrumental_type = "Other Stems"
+                    description = "Alternative separation model"
+                    
+                instrumentals.append(
+                    {
+                        "filename": inst_file.name,
+                        "path": str(inst_file.relative_to(track_dir)),
+                        "size_mb": file_size_mb,
+                        "type": instrumental_type,
+                        "description": description,
+                        "recommended": recommended,
+                        "audio_url": f"/corrections/{job_id}/instrumental-preview/{inst_file.name}",
+                        "waveform_url": f"/corrections/{job_id}/waveform/{inst_file.name}",
+                        "spectrogram_url": f"/corrections/{job_id}/spectrogram/{inst_file.name}",
+                        "backing_vocals_file": backing_vocals_file,
+                        "backing_vocals_waveform_url": f"/corrections/{job_id}/backing-vocals-waveform/{backing_vocals_file}" if backing_vocals_file else None,
+                        "backing_vocals_audio_url": f"/corrections/{job_id}/backing-vocals-preview/{backing_vocals_file}" if backing_vocals_file else None,
+                    }
+                )
+
+            except Exception as e:
+                log_message(job_id, "WARNING", f"Error processing instrumental file {inst_file}: {e}")
+                continue
+
+        # Sort instrumentals with recommended first
+        instrumentals.sort(key=lambda x: (not x["recommended"], x["filename"]))
+
+        log_message(job_id, "INFO", f"Found {len(instrumentals)} instrumental options")
+
+        return JSONResponse({"job_id": job_id, "instrumentals": instrumentals, "total_count": len(instrumentals)})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log the error - job_id is always available as function parameter
+        log_message(job_id, "ERROR", f"Error getting instrumentals: {str(e)}")
+        # Add more detailed error information for debugging
+        if track_output_dir:
+            log_message(job_id, "DEBUG", f"Track output directory was: {track_output_dir}")
+        raise HTTPException(status_code=500, detail=f"Error getting instrumentals: {str(e)}")
+
+
+@api_app.get("/api/corrections/{job_id}/visualization/{viz_type}/{filename}")
+async def get_visualization_image(job_id: str, viz_type: str, filename: str):
+    """Return pre-generated visualization image (waveform or spectrogram) for any audio file."""
+    try:
+        # Validate visualization type
+        if viz_type not in ["waveform", "spectrogram"]:
+            raise HTTPException(status_code=400, detail="Invalid visualization type. Must be 'waveform' or 'spectrogram'")
+        
+        # Force multiple volume reloads to ensure we see the latest files
+        output_volume.reload()
+        import time
+        time.sleep(0.1)  # Brief pause to allow volume reload to complete
+        output_volume.reload()
+
+        job_data = job_status_dict.get(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Get job details
+        track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
+        track_dir = Path(track_output_dir)
+        viz_dir = track_dir / "visualizations"
+
+        # Security: only allow flac files
+        if not filename.endswith(".flac"):
+            raise HTTPException(status_code=403, detail="Invalid file type")
+
+        # Generate safe filename for visualization files
+        safe_filename = filename.replace(" ", "_").replace("(", "").replace(")", "").replace("&", "and")
+        viz_file = viz_dir / f"{safe_filename}_{viz_type}.png"
+        metadata_file = viz_dir / f"{safe_filename}_metadata.json"
+
+        log_message(job_id, "DEBUG", f"Looking for {viz_type}: {viz_file}")
+        
+        # Debug: List all files in viz directory to help troubleshoot
+        if viz_dir.exists():
+            all_viz_files = list(viz_dir.glob("*"))
+            log_message(job_id, "DEBUG", f"Files in viz directory: {[f.name for f in all_viz_files]}")
+            
+            # Log the expected vs actual pattern
+            log_message(job_id, "DEBUG", f"Expected pattern: {safe_filename}_{viz_type}.png")
+            log_message(job_id, "DEBUG", f"Original filename: {filename}")
+            log_message(job_id, "DEBUG", f"Safe filename: {safe_filename}")
+            log_message(job_id, "DEBUG", f"Full expected path: {viz_file}")
+            log_message(job_id, "DEBUG", f"File exists check: {viz_file.exists()}")
+            log_message(job_id, "DEBUG", f"Metadata exists check: {metadata_file.exists()}")
+            
+            # Find files that match the pattern partially
+            matching_files = [f.name for f in all_viz_files if safe_filename in f.name and viz_type in f.name]
+            log_message(job_id, "DEBUG", f"Files containing safe_filename and viz_type: {matching_files}")
+        else:
+            log_message(job_id, "DEBUG", f"Visualizations directory does not exist: {viz_dir}")
+
+        if viz_file.exists() and metadata_file.exists():
+            # Serve pre-generated visualization
+            log_message(job_id, "DEBUG", f"Serving pre-generated {viz_type} for {filename}")
+            
+            # Load metadata
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+                duration = metadata.get("duration", 0)
+                sample_rate = metadata.get("sample_rate", 22050)
+            
+            # Read and encode the PNG file as base64
+            with open(viz_file, 'rb') as f:
+                image_data = base64.b64encode(f.read()).decode('utf-8')
+            
+            # Return data with the appropriate key name
+            data_key = f"{viz_type}_data"
+            return JSONResponse({
+                data_key: image_data,
+                "duration": duration,
+                "sample_rate": sample_rate,
+                "filename": filename
+            })
+        else:
+            # Return 404 with descriptive error message instead of generating on-demand
+            if not viz_dir.exists():
+                error_msg = f"Visualizations directory not found: {viz_dir}"
+            elif not viz_file.exists():
+                error_msg = f"Pre-generated {viz_type} file not found: {viz_file}"
+            elif not metadata_file.exists():
+                error_msg = f"Metadata file not found: {metadata_file}"
+            else:
+                error_msg = f"Required visualization files not found for {filename}"
+            
+            log_message(job_id, "ERROR", f"Visualization not found: {error_msg}")
+            raise HTTPException(status_code=404, detail=error_msg)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_message(job_id, "ERROR", f"Error serving {viz_type}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving {viz_type}: {str(e)}")
+
+
+@api_app.get("/api/corrections/{job_id}/debug/visualizations")
+async def debug_visualizations(job_id: str):
+    """Debug endpoint to list all visualization files for a job."""
+    try:
+        # Force volume reload
+        output_volume.reload()
+        import time
+        time.sleep(0.1)
+        output_volume.reload()
+        
+        job_data = job_status_dict.get(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        # Get job details
+        track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
+        track_dir = Path(track_output_dir)
+        viz_dir = track_dir / "visualizations"
+        
+        debug_info = {
+            "job_id": job_id,
+            "track_output_dir": track_output_dir,
+            "viz_dir": str(viz_dir),
+            "viz_dir_exists": viz_dir.exists(),
+            "all_files": [],
+            "visualization_files": [],
+            "metadata_files": []
+        }
+        
+        if viz_dir.exists():
+            all_files = list(viz_dir.glob("*"))
+            debug_info["all_files"] = [{"name": f.name, "size": f.stat().st_size, "is_file": f.is_file()} for f in all_files]
+            debug_info["visualization_files"] = [f.name for f in all_files if f.name.endswith(('.png'))]
+            debug_info["metadata_files"] = [f.name for f in all_files if f.name.endswith('.json')]
+        
+        return JSONResponse(debug_info)
+        
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@api_app.get("/api/corrections/{job_id}/backing-vocals-preview/{filename}")
+async def get_backing_vocals_preview(job_id: str, filename: str):
+    """Get backing vocals audio file for preview."""
+    try:
+        job_data = job_status_dict.get(job_id)
+        if not job_data:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        if job_data.get("status") not in ["reviewing", "awaiting_review", "ready_for_finalization"]:
+            raise HTTPException(status_code=400, detail="Job is not ready for instrumental selection")
+
+        # Get job details and find the backing vocals file in stems directory
+        track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
+        stems_dir = Path(track_output_dir) / "stems"
+
+        # Security: only allow files that match the expected backing vocals pattern
+        if not filename.endswith(".flac") or "Backing Vocals" not in filename:
+            raise HTTPException(status_code=403, detail="Invalid file requested")
+
+        backing_vocals_file = stems_dir / filename
+
+        if not backing_vocals_file.exists() or not backing_vocals_file.is_file():
+            raise HTTPException(status_code=404, detail="Backing vocals file not found")
+
+        # Verify it's actually in the stems directory (security check)
+        try:
+            backing_vocals_file.resolve().relative_to(stems_dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        log_message(job_id, "DEBUG", f"Serving backing vocals preview: {filename}")
+
+        return FileResponse(
+            path=str(backing_vocals_file),
+            filename=f"backing-vocals-{job_id}-{filename}",
+            media_type="audio/flac",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+            },
         )
 
-        # Save updated correction data
-        with open(corrections_json_path, "w") as f:
-            json.dump(updated_result.to_dict(), f, indent=2)
-
-        # Commit volume changes to persist updated corrections file
-        output_volume.commit()
-        log_message(job_id, "INFO", "Volume committed after updating handlers")
-
-        log_message(job_id, "SUCCESS", f"Successfully updated handlers: {enabled_handlers}")
-
-        return {"status": "success", "data": updated_result.to_dict()}
-
+    except HTTPException:
+        raise
     except Exception as e:
-        error_msg = str(e)
-        log_message(job_id, "ERROR", f"Failed to update handlers: {error_msg}")
+        log_message(job_id, "ERROR", f"Error serving backing vocals preview: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving backing vocals preview: {str(e)}")
 
-        raise Exception(f"Failed to update handlers: {error_msg}")
-    finally:
-        # Clean up logging handler
-        try:
-            root_logger = logging.getLogger()
-            if 'log_handler' in locals():
-                root_logger.removeHandler(log_handler)
-        except:
-            pass
+
+# Removed on-demand visualization generation functions - all visualizations are now pre-generated during Phase 2
 
 
 @app.function(
@@ -4791,6 +5005,7 @@ def generate_preview_video_modal(job_id: str, updated_data: Dict[str, Any]):
                 root_logger.removeHandler(log_handler)
         except:
             pass
+
 
 
 @api_app.get("/api/jobs/{job_id}/files")
@@ -5406,90 +5621,10 @@ def apply_server_side_log_filters(
     return filtered_entries
 
 
-@api_app.get("/api/corrections/{job_id}/instrumentals")
-async def get_available_instrumentals(job_id: str):
-    """Get list of available instrumental files for a job."""
-    try:
-        # Reload volume to see files from other containers
-        output_volume.reload()
-
-        job_data = job_status_dict.get(job_id)
-        if not job_data:
-            raise HTTPException(status_code=404, detail="Job not found")
-
-        if job_data.get("status") not in ["reviewing", "awaiting_review", "ready_for_finalization"]:
-            raise HTTPException(status_code=400, detail="Job is not ready for instrumental selection")
-
-        # Get job details
-        track_output_dir = job_data.get("track_output_dir", f"/output/{job_id}")
-        track_dir = Path(track_output_dir)
-
-        # Find all instrumental files
-        instrumental_files = list(track_dir.glob(f"*Instrumental*.flac"))
-
-        if not instrumental_files:
-            raise HTTPException(status_code=404, detail="No instrumental files found")
-
-        # Create list of instrumental options with metadata
-        instrumentals = []
-        for inst_file in instrumental_files:
-            try:
-                file_stat = inst_file.stat()
-                file_size_mb = round(file_stat.st_size / 1024 / 1024, 1)
-
-                # Determine instrumental type based on filename
-                filename = inst_file.name
-                instrumental_type = "Unknown"
-                recommended = False
-                description = ""
-
-                if "+BV" in filename:
-                    instrumental_type = "Instrumental With Backing Vocals"
-                    description = "Typically includes background vocals and harmonies - listen all the way through first to see if this sounds good!"
-                elif "model_bs_roformer" in filename:
-                    instrumental_type = "Clean Instrumental"
-                    description = "Pure instrumental without any vocals - safe option if you're not sure"
-                    recommended = True  # Clean instrumental is safest option
-                elif "htdemucs" in filename:
-                    instrumental_type = "Other Stems"
-                    description = "Alternative separation model"
-                instrumentals.append(
-                    {
-                        "filename": inst_file.name,
-                        "path": str(inst_file.relative_to(track_dir)),
-                        "size_mb": file_size_mb,
-                        "type": instrumental_type,
-                        "description": description,
-                        "recommended": recommended,
-                        "audio_url": f"/corrections/{job_id}/instrumental-preview/{inst_file.name}",
-                    }
-                )
-
-            except Exception as e:
-                log_message(job_id, "WARNING", f"Error processing instrumental file {inst_file}: {e}")
-                continue
-
-        # Sort instrumentals with recommended first
-        instrumentals.sort(key=lambda x: (not x["recommended"], x["filename"]))
-
-        log_message(job_id, "INFO", f"Found {len(instrumentals)} instrumental options")
-
-        return JSONResponse({"job_id": job_id, "instrumentals": instrumentals, "total_count": len(instrumentals)})
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        log_message(job_id, "ERROR", f"Error getting instrumentals: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting instrumentals: {str(e)}")
-
-
 @api_app.get("/api/corrections/{job_id}/instrumental-preview/{filename}")
 async def get_instrumental_preview(job_id: str, filename: str):
     """Get instrumental audio file for preview."""
     try:
-        # Reload volume to see files from other containers
-        output_volume.reload()
-
         job_data = job_status_dict.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -5581,6 +5716,13 @@ async def get_clone_info(job_id: str, admin: dict = Depends(authenticate_admin))
                 "phase": "awaiting_review",
                 "name": "After Phase 1 (Processing Complete)",
                 "description": "Clone to test lyrics review and Phase 2 (video generation)"
+            })
+            
+            # Add auto-review option for testing Phase 2 directly
+            available_phases.append({
+                "phase": "auto_review",
+                "name": "Auto-Review (Skip Manual Review)",
+                "description": "Clone and immediately run Phase 2 with previously applied corrections (for testing Phase 2 changes)"
             })
         
         if "reviewing" in completed_phases or current_status in ["ready_for_finalization", "rendering", "finalizing", "complete"]:
@@ -5679,9 +5821,18 @@ def clone_job_at_phase(source_job_id: str, target_phase: str):
         # Create cloned job data
         clone_data = source_job_data.copy()
         
+        # Handle special auto_review phase
+        if target_phase == "auto_review":
+            # Set to reviewing status and immediately trigger Phase 2
+            actual_status = "reviewing"
+            actual_progress = 77
+        else:
+            actual_status = target_phase
+            actual_progress = get_progress_for_phase(target_phase)
+        
         # Update job metadata
-        clone_data["status"] = target_phase
-        clone_data["progress"] = get_progress_for_phase(target_phase)
+        clone_data["status"] = actual_status
+        clone_data["progress"] = actual_progress
         clone_data["track_output_dir"] = str(target_dir)
         clone_data["created_at"] = datetime.datetime.now().isoformat()
         clone_data["last_updated"] = datetime.datetime.now().isoformat()
@@ -5713,7 +5864,7 @@ def clone_job_at_phase(source_job_id: str, target_phase: str):
         # Create a new timeline for the cloned job
         current_time = datetime.datetime.now().isoformat()
         clone_data["timeline"] = [{
-            "status": target_phase,
+            "status": actual_status,
             "started_at": current_time,
             "ended_at": None,
             "duration_seconds": None
@@ -5729,13 +5880,26 @@ def clone_job_at_phase(source_job_id: str, target_phase: str):
         output_volume.commit()
         log_message(new_job_id, "INFO", "Volume committed after cloning")
         
+        # Handle auto_review phase by immediately triggering Phase 2
+        if target_phase == "auto_review":
+            log_message(new_job_id, "INFO", "Auto-review mode: immediately triggering Phase 2 with previously applied corrections")
+            
+            # Import process_part_two function to spawn it
+            from app import process_part_two
+            
+            # Spawn Phase 2 with None for corrected_data (uses previously applied corrections from file)
+            process_part_two.spawn(new_job_id, None)
+            
+            log_message(new_job_id, "INFO", "Phase 2 auto-triggered for cloned job")
+        
         log_message(new_job_id, "SUCCESS", f"Job successfully cloned from {source_job_id} at phase {target_phase}")
         
         return {
             "status": "success",
             "new_job_id": new_job_id,
             "target_phase": target_phase,
-            "message": f"Job cloned successfully from {source_job_id}"
+            "message": f"Job cloned successfully from {source_job_id}" + 
+                      (" and Phase 2 auto-triggered" if target_phase == "auto_review" else "")
         }
         
     except Exception as e:
@@ -5794,6 +5958,11 @@ async def resume_job_at_phase(job_id: str, request: dict, admin: dict = Depends(
             process_part_two.spawn(job_id, corrected_data)
             message = f"Resumed job {job_id} at phase 2 (video generation) with corrections"
             
+        elif target_phase == "auto_review":
+            # Resume at phase 2 with previously applied corrections (no manual review)
+            process_part_two.spawn(job_id, None)
+            message = f"Resumed job {job_id} at phase 2 (video generation) with previously applied corrections (auto-review mode)"
+            
         elif target_phase == "awaiting_review":
             # Job is ready for manual review - no automatic resumption needed
             message = f"Job {job_id} is ready for review at phase 1 completion"
@@ -5810,3 +5979,310 @@ async def resume_job_at_phase(job_id: str, request: dict, admin: dict = Depends(
         
     except Exception as e:
         return JSONResponse({"success": False, "message": f"Error resuming job: {str(e)}"}, status_code=500)
+
+
+# Removed: generate-all-visualizations endpoint - visualizations are now pre-generated during Phase 2
+
+
+# Removed: generate_all_visualizations_batch function - no longer needed since visualizations are pre-generated
+
+
+def generate_waveform_visualization(y, sr, duration):
+    """Generate waveform visualization from loaded audio data."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import base64
+    import io
+    
+    # Create figure with dark theme to match UI
+    plt.style.use('dark_background')
+    fig, ax = plt.subplots(figsize=(12, 3), facecolor='#2a3139')
+    ax.set_facecolor('#2a3139')
+    
+    # Create time axis
+    time_axis = np.linspace(0, duration, len(y))
+
+    # Plot waveform
+    ax.plot(time_axis, y, color='#ff7acc', linewidth=0.5, alpha=0.8)
+    ax.fill_between(time_axis, y, alpha=0.3, color='#ff7acc')
+    
+    # Style the plot for click-to-seek accuracy
+    ax.set_xlim(0, duration)
+    ax.set_ylim(-1, 1)
+    
+    # Remove all axes completely to eliminate any padding
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    ax.tick_params(axis='x', left=False, labelleft=False, bottom=False, labelbottom=False)
+    ax.tick_params(axis='y', left=False, labelleft=False, bottom=False, labelbottom=False)
+    
+    # Remove all spines completely
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    
+    # Remove grid
+    ax.grid(False)
+    
+    # Set figure layout to use full space with no axes
+    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    
+    # Convert to base64 string with high quality
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', facecolor='#2a3139', edgecolor='none', 
+                dpi=300, bbox_inches='tight', pad_inches=0.05)
+    buffer.seek(0)
+    image_data = base64.b64encode(buffer.getvalue()).decode()
+    plt.close(fig)
+    
+    return {
+        "image_data": image_data,
+        "duration": duration,
+        "sample_rate": sr
+    }
+
+
+def generate_spectrogram_visualization(y, sr, duration):
+    """Generate spectrogram visualization from loaded audio data."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import librosa
+    import base64
+    import io
+    
+    # Generate spectrogram with professional parameters for music visualization
+    n_fft = 2048
+    hop_length = n_fft // 4  # Standard ratio for good time-frequency resolution
+    win_length = n_fft
+    
+    # Use center=False for accurate time alignment and explicit win_length
+    D = librosa.stft(y, n_fft=n_fft, hop_length=hop_length, win_length=win_length, center=False)
+    S_db = librosa.amplitude_to_db(np.abs(D), ref=np.max)
+    
+    # Create figure with dark theme to match UI
+    plt.style.use('dark_background')
+    fig, ax = plt.subplots(figsize=(12, 3), facecolor='#2a3139')
+    ax.set_facecolor('#2a3139')
+    
+    # Plot spectrogram with logarithmic frequency scale (better for music)
+    img = librosa.display.specshow(
+        S_db, 
+        sr=sr,
+        hop_length=hop_length,
+        x_axis='time',
+        y_axis='log',  # Logarithmic frequency scale - crucial for music!
+        ax=ax,
+        cmap='inferno',  # Inferno colormap often works better than magma for spectrograms
+        alpha=0.9
+    )
+    
+    # Style the plot for click-to-seek accuracy with full frequency range
+    ax.set_xlim(0, duration)
+    # Let spectrogram show full frequency range like Audacity (no ylim restriction)
+    
+    # Remove all axes completely to eliminate any padding
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    ax.tick_params(axis='x', left=False, labelleft=False, bottom=False, labelbottom=False)
+    ax.tick_params(axis='y', left=False, labelleft=False, bottom=False, labelbottom=False)
+    
+    # Remove all spines completely
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    
+    # Set figure layout to use full space with no axes
+    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    
+    # Convert to base64 string with high quality
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', facecolor='#2a3139', edgecolor='none', 
+                dpi=300, bbox_inches='tight', pad_inches=0.05)
+    buffer.seek(0)
+    image_data = base64.b64encode(buffer.getvalue()).decode()
+    plt.close(fig)
+    
+    return {
+        "image_data": image_data,
+        "duration": duration,
+        "sample_rate": sr
+    }
+
+
+def generate_visualizations_for_job(job_id: str, track_output_dir: str):
+    """Pre-generate all visualizations for instrumental files and save them to the job directory."""
+    import librosa
+    import hashlib
+    import json
+    import time
+    import os
+    from pathlib import Path
+    
+    try:
+        track_dir = Path(track_output_dir)
+        stems_dir = track_dir / "stems"
+        viz_dir = track_dir / "visualizations"
+        
+        # Create visualizations directory
+        viz_dir.mkdir(exist_ok=True)
+        
+        # Find all instrumental files
+        instrumental_files = list(track_dir.glob("*Instrumental*.flac"))
+        
+        if not instrumental_files:
+            log_message(job_id, "WARNING", "No instrumental files found for visualization")
+            return
+        
+        log_message(job_id, "INFO", f"Found {len(instrumental_files)} instrumental files to visualize")
+        
+        # Collect all files that need visualization
+        files_to_process = []
+        
+        for inst_file in instrumental_files:
+            if inst_file.exists() and inst_file.is_file():
+                files_to_process.append({
+                    "type": "instrumental",
+                    "filename": inst_file.name,
+                    "path": str(inst_file),
+                })
+                
+                # Check for corresponding backing vocals file
+                filename = inst_file.name
+                log_message(job_id, "DEBUG", f"Checking for backing vocals for instrumental: {filename}")
+                
+                if "+BV" in filename and "+BV " in filename:
+                    model_part = filename.split("+BV ")[1].replace(").flac", "")
+                    backing_vocals_pattern = f"*Backing Vocals*{model_part}*.flac"
+                    log_message(job_id, "DEBUG", f"Looking for backing vocals with pattern: {backing_vocals_pattern}")
+                    
+                    backing_vocals_files = list(stems_dir.glob(backing_vocals_pattern))
+                    log_message(job_id, "DEBUG", f"Found backing vocals files: {[f.name for f in backing_vocals_files]}")
+                    
+                    if backing_vocals_files and backing_vocals_files[0].exists():
+                        backing_vocals_file = backing_vocals_files[0]
+                        log_message(job_id, "INFO", f"Adding backing vocals file for processing: {backing_vocals_file.name}")
+                        
+                        files_to_process.append({
+                            "type": "backing_vocals",
+                            "filename": backing_vocals_file.name,
+                            "path": str(backing_vocals_file),
+                            "parent_instrumental": inst_file.name
+                        })
+                    else:
+                        log_message(job_id, "WARNING", f"No backing vocals files found for pattern: {backing_vocals_pattern}")
+                else:
+                    log_message(job_id, "DEBUG", f"Instrumental {filename} does not have +BV marker, skipping backing vocals search")
+        
+        if not files_to_process:
+            log_message(job_id, "WARNING", "No files found for visualization processing")
+            return
+        
+        log_message(job_id, "INFO", f"Processing {len(files_to_process)} files for visualization")
+        
+        generated_count = 0
+        cache_hits = 0
+        
+        for file_info in files_to_process:
+            file_path = file_info["path"]
+            filename = file_info["filename"]
+            file_type = file_info["type"]
+            
+            try:
+                log_message(job_id, "DEBUG", f"Processing {file_type}: {filename}")
+                
+                # Generate safe filename for visualization files
+                safe_filename = filename.replace(" ", "_").replace("(", "").replace(")", "").replace("&", "and")
+                
+                # Define output paths
+                waveform_file = viz_dir / f"{safe_filename}_waveform.png"
+                spectrogram_file = viz_dir / f"{safe_filename}_spectrogram.png"
+                metadata_file = viz_dir / f"{safe_filename}_metadata.json"
+                
+                # Check if visualizations already exist
+                if waveform_file.exists() and spectrogram_file.exists() and metadata_file.exists():
+                    cache_hits += 1
+                    log_message(job_id, "DEBUG", f"Visualizations already exist for: {filename}")
+                    continue
+                
+                # Load audio file with retry logic
+                y = None
+                sr = None
+                duration = None
+                
+                max_retries = 3
+                retry_delay = 0.5
+                
+                for attempt in range(max_retries):
+                    try:
+                        y, sr = librosa.load(file_path, sr=None)
+                        duration = len(y) / sr
+                        break
+                    except (OSError, IOError, PermissionError) as e:
+                        if attempt == max_retries - 1:
+                            if not os.path.exists(file_path):
+                                raise Exception(f"Audio file not found: {file_path}")
+                            elif not os.access(file_path, os.R_OK):
+                                raise Exception(f"Audio file not readable: {file_path}")
+                            else:
+                                raise Exception(f"Audio file is locked or in use: {file_path}")
+                        
+                        log_message(job_id, "DEBUG", f"Attempt {attempt + 1} failed for {filename}, retrying in {retry_delay}s: {str(e)}")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                
+                # Generate and save waveform
+                log_message(job_id, "DEBUG", f"Generating waveform for: {filename}")
+                waveform_data = generate_waveform_visualization(y, sr, duration)
+                
+                # Save waveform image to file
+                import base64
+                waveform_image_data = base64.b64decode(waveform_data["image_data"])
+                with open(waveform_file, 'wb') as f:
+                    f.write(waveform_image_data)
+                
+                # Generate and save spectrogram (for both instrumental and backing vocals files)
+                log_message(job_id, "DEBUG", f"Generating spectrogram for: {filename}")
+                spectrogram_data = generate_spectrogram_visualization(y, sr, duration)
+                
+                # Save spectrogram image to file
+                spectrogram_image_data = base64.b64decode(spectrogram_data["image_data"])
+                with open(spectrogram_file, 'wb') as f:
+                    f.write(spectrogram_image_data)
+                
+                # Save metadata
+                metadata = {
+                    "filename": filename,
+                    "type": file_type,
+                    "duration": duration,
+                    "sample_rate": sr,
+                    "generated_at": time.time(),
+                    "waveform_file": waveform_file.name,
+                    "spectrogram_file": spectrogram_file.name,
+                }
+                
+                if file_type == "backing_vocals":
+                    metadata["parent_instrumental"] = file_info.get("parent_instrumental")
+                
+                with open(metadata_file, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+                
+                generated_count += 1
+                log_message(job_id, "DEBUG", f"Completed processing: {filename}")
+                
+            except Exception as e:
+                log_message(job_id, "ERROR", f"Error processing {filename}: {str(e)}")
+                # Continue with other files even if one fails
+                continue
+        
+        log_message(job_id, "SUCCESS", f"Visualization generation complete: {generated_count} files processed, {cache_hits} cache hits")
+        
+    except Exception as e:
+        error_msg = str(e)
+        log_message(job_id, "ERROR", f"Failed to generate visualizations: {error_msg}")
+        raise Exception(f"Failed to generate visualizations: {error_msg}")
