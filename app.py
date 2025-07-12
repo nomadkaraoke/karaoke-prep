@@ -105,7 +105,7 @@ karaoke_image = (
             "python-multipart>=0.0.7",
             "requests>=2.31.0",
             # Uncomment this line to use the lyrics-transcriber package from PyPI
-            "lyrics-transcriber>=0.62",
+            "lyrics-transcriber>=0.66.0",
             # To use the local version of lyrics-transcriber, comment out the line above and
             # uncomment the lyrics_transcriber_local "add_local_dir" and "run_commands" lines below
         ]
@@ -162,6 +162,9 @@ config_volume = modal.Volume.from_name("karaoke-config", create_if_missing=True)
 # Add new Modal Dict for storing user YouTube credentials
 user_youtube_credentials_dict = modal.Dict.from_name("karaoke-user-youtube-credentials", create_if_missing=True)
 
+# Add delivery message template storage
+delivery_message_template_dict = modal.Dict.from_name("karaoke-delivery-message-template", create_if_missing=True)
+
 # Mount volumes to specific paths inside the container
 VOLUME_CONFIG = {"/models": model_volume, "/output": output_volume, "/cache": cache_volume, "/config": config_volume, "/previews": preview_volume}
 
@@ -206,6 +209,10 @@ class CreateTokenRequest(BaseModel):
     token_value: str
     max_uses: Optional[int] = None
     description: Optional[str] = None
+
+
+class DeliveryMessageTemplateRequest(BaseModel):
+    template: str
 
 
 class JobLogHandler(logging.Handler):
@@ -607,13 +614,14 @@ def warm_cache():
     gpu="any",
     volumes=VOLUME_CONFIG,
     secrets=[modal.Secret.from_name("env-vars")],
-    timeout=1800,
+    timeout=600,
     retries=0,
 )
 async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[str] = None, override_artist: Optional[str] = None, override_title: Optional[str] = None, styles_file_path: Optional[str] = None, styles_archive_path: Optional[str] = None):
     """First phase: Download audio, separate, and transcribe lyrics."""
     import sys
     import traceback
+    import modal.exception
 
     try:
         # Set up logging to capture ALL log messages from all modules
@@ -655,7 +663,24 @@ async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[
         
         # Process using the full KaraokePrep workflow (same as CLI)
         log_message(job_id, "INFO", "Starting full karaoke processing workflow...")
+        log_message(job_id, "DEBUG", f"Processing parameters - job_id: {job_id}, cookies: {'present' if cookies_str else 'none'}")
+        log_message(job_id, "DEBUG", f"Override artist: {override_artist}, Override title: {override_title}")
+        log_message(job_id, "DEBUG", f"Verified styles file: {verified_styles_file}")
+        log_message(job_id, "DEBUG", f"Verified styles archive: {verified_styles_archive}")
+        
+        # Log system resources before processing
+        import psutil
+        memory_info = psutil.virtual_memory()
+        cpu_count_info = psutil.cpu_count()
+        log_message(job_id, "DEBUG", f"System resources - CPU cores: {cpu_count_info}, Memory: {memory_info.total // 1024**3}GB total, {memory_info.available // 1024**3}GB available")
+        
+        log_message(job_id, "INFO", "🚀 About to call processor.process_url() - this is where lyrics correction happens")
+        
         result = await processor.process_url(job_id, youtube_url, cookies_str, override_artist, override_title, verified_styles_file, verified_styles_archive)
+        
+        log_message(job_id, "INFO", f"✅ KaraokePrep workflow completed successfully")
+        log_message(job_id, "DEBUG", f"Result status: {result.get('status', 'unknown')}")
+        log_message(job_id, "DEBUG", f"Result keys: {list(result.keys()) if result else 'none'}")
 
         # Update status to awaiting review
         update_job_status_with_timeline(
@@ -673,6 +698,23 @@ async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[
 
         return {"status": "success", "message": "Processing completed, ready for review"}
 
+    except modal.exception.FunctionTimeoutError as e:
+        # Handle Modal timeout specifically
+        timeout_msg = f"Function timed out after {600} seconds (10 minutes)"
+        log_message(job_id, "ERROR", f"Phase 1 timed out: {timeout_msg}")
+        
+        update_job_status_with_timeline(
+            job_id, 
+            "timeout", 
+            progress=0, 
+            url=youtube_url, 
+            error=timeout_msg,
+            timeout_duration_seconds=600,
+            restart_available=True
+        )
+        
+        raise Exception(f"Phase 1 timed out: {timeout_msg}")
+    
     except Exception as e:
         error_msg = str(e)
         error_traceback = traceback.format_exc()
@@ -698,13 +740,16 @@ async def process_part_one(job_id: str, youtube_url: str, cookies_str: Optional[
     gpu="any",
     volumes=VOLUME_CONFIG,
     secrets=[modal.Secret.from_name("env-vars")],
-    timeout=1800,
+    timeout=600,
     retries=0,
+    cpu=8.0,
+    memory=16384,
 )
 def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, Any]] = None):
     """Second phase: Generate 'With Vocals' video with corrected lyrics (no finalization yet)."""
     import sys
     import traceback
+    import modal.exception
     from pathlib import Path
 
     try:
@@ -845,6 +890,24 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
             "video_path": str(parent_video_path),
         }
 
+    except modal.exception.FunctionTimeoutError as e:
+        # Handle Modal timeout specifically
+        timeout_msg = f"Function timed out after {600} seconds (10 minutes)"
+        log_message(job_id, "ERROR", f"Phase 2 timed out: {timeout_msg}")
+        
+        job_data = job_status_dict.get(job_id, {})
+        update_job_status_with_timeline(
+            job_id,
+            "timeout",
+            progress=0,
+            error=timeout_msg,
+            timeout_duration_seconds=600,
+            restart_available=True,
+            **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated"]},
+        )
+        
+        raise Exception(f"Phase 2 timed out: {timeout_msg}")
+
     except Exception as e:
         error_msg = str(e)
         error_traceback = traceback.format_exc()
@@ -878,7 +941,7 @@ def process_part_two(job_id: str, updated_correction_data: Optional[Dict[str, An
     gpu="any",
     volumes=VOLUME_CONFIG,
     secrets=[modal.Secret.from_name("env-vars")],
-    timeout=1800,
+    timeout=600,
     retries=0,
     cpu=16.0,
     memory=16384,
@@ -887,6 +950,7 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
     """Third phase: Generate final video formats and packages with selected instrumental."""
     import sys
     import traceback
+    import modal.exception
     from pathlib import Path
 
     try:
@@ -1236,6 +1300,24 @@ def process_part_three(job_id: str, selected_instrumental: Optional[str] = None)
 
         return {"status": "success", "message": "Finalization completed", "final_files": final_files}
 
+    except modal.exception.FunctionTimeoutError as e:
+        # Handle Modal timeout specifically
+        timeout_msg = f"Function timed out after {600} seconds (30 minutes)"
+        log_message(job_id, "ERROR", f"Phase 3 timed out: {timeout_msg}")
+        
+        job_data = job_status_dict.get(job_id, {})
+        update_job_status_with_timeline(
+            job_id,
+            "timeout",
+            progress=0,
+            error=timeout_msg,
+            timeout_duration_seconds=600,
+            restart_available=True,
+            **{k: v for k, v in job_data.items() if k not in ["status", "progress", "timeline", "last_updated"]},
+        )
+        
+        raise Exception(f"Phase 3 timed out: {timeout_msg}")
+
     except Exception as e:
         error_msg = str(e)
         error_traceback = traceback.format_exc()
@@ -1396,8 +1478,9 @@ def prepare_review_data(job_id: str):
     gpu="any",
     volumes=VOLUME_CONFIG,
     secrets=[modal.Secret.from_name("env-vars")],
-    timeout=1800,
+    timeout=600,
     retries=0,
+    cpu=8.0,
 )
 async def process_part_one_uploaded(
     job_id: str,
@@ -1410,6 +1493,7 @@ async def process_part_one_uploaded(
     """First phase: Process uploaded audio file, separate, and transcribe lyrics."""
     import sys
     import traceback
+    import modal.exception
 
     try:
         # Set up logging to capture ALL log messages from all modules
@@ -1509,6 +1593,24 @@ async def process_part_one_uploaded(
         log_message(job_id, "SUCCESS", f"Processing completed for job {job_id}. Ready for review.")
 
         return {"status": "success", "message": "Processing completed, ready for review"}
+
+    except modal.exception.FunctionTimeoutError as e:
+        # Handle Modal timeout specifically
+        timeout_msg = f"Function timed out after {600} seconds (10 minutes)"
+        log_message(job_id, "ERROR", f"Phase 1 (uploaded) timed out: {timeout_msg}")
+        
+        update_job_status_with_timeline(
+            job_id, 
+            "timeout", 
+            progress=0, 
+            artist=artist, 
+            title=title, 
+            error=timeout_msg,
+            timeout_duration_seconds=600,
+            restart_available=True
+        )
+        
+        raise Exception(f"Phase 1 (uploaded) timed out: {timeout_msg}")
 
     except Exception as e:
         error_msg = str(e)
@@ -2082,12 +2184,111 @@ async def youtube_oauth_callback(request: Request):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>YouTube Authentication Success</title>
+            <title>Nomad Karaoke - YouTube Authentication Success</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="https://fonts.googleapis.com/css2?family=Righteous&display=swap" rel="stylesheet">
             <style>
-                body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-                .success { color: #28a745; font-size: 24px; margin-bottom: 20px; }
-                .instructions { color: #666; margin-bottom: 30px; }
-                .close-btn { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+                :root {
+                    --primary-color: #ff7acc;
+                    --secondary-color: #230a89;
+                    --accent-yellow: #ffdf6b;
+                    --surface-color: #262D34;
+                    --background-color: #1A1F24;
+                    --border-color: #3a4149;
+                    --text-color: #ffffff;
+                    --text-muted: #b0b8c1;
+                    --success-color: #10b981;
+                    --gradient-inner: linear-gradient(180deg, #2100A71C 0%, #F2295B0D 100%);
+                    --card-background: #2a3139;
+                }
+                
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                
+                body {
+                    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                    background: var(--background-color);
+                    color: var(--text-color);
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }
+                
+                .auth-container {
+                    background: var(--surface-color);
+                    background-image: var(--gradient-inner);
+                    border: 1px solid var(--border-color);
+                    border-radius: 20px;
+                    padding: 40px;
+                    max-width: 500px;
+                    width: 100%;
+                    text-align: center;
+                    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+                }
+                
+                .success-icon {
+                    font-size: 3rem;
+                    margin-bottom: 1rem;
+                }
+                
+                .success-title {
+                    font-family: 'Righteous', cursive;
+                    font-size: 1.8rem;
+                    color: var(--success-color);
+                    margin-bottom: 1rem;
+                    line-height: 1.2;
+                }
+                
+                .success-message {
+                    color: var(--text-muted);
+                    font-size: 1.1rem;
+                    margin-bottom: 2rem;
+                    line-height: 1.5;
+                }
+                
+                .close-btn {
+                    background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+                    color: white;
+                    border: none;
+                    padding: 14px 28px;
+                    border-radius: 10px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: transform 0.2s ease, box-shadow 0.2s ease;
+                }
+                
+                .close-btn:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 8px 25px rgba(255, 122, 204, 0.3);
+                }
+                
+                .loading-indicator {
+                    margin-top: 1rem;
+                    color: var(--text-muted);
+                    font-size: 0.9rem;
+                    font-style: italic;
+                }
+                
+                @media (max-width: 480px) {
+                    .auth-container {
+                        padding: 30px 20px;
+                        margin: 20px;
+                    }
+                    
+                    .success-title {
+                        font-size: 1.5rem;
+                    }
+                    
+                    .success-message {
+                        font-size: 1rem;
+                    }
+                }
             </style>
             <script>
                 // Close window automatically after showing success
@@ -2096,15 +2297,20 @@ async def youtube_oauth_callback(request: Request):
                         window.opener.postMessage({ type: 'youtube_auth_success' }, '*');
                         window.close();
                     }
-                }, 2000);
+                }, 1000);
             </script>
         </head>
         <body>
-            <div class="success">✅ YouTube Authentication Successful!</div>
-            <div class="instructions">
-                You can now upload videos to YouTube. This window will close automatically.
+            <div class="auth-container">
+                <div class="success-icon">✅</div>
+                <h1 class="success-title">YouTube Authentication Successful!</h1>
+                <p class="success-message">
+                    You can now upload videos to YouTube.<br>
+                    This window will close automatically.
+                </p>
+                <button class="close-btn" onclick="window.close()">Close Window</button>
+                <div class="loading-indicator">Closing in 1 second...</div>
             </div>
-            <button class="close-btn" onclick="window.close()">Close Window</button>
         </body>
         </html>
         """
@@ -2115,17 +2321,121 @@ async def youtube_oauth_callback(request: Request):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>YouTube Authentication Error</title>
+            <title>Nomad Karaoke - YouTube Authentication Error</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="https://fonts.googleapis.com/css2?family=Righteous&display=swap" rel="stylesheet">
             <style>
-                body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
-                .error {{ color: #dc3545; font-size: 24px; margin-bottom: 20px; }}
-                .details {{ color: #666; margin-bottom: 30px; }}
+                :root {{
+                    --primary-color: #ff7acc;
+                    --secondary-color: #230a89;
+                    --accent-yellow: #ffdf6b;
+                    --surface-color: #262D34;
+                    --background-color: #1A1F24;
+                    --border-color: #3a4149;
+                    --text-color: #ffffff;
+                    --text-muted: #b0b8c1;
+                    --error-color: #ef4444;
+                    --gradient-inner: linear-gradient(180deg, #2100A71C 0%, #F2295B0D 100%);
+                    --card-background: #2a3139;
+                }}
+                
+                * {{
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }}
+                
+                body {{
+                    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                    background: var(--background-color);
+                    color: var(--text-color);
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }}
+                
+                .auth-container {{
+                    background: var(--surface-color);
+                    background-image: var(--gradient-inner);
+                    border: 1px solid var(--border-color);
+                    border-radius: 20px;
+                    padding: 40px;
+                    max-width: 500px;
+                    width: 100%;
+                    text-align: center;
+                    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+                }}
+                
+                .error-icon {{
+                    font-size: 3rem;
+                    margin-bottom: 1rem;
+                }}
+                
+                .error-title {{
+                    font-family: 'Righteous', cursive;
+                    font-size: 1.8rem;
+                    color: var(--error-color);
+                    margin-bottom: 1rem;
+                    line-height: 1.2;
+                }}
+                
+                .error-details {{
+                    color: var(--text-muted);
+                    font-size: 1rem;
+                    margin-bottom: 2rem;
+                    line-height: 1.5;
+                    word-break: break-word;
+                    background: rgba(239, 68, 68, 0.1);
+                    border: 1px solid var(--error-color);
+                    border-radius: 8px;
+                    padding: 15px;
+                }}
+                
+                .close-btn {{
+                    background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+                    color: white;
+                    border: none;
+                    padding: 14px 28px;
+                    border-radius: 10px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: transform 0.2s ease, box-shadow 0.2s ease;
+                }}
+                
+                .close-btn:hover {{
+                    transform: translateY(-2px);
+                    box-shadow: 0 8px 25px rgba(255, 122, 204, 0.3);
+                }}
+                
+                @media (max-width: 480px) {{
+                    .auth-container {{
+                        padding: 30px 20px;
+                        margin: 20px;
+                    }}
+                    
+                    .error-title {{
+                        font-size: 1.5rem;
+                    }}
+                    
+                    .error-details {{
+                        font-size: 0.9rem;
+                        padding: 12px;
+                    }}
+                }}
             </style>
         </head>
         <body>
-            <div class="error">❌ YouTube Authentication Failed</div>
-            <div class="details">Error: {str(e)}</div>
-            <button onclick="window.close()">Close Window</button>
+            <div class="auth-container">
+                <div class="error-icon">❌</div>
+                <h1 class="error-title">YouTube Authentication Failed</h1>
+                <div class="error-details">
+                    <strong>Error:</strong> {str(e)}
+                </div>
+                <button class="close-btn" onclick="window.close()">Close Window</button>
+            </div>
         </body>
         </html>
         """
@@ -2578,6 +2888,76 @@ async def set_log_level(request: LogLevelRequest, admin: dict = Depends(authenti
         
     except Exception as e:
         return JSONResponse({"success": False, "message": f"Error setting log level: {str(e)}"}, status_code=500)
+
+
+@api_app.get("/api/admin/delivery-message/template")
+async def get_delivery_message_template(admin: dict = Depends(authenticate_admin)):
+    """Get the current delivery message template (admin only)."""
+    try:
+        template_data = delivery_message_template_dict.get("template_data", {})
+        
+        # Set default template if none exists
+        default_template = """Hi [NAME],
+
+Thanks for your order!
+
+Here's the link for the karaoke video published to YouTube:
+{youtube_url}
+
+Here's the dropbox folder with all the finished files and source files, including:
+- "(Final Karaoke Lossless).mkv": combined karaoke video in 4k H264 with lossless FLAC audio
+- "(Final Karaoke).mp4": combined karaoke video with title/end screen in 4k H264/AAC
+- "(Final Karaoke 720p).mp4": combined karaoke video in 720p H264/AAC (smaller file for older systems)
+- "(With Vocals).mp4": sing along video in 4k H264/AAC with original vocals
+- "(Karaoke).mov": karaoke video output from MidiCo (no title/end screen)
+- "(Title).mov"/"(End).mov": title card and end screen videos
+- "(Final Karaoke CDG).zip": CDG+MP3 format for older/commercial karaoke systems
+- "(Final Karaoke TXT).zip": TXT+MP3 format for Power Karaoke
+- stems/*.flac: various separated instrumental and vocal audio stems in lossless format
+- lyrics/*.txt song lyrics from various sources in plain text format
+
+{dropbox_url}
+
+Let me know if anything isn't perfect and I'll happily tweak / fix, or if you need it in any other format I can probably convert it for you!
+
+Thanks again and have a great day!
+-Andrew"""
+        
+        template = template_data.get("template", default_template)
+        updated_at = template_data.get("updated_at")
+        updated_by = template_data.get("updated_by")
+        
+        return JSONResponse({
+            "success": True,
+            "template": template,
+            "updated_at": updated_at,
+            "updated_by": updated_by
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error getting delivery message template: {str(e)}"}, status_code=500)
+
+
+@api_app.post("/api/admin/delivery-message/template")
+async def update_delivery_message_template(request: DeliveryMessageTemplateRequest, admin: dict = Depends(authenticate_admin)):
+    """Update the delivery message template (admin only)."""
+    try:
+        template_data = {
+            "template": request.template,
+            "updated_at": time.time(),
+            "updated_by": admin["token"][:8] + "..."
+        }
+        
+        delivery_message_template_dict["template_data"] = template_data
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Delivery message template updated successfully",
+            "template": request.template
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error updating delivery message template: {str(e)}"}, status_code=500)
 
 
 class YouTubeMetadataRequest(BaseModel):
@@ -3115,8 +3495,9 @@ async def retry_job(job_id: str, user: dict = Depends(authenticate_user)):
         if not check_job_access(job_id, user):
             raise HTTPException(status_code=403, detail="Access denied to this job")
 
-        if job_data.get("status") != "error":
-            raise HTTPException(status_code=400, detail="Job is not in error state")
+        status = job_data.get("status")
+        if status not in ["error", "timeout"]:
+            raise HTTPException(status_code=400, detail=f"Job is not in a failed state (current status: {status})")
 
         # Track token usage for the retry
         if not track_job_usage(user["token"], job_id):
@@ -4045,6 +4426,15 @@ async def warm_cache_endpoint(admin: dict = Depends(authenticate_admin)):
         return JSONResponse({"status": "success", "message": "Cache warming initiated"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# Removed: detect_timed_out_jobs() - this was "guessing" timeouts instead of using Modal's built-in handling
+
+
+# Removed: timeout detection endpoints - using Modal's built-in timeout handling instead
+
+
+
 
 
 # Health check
@@ -5981,6 +6371,62 @@ async def resume_job_at_phase(job_id: str, request: dict, admin: dict = Depends(
         return JSONResponse({"success": False, "message": f"Error resuming job: {str(e)}"}, status_code=500)
 
 
+class ManualStatusUpdateRequest(BaseModel):
+    new_status: str
+    progress: Optional[int] = None
+    additional_data: Optional[Dict[str, Any]] = {}
+
+
+@api_app.post("/api/admin/jobs/{job_id}/update-status")
+async def manual_status_update(job_id: str, request: ManualStatusUpdateRequest, admin: dict = Depends(authenticate_admin)):
+    """Manually update job status with timeline tracking (admin only)."""
+    try:
+        # Check if job exists
+        if job_id not in job_status_dict:
+            return JSONResponse({"success": False, "message": f"Job {job_id} not found"}, status_code=404)
+        
+        old_job_data = job_status_dict.get(job_id, {})
+        old_status = old_job_data.get("status", "unknown")
+        
+        # Prepare additional data, ensuring we don't override critical fields
+        additional_data = request.additional_data or {}
+        
+        # Add audit trail information
+        additional_data["manual_update"] = {
+            "updated_by": admin["token"][:8] + "...",
+            "updated_at": datetime.datetime.now().isoformat(),
+            "previous_status": old_status,
+            "reason": "Manual admin override"
+        }
+        
+        # Call the existing update function
+        updated_job_data = update_job_status_with_timeline(
+            job_id=job_id,
+            new_status=request.new_status,
+            progress=request.progress,
+            **additional_data
+        )
+        
+        # Log the manual update
+        log_message(job_id, "WARNING", f"Manual status update by admin: {old_status} -> {request.new_status}")
+        
+        return JSONResponse({
+            "success": True,
+            "message": f"Job {job_id} status updated from '{old_status}' to '{request.new_status}'",
+            "old_status": old_status,
+            "new_status": request.new_status,
+            "updated_job_data": {
+                "status": updated_job_data.get("status"),
+                "progress": updated_job_data.get("progress"),
+                "last_updated": updated_job_data.get("last_updated"),
+                "timeline_entries": len(updated_job_data.get("timeline", []))
+            }
+        })
+        
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"Error updating job status: {str(e)}"}, status_code=500)
+
+
 # Removed: generate-all-visualizations endpoint - visualizations are now pre-generated during Phase 2
 
 
@@ -6033,7 +6479,7 @@ def generate_waveform_visualization(y, sr, duration):
     # Convert to base64 string with high quality
     buffer = io.BytesIO()
     plt.savefig(buffer, format='png', facecolor='#2a3139', edgecolor='none', 
-                dpi=300, bbox_inches='tight', pad_inches=0.05)
+                dpi=150, bbox_inches='tight', pad_inches=0.05)
     buffer.seek(0)
     image_data = base64.b64encode(buffer.getvalue()).decode()
     plt.close(fig)
@@ -6103,7 +6549,7 @@ def generate_spectrogram_visualization(y, sr, duration):
     # Convert to base64 string with high quality
     buffer = io.BytesIO()
     plt.savefig(buffer, format='png', facecolor='#2a3139', edgecolor='none', 
-                dpi=300, bbox_inches='tight', pad_inches=0.05)
+                dpi=150, bbox_inches='tight', pad_inches=0.05)
     buffer.seek(0)
     image_data = base64.b64encode(buffer.getvalue()).decode()
     plt.close(fig)

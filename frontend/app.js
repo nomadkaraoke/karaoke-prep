@@ -1082,6 +1082,312 @@ function closeCookieManagementModal() {
     document.getElementById('cookie-management-modal').style.display = 'none';
 }
 
+// Delivery Message Template Management Functions (Admin Only)
+async function showDeliveryMessageTemplate() {
+    if (!currentUser || !currentUser.admin_access) {
+        showError('Admin access required');
+        return;
+    }
+    
+    const modal = document.getElementById('delivery-message-template-modal');
+    const content = document.getElementById('delivery-message-template-content');
+    
+    modal.style.display = 'flex';
+    content.innerHTML = '<div class="delivery-template-loading">Loading template...</div>';
+    
+    try {
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/delivery-message/template`);
+        
+        if (!response) return; // Auth failed, already handled
+        
+        if (response.ok) {
+            const result = await response.json();
+            displayDeliveryMessageTemplate(result);
+        } else {
+            const error = await response.json();
+            content.innerHTML = `<div class="error">Error loading template: ${error.message}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading delivery message template:', error);
+        content.innerHTML = `<div class="error">Error loading template: ${error.message}</div>`;
+    }
+}
+
+function displayDeliveryMessageTemplate(templateData) {
+    const content = document.getElementById('delivery-message-template-content');
+    
+    const lastUpdated = templateData.updated_at 
+        ? new Date(templateData.updated_at * 1000).toLocaleString()
+        : 'Never';
+    
+    const updatedBy = templateData.updated_by || 'Unknown';
+    
+    let html = `
+        <div class="delivery-template-management">
+            <div class="template-info-section">
+                <h4>📧 Email Delivery Template</h4>
+                <div class="template-info">
+                    <p>This template is used when copying delivery messages for completed jobs. Available template variables:</p>
+                    <ul>
+                        <li><code>{youtube_url}</code> - The YouTube video URL</li>
+                        <li><code>{dropbox_url}</code> - The Dropbox folder sharing link</li>
+                        <li><code>[NAME]</code> - Placeholder for customer name (manual replacement)</li>
+                    </ul>
+                    <p class="template-status">
+                        <strong>Last updated:</strong> ${lastUpdated} by ${updatedBy}
+                    </p>
+                </div>
+            </div>
+            
+            <div class="template-edit-section">
+                <form id="delivery-template-form" onsubmit="updateDeliveryMessageTemplate(event)">
+                    <div class="form-group">
+                        <label for="delivery-template-text">Template Text</label>
+                        <textarea id="delivery-template-text" class="form-control template-textarea" rows="20" required>${templateData.template}</textarea>
+                        <small class="help-text">Use {youtube_url} and {dropbox_url} for automatic substitution</small>
+                    </div>
+                    
+                    <div class="template-actions">
+                        <button type="submit" class="btn btn-primary">
+                            💾 Save Template
+                        </button>
+                        <button type="button" onclick="testDeliveryTemplate()" class="btn btn-secondary">
+                            🧪 Preview Template
+                        </button>
+                        <button type="button" onclick="closeDeliveryMessageTemplateModal()" class="btn btn-secondary">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+            
+            <div id="template-preview-section" class="template-preview-section" style="display: none;">
+                <h4>📋 Template Preview</h4>
+                <div id="template-preview-content" class="template-preview-content"></div>
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+async function updateDeliveryMessageTemplate(event) {
+    event.preventDefault();
+    
+    const templateText = document.getElementById('delivery-template-text').value.trim();
+    
+    if (!templateText) {
+        showError('Template text is required');
+        return;
+    }
+    
+    try {
+        showInfo('Saving template...');
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/delivery-message/template`, {
+            method: 'POST',
+            body: JSON.stringify({ template: templateText })
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showSuccess(result.message);
+            // Refresh the display to show updated timestamp
+            setTimeout(() => showDeliveryMessageTemplate(), 1000);
+        } else {
+            showError('Error saving template: ' + result.message);
+        }
+    } catch (error) {
+        console.error('Error saving delivery message template:', error);
+        showError('Error saving template: ' + error.message);
+    }
+}
+
+function testDeliveryTemplate() {
+    const templateText = document.getElementById('delivery-template-text').value;
+    const previewSection = document.getElementById('template-preview-section');
+    const previewContent = document.getElementById('template-preview-content');
+    
+    // Create test data
+    const testData = {
+        youtube_url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        dropbox_url: 'https://www.dropbox.com/sh/example123/AABbCc?dl=0'
+    };
+    
+    // Template the message
+    const templatedMessage = templateDeliveryMessage(templateText, testData.youtube_url, testData.dropbox_url);
+    
+    // Show preview
+    previewContent.innerHTML = `<pre>${escapeHtml(templatedMessage)}</pre>`;
+    previewSection.style.display = 'block';
+    
+    // Scroll to preview
+    previewSection.scrollIntoView({ behavior: 'smooth' });
+    
+    showInfo('Template preview generated with test data');
+}
+
+function closeDeliveryMessageTemplateModal() {
+    document.getElementById('delivery-message-template-modal').style.display = 'none';
+}
+
+// Delivery Message Templating Functions
+function templateDeliveryMessage(template, youtubeUrl, dropboxUrl) {
+    /**
+     * Template a delivery message with YouTube and Dropbox URLs
+     */
+    if (!template) {
+        return '';
+    }
+    
+    // Replace template variables
+    let templatedMessage = template;
+    
+    // Replace YouTube URL
+    if (youtubeUrl) {
+        templatedMessage = templatedMessage.replace(/{youtube_url}/g, youtubeUrl);
+    } else {
+        templatedMessage = templatedMessage.replace(/{youtube_url}/g, '[YouTube URL not available]');
+    }
+    
+    // Replace Dropbox URL
+    if (dropboxUrl) {
+        templatedMessage = templatedMessage.replace(/{dropbox_url}/g, dropboxUrl);
+    } else {
+        templatedMessage = templatedMessage.replace(/{dropbox_url}/g, '[Dropbox URL not available]');
+    }
+    
+    return templatedMessage;
+}
+
+async function copyDeliveryMessage(jobId) {
+    /**
+     * Copy a templated delivery message for a completed job to the clipboard
+     */
+    try {
+        showInfo('Preparing delivery message...');
+        
+        // Get the job data
+        const response = await authenticatedFetch(`${API_BASE_URL}/jobs/${jobId}`);
+        if (!response) return; // Auth failed, already handled
+        
+        const jobData = await response.json();
+        
+        // Get the current template
+        const templateResponse = await authenticatedFetch(`${API_BASE_URL}/admin/delivery-message/template`);
+        if (!templateResponse) return; // Auth failed, already handled
+        
+        const templateData = await templateResponse.json();
+        
+        if (!templateData.success) {
+            showError('Error loading delivery message template');
+            return;
+        }
+        
+        // Extract URLs from job data
+        const youtubeUrl = jobData.youtube_url || null;
+        const dropboxUrl = jobData.brand_code_dir_sharing_link || null;
+        
+        // Template the message
+        const templatedMessage = templateDeliveryMessage(templateData.template, youtubeUrl, dropboxUrl);
+        
+        // Copy to clipboard
+        try {
+            await navigator.clipboard.writeText(templatedMessage);
+            showSuccess('Delivery message copied to clipboard!');
+        } catch (clipboardError) {
+            console.warn('Modern clipboard API failed, trying fallback:', clipboardError);
+            
+            // Fallback for older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = templatedMessage;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                document.body.removeChild(textArea);
+                
+                if (successful) {
+                    showSuccess('Delivery message copied to clipboard! (fallback method)');
+                } else {
+                    showError('Failed to copy to clipboard');
+                }
+            } catch (fallbackError) {
+                console.error('Fallback copy failed:', fallbackError);
+                document.body.removeChild(textArea);
+                
+                // Show the message in a modal as last resort
+                showDeliveryMessagePopup(templatedMessage);
+            }
+        }
+        
+    } catch (error) {
+        console.error('Error copying delivery message:', error);
+        showError('Error preparing delivery message: ' + error.message);
+    }
+}
+
+function showDeliveryMessagePopup(message) {
+    /**
+     * Show delivery message in a popup if clipboard fails
+     */
+    const modalHtml = `
+        <div id="delivery-message-popup" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title">📧 Delivery Message</h3>
+                    <div class="modal-controls">
+                        <button onclick="closeDeliveryMessagePopup()" class="modal-close">✕</button>
+                    </div>
+                </div>
+                <div class="modal-body">
+                    <p>Copy failed. Please manually copy the message below:</p>
+                    <textarea class="delivery-message-popup-text" readonly onclick="this.select()">${escapeHtml(message)}</textarea>
+                    <div class="popup-actions">
+                        <button onclick="closeDeliveryMessagePopup()" class="btn btn-primary">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing popup
+    const existingPopup = document.getElementById('delivery-message-popup');
+    if (existingPopup) {
+        existingPopup.remove();
+    }
+    
+    // Add popup to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Show popup
+    const popup = document.getElementById('delivery-message-popup');
+    popup.style.display = 'flex';
+    
+    // Auto-select text
+    setTimeout(() => {
+        const textarea = popup.querySelector('.delivery-message-popup-text');
+        if (textarea) {
+            textarea.select();
+        }
+    }, 100);
+}
+
+function closeDeliveryMessagePopup() {
+    const popup = document.getElementById('delivery-message-popup');
+    if (popup) {
+        popup.remove();
+    }
+}
+
 // Update all API calls to include authentication headers
 async function authenticatedFetch(url, options = {}) {
     const headers = {
@@ -1123,17 +1429,17 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeNotificationSystem();
     
     // Debug timezone information for troubleshooting timestamp issues
-    console.log('🌍 Timezone Debug Info:', {
-        userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        timezoneOffset: new Date().getTimezoneOffset(),
-        timezoneOffsetHours: new Date().getTimezoneOffset() / 60,
-        localTime: new Date().toISOString(),
-        localTimeString: new Date().toString(),
-        localDateString: new Date().toLocaleDateString(),
-        localTimeStringFormatted: new Date().toLocaleString(),
-        sampleUTCParsing: parseServerTime('2024-01-01T12:00:00').toString(),
-        userAgent: navigator.userAgent.substring(0, 100)
-    });
+    // console.log('🌍 Timezone Debug Info:', {
+    //     userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    //     timezoneOffset: new Date().getTimezoneOffset(),
+    //     timezoneOffsetHours: new Date().getTimezoneOffset() / 60,
+    //     localTime: new Date().toISOString(),
+    //     localTimeString: new Date().toString(),
+    //     localDateString: new Date().toLocaleDateString(),
+    //     localTimeStringFormatted: new Date().toLocaleString(),
+    //     sampleUTCParsing: parseServerTime('2024-01-01T12:00:00').toString(),
+    //     userAgent: navigator.userAgent.substring(0, 100)
+    // });
     
     // Initialize authentication
     authenticateUser().then(isAuthenticated => {
@@ -1351,7 +1657,8 @@ function loadJobsWithoutScroll() {
 
 async function loadJobs() {
     try {
-        console.log('Loading jobs from API...');
+        // console.log('Loading jobs from API...');
+        
         const response = await authenticatedFetch(`${API_BASE_URL}/jobs`);
         
         if (!response) return null; // Auth failed, already handled
@@ -1361,7 +1668,7 @@ async function loadJobs() {
         }
         
         const jobs = await response.json();
-        console.log(`Loaded ${Object.keys(jobs).length} jobs`);
+        // console.log(`Loaded ${Object.keys(jobs).length} jobs`);
         
         // Check for job state changes that require notifications
         checkForJobNotifications(jobs);
@@ -1379,6 +1686,8 @@ async function loadJobs() {
         return null;
     }
 }
+
+// Removed: checkAndUpdateTimeouts() - now using Modal's built-in timeout handling
 
 function updateJobsList(jobs) {
     const jobsList = document.getElementById('jobs-list');
@@ -1412,13 +1721,13 @@ function updateStats(jobs) {
     Object.values(jobs).forEach(job => {
         stats.total++;
         const status = job.status || 'unknown';
-        if (['queued', 'processing_audio', 'transcribing', 'rendering'].includes(status)) {
+        if (['queued', 'processing_audio', 'transcribing', 'rendering', 'processing', 'finalizing'].includes(status)) {
             stats.processing++;
         } else if (status === 'awaiting_review') {
             stats.awaiting_review++;
         } else if (status === 'complete') {
             stats.complete++;
-        } else if (status === 'error') {
+        } else if (['error', 'timeout'].includes(status)) {
             stats.error++;
         }
     });
@@ -1440,7 +1749,7 @@ function createJobHTML(jobId, job) {
     // Format track info for display with brand code prefix
     let trackInfo;
     if (job.artist && job.title) {
-        const brandPrefix = job.brand_code ? `${job.brand_code} ` : '';
+        const brandPrefix = job.brand_code ? `${job.brand_code}: ` : '';
         trackInfo = `${brandPrefix}${job.artist} - ${job.title}`;
     } else {
         trackInfo = job.url ? 'URL Processing' : 'Unknown Track';
@@ -1459,7 +1768,10 @@ function createJobHTML(jobId, job) {
                     <div class="job-header">
                         <div class="job-title-section">
                             <div class="job-header-line">
-                                <span class="track-name">🎵 ${trackInfo}</span>
+                                <button onclick="copyTrackInfo('${escapeHtml(trackInfo)}')" class="copy-track-btn" title="Copy track info to clipboard">
+                                    📋
+                                </button>
+                                <span class="track-name">${trackInfo}</span>
                                 <div class="job-status">
                                     <span class="status-badge status-${status}">${formatStatus(status)}</span>
                                 </div>
@@ -1681,9 +1993,7 @@ function createMultiStageProgressBar(job, jobId) {
     const timeline_summary = job.timeline_summary;
     const currentStatus = job.status || 'unknown';
     const timeline = job.timeline || [];
-    
-    console.log('🔍 Creating clickable progress bar for jobId:', jobId);
-    
+        
     // Define all possible phases in order with cleaner labels
     const allPhases = [
         { key: 'queued', label: 'Queued', shortLabel: 'Queue' },
@@ -1838,7 +2148,8 @@ function getPhaseColor(phase, isUpcoming = false) {
         'rendering': isUpcoming ? '#66d9a3' : '#28a745',
         'finalizing': isUpcoming ? '#74b9ff' : '#0984e3',
         'complete': isUpcoming ? '#66d9a3' : '#28a745',
-        'error': isUpcoming ? '#ff8a9a' : '#dc3545'
+        'error': isUpcoming ? '#ff8a9a' : '#dc3545',
+        'timeout': isUpcoming ? '#ff9f66' : '#ff7f00'
     };
     return colors[phase] || (isUpcoming ? '#e9ecef' : '#6c757d');
 }
@@ -2359,6 +2670,7 @@ function createJobActions(jobId, job) {
     if (status === 'complete') {
         actions.push(`<button onclick="downloadVideo('${jobId}')" class="btn btn-success">📥 Download MP4 Video</button>`);
         actions.push(`<button onclick="showFilesModal('${jobId}')" class="btn btn-info">📁 View All Output Files</button>`);
+        actions.push(`<button onclick="copyDeliveryMessage('${jobId}')" class="btn btn-secondary">📧 Copy Delivery Message</button>`);
     }
     
     // Add Dropbox sharing link button if available
@@ -2370,10 +2682,14 @@ function createJobActions(jobId, job) {
         actions.push(`<button onclick="retryJob('${jobId}')" class="btn btn-warning">🔄 Retry</button>`);
     }
     
+    if (status === 'timeout') {
+        actions.push(`<button onclick="retryJob('${jobId}')" class="btn btn-warning">🔄 Retry</button>`);
+    }
+    
     // Admin-only clone action
     if (currentUser && currentUser.admin_access) {
-        // Show clone button for jobs that have completed at least phase 1
-        const completableStatuses = ['awaiting_review', 'reviewing', 'ready_for_finalization', 'rendering', 'finalizing', 'complete'];
+        // Show clone button for jobs that have completed at least phase 1, or failed jobs
+        const completableStatuses = ['awaiting_review', 'reviewing', 'ready_for_finalization', 'rendering', 'finalizing', 'complete', 'error', 'timeout'];
         if (completableStatuses.includes(status)) {
             actions.push(`<button onclick="showCloneJobModal('${jobId}')" class="btn btn-info">🔄 Clone Job</button>`);
         }
@@ -2381,6 +2697,12 @@ function createJobActions(jobId, job) {
 
     // Always available actions
     actions.push(`<button onclick="tailJobLogs('${jobId}')" class="btn btn-info">📜 View Logs</button>`);
+    
+    // Admin-only status override action
+    if (currentUser && currentUser.admin_access) {
+        actions.push(`<button onclick="showManualStatusUpdate('${jobId}')" class="btn btn-warning">⚙️ Status Override</button>`);
+    }
+    
     actions.push(`<button onclick="deleteJob('${jobId}')" class="btn btn-danger">🗑️ Delete</button>`);
     
     return actions.join(' ');
@@ -2914,6 +3236,268 @@ async function applyLogLevel() {
     } catch (error) {
         console.error('Error setting log level:', error);
         showError('Error setting log level: ' + error.message);
+    }
+}
+
+// Manual Status Update Functions (Admin Only)
+async function showManualStatusUpdate(jobId = null) {
+    if (!currentUser || !currentUser.admin_access) {
+        showError('Admin access required');
+        return;
+    }
+
+    const modal = document.getElementById('manual-status-update-modal');
+    const form = document.getElementById('manual-status-update-form');
+    const result = document.getElementById('status-update-result');
+    
+    // Reset form and result
+    form.reset();
+    result.style.display = 'none';
+    
+    // Pre-fill job ID if provided
+    if (jobId) {
+        const jobIdInput = document.getElementById('status-update-job-id');
+        if (jobIdInput) {
+            jobIdInput.value = jobId;
+        }
+    }
+    
+    // Show modal
+    modal.style.display = 'block';
+    
+    // Set up form submission handler
+    form.onsubmit = handleManualStatusUpdate;
+}
+
+async function handleManualStatusUpdate(event) {
+    event.preventDefault();
+    
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    const result = document.getElementById('status-update-result');
+    
+    // Get form values
+    const jobId = document.getElementById('status-update-job-id').value.trim();
+    const newStatus = document.getElementById('status-update-new-status').value;
+    const progress = document.getElementById('status-update-progress').value;
+    const additionalDataText = document.getElementById('status-update-additional-data').value.trim();
+    
+    // Validate required fields
+    if (!jobId || !newStatus) {
+        showError('Job ID and new status are required');
+        return;
+    }
+    
+    // Parse additional data if provided
+    let additionalData = {};
+    if (additionalDataText) {
+        try {
+            additionalData = JSON.parse(additionalDataText);
+        } catch (error) {
+            showError('Invalid JSON in additional data field');
+            return;
+        }
+    }
+    
+    // Prepare request data
+    const requestData = {
+        new_status: newStatus,
+        additional_data: additionalData
+    };
+    
+    if (progress !== '') {
+        requestData.progress = parseInt(progress);
+    }
+    
+    try {
+        // Show loading state
+        submitBtn.disabled = true;
+        submitBtn.textContent = '🔄 Updating...';
+        result.style.display = 'none';
+        
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/jobs/${jobId}/update-status`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        });
+        
+        if (!response) return; // Auth failed, already handled
+        
+        const responseData = await response.json();
+        
+        if (responseData.success) {
+            // Show success message
+            result.className = 'status-update-result success';
+            result.innerHTML = `
+                <h4>✅ Status Updated Successfully</h4>
+                <p><strong>Job ID:</strong> ${jobId}</p>
+                <p><strong>Old Status:</strong> ${responseData.old_status}</p>
+                <p><strong>New Status:</strong> ${responseData.new_status}</p>
+                <p><strong>Last Updated:</strong> ${responseData.updated_job_data.last_updated}</p>
+                <p><strong>Timeline Entries:</strong> ${responseData.updated_job_data.timeline_entries}</p>
+                <div class="success-note">
+                    <strong>Note:</strong> The status has been updated with timeline tracking. 
+                    An audit trail has been added to track this manual update.
+                </div>
+            `;
+            result.style.display = 'block';
+            
+            // Show success notification
+            showSuccess(`Job ${jobId} status updated to "${responseData.new_status}"`);
+            
+            // Refresh jobs list to show the updated status
+            loadJobs();
+            
+        } else {
+            // Show error message
+            result.className = 'status-update-result error';
+            result.innerHTML = `
+                <h4>❌ Update Failed</h4>
+                <p><strong>Error:</strong> ${responseData.message}</p>
+            `;
+            result.style.display = 'block';
+            
+            showError(`Failed to update job status: ${responseData.message}`);
+        }
+        
+    } catch (error) {
+        console.error('Error updating job status:', error);
+        
+        result.className = 'status-update-result error';
+        result.innerHTML = `
+            <h4>❌ Update Failed</h4>
+            <p><strong>Error:</strong> ${error.message}</p>
+            <p>Check the console for more details.</p>
+        `;
+        result.style.display = 'block';
+        
+        showError(`Failed to update job status: ${error.message}`);
+        
+    } finally {
+        // Reset button state
+        submitBtn.disabled = false;
+        submitBtn.textContent = '🔄 Update Job Status';
+    }
+}
+
+function closeManualStatusUpdateModal() {
+    const modal = document.getElementById('manual-status-update-modal');
+    modal.style.display = 'none';
+}
+
+function setStatusPreset(presetType) {
+    const newStatusSelect = document.getElementById('status-update-new-status');
+    const progressInput = document.getElementById('status-update-progress');
+    const additionalDataTextarea = document.getElementById('status-update-additional-data');
+    
+    // Clear previous values
+    newStatusSelect.value = '';
+    progressInput.value = '';
+    additionalDataTextarea.value = '';
+    
+    // Set values based on preset type
+    switch (presetType) {
+        case 'phase1_timeout':
+            newStatusSelect.value = 'timeout';
+            progressInput.value = '0';
+            additionalDataTextarea.value = JSON.stringify({
+                "error": "Function timed out after 600 seconds (10 minutes)",
+                "timeout_duration_seconds": 600,
+                "restart_available": true
+            }, null, 2);
+            break;
+            
+        case 'phase2_timeout':
+            newStatusSelect.value = 'timeout';
+            progressInput.value = '0';
+            additionalDataTextarea.value = JSON.stringify({
+                "error": "Function timed out after 600 seconds (10 minutes)",
+                "timeout_duration_seconds": 600,
+                "restart_available": true
+            }, null, 2);
+            break;
+            
+        case 'phase3_timeout':
+            newStatusSelect.value = 'timeout';
+            progressInput.value = '0';
+            additionalDataTextarea.value = JSON.stringify({
+                "error": "Function timed out after 600 seconds (10 minutes)",
+                "timeout_duration_seconds": 600,
+                "restart_available": true
+            }, null, 2);
+            break;
+            
+        case 'processing_error':
+            newStatusSelect.value = 'error';
+            progressInput.value = '0';
+            additionalDataTextarea.value = JSON.stringify({
+                "error": "Processing failed due to audio separation error",
+                "traceback": "Traceback (most recent call last):\n  File \"core.py\", line 123, in process_audio\n    raise Exception(\"Audio separation failed\")\nException: Audio separation failed"
+            }, null, 2);
+            break;
+            
+        case 'force_complete':
+            newStatusSelect.value = 'complete';
+            progressInput.value = '100';
+            additionalDataTextarea.value = JSON.stringify({
+                "video_path": "/output/job_id/Final Video.mp4",
+                "lrc_path": "/output/job_id/Karaoke.lrc",
+                "final_files": {
+                    "lossless_4k": "/output/job_id/Final Karaoke Lossless.mkv",
+                    "lossy_4k": "/output/job_id/Final Karaoke.mp4",
+                    "compressed_720p": "/output/job_id/Final Karaoke 720p.mp4"
+                }
+            }, null, 2);
+            break;
+            
+        case 'reset_queued':
+            newStatusSelect.value = 'queued';
+            progressInput.value = '0';
+            additionalDataTextarea.value = JSON.stringify({
+                "created_at": new Date().toISOString(),
+                "restart_from_beginning": true
+            }, null, 2);
+            break;
+            
+        case 'await_review':
+            newStatusSelect.value = 'awaiting_review';
+            progressInput.value = '75';
+            additionalDataTextarea.value = JSON.stringify({
+                "track_data": {
+                    "artist": "Test Artist",
+                    "title": "Test Title"
+                },
+                "track_output_dir": "/output/job_id",
+                "corrections_file": "/output/job_id/lyrics/Test Artist - Test Title (Lyrics Corrections).json"
+            }, null, 2);
+            break;
+            
+        case 'ready_final':
+            newStatusSelect.value = 'ready_for_finalization';
+            progressInput.value = '85';
+            additionalDataTextarea.value = JSON.stringify({
+                "video_path": "/output/job_id/Test Artist - Test Title (With Vocals).mkv",
+                "lrc_path": "/output/job_id/Test Artist - Test Title (Karaoke).lrc",
+                "output_files_partial": {
+                    "video": "/output/job_id/Test Artist - Test Title (With Vocals).mkv",
+                    "lrc": "/output/job_id/Test Artist - Test Title (Karaoke).lrc"
+                }
+            }, null, 2);
+            break;
+    }
+    
+    // Add visual feedback
+    const button = event?.target;
+    if (button) {
+        const originalText = button.innerHTML;
+        button.innerHTML = '✓ Applied';
+        button.style.opacity = '0.7';
+        
+        setTimeout(() => {
+            button.innerHTML = originalText;
+            button.style.opacity = '1';
+        }, 1000);
     }
 }
 
@@ -3994,7 +4578,8 @@ function formatStatus(status) {
         'rendering': 'Rendering Video',
         'finalizing': 'Finalizing',
         'complete': 'Complete',
-        'error': 'Error'
+        'error': 'Error',
+        'timeout': 'Timed Out'
     };
     return statusMap[status] || status;
 }
@@ -4324,6 +4909,30 @@ function updateCopyButtonFeedback() {
             copyBtn.textContent = originalText;
             copyBtn.className = originalClass;
         }, 2000);
+    }
+}
+
+function copyTrackInfo(trackInfo) {
+    try {
+        copyTextToClipboard(trackInfo, `Track info copied to clipboard: ${trackInfo}`);
+        
+        // Find and update the copy button that was clicked
+        const copyBtn = event.target;
+        if (copyBtn) {
+            const originalText = copyBtn.textContent;
+            copyBtn.textContent = '✅';
+            copyBtn.style.backgroundColor = '#28a745';
+            copyBtn.style.color = 'white';
+            
+            setTimeout(() => {
+                copyBtn.textContent = originalText;
+                copyBtn.style.backgroundColor = '';
+                copyBtn.style.color = '';
+            }, 1500);
+        }
+    } catch (error) {
+        console.error('Error copying track info:', error);
+        showError('Failed to copy track info to clipboard');
     }
 }
 
@@ -4919,9 +5528,27 @@ async function switchCachedVisualization(filename, fileType) {
     const cacheKey = `${filename}-${currentVisualizationMode}`;
     const cachedData = visualizationCache.get(cacheKey);
     
-    if (cachedData) {
-        // Use cached data
-        renderVisualizationForFile(filename, fileType, cachedData);
+    if (cachedData !== undefined) {
+        if (cachedData === null) {
+            // This visualization failed to load previously
+            const safeId = filename.replace(/[^a-zA-Z0-9]/g, '_');
+            let loadingElement;
+            
+            if (fileType === 'backing_vocals') {
+                loadingElement = document.getElementById(`bv-loading-${safeId}`);
+            } else {
+                loadingElement = document.getElementById(`viz-loading-${safeId}`);
+            }
+            
+            if (loadingElement) {
+                loadingElement.textContent = `⚠️ ${currentVisualizationMode} visualization unavailable`;
+                loadingElement.style.color = '#f59e0b';
+                loadingElement.style.display = 'block';
+            }
+        } else {
+            // Use cached data
+            renderVisualizationForFile(filename, fileType, cachedData);
+        }
     } else {
         // Data not in cache, try to load it
         const safeId = filename.replace(/[^a-zA-Z0-9]/g, '_');
@@ -4943,14 +5570,20 @@ async function switchCachedVisualization(filename, fileType) {
             // Attempt to load the visualization data
             await loadVisualizationData(filename, currentVisualizationMode);
             const newCachedData = visualizationCache.get(cacheKey);
-            if (newCachedData) {
+            if (newCachedData && newCachedData !== null) {
                 renderVisualizationForFile(filename, fileType, newCachedData);
+            } else {
+                // Loading failed and was cached as null
+                if (loadingElement) {
+                    loadingElement.textContent = `⚠️ ${currentVisualizationMode} visualization unavailable`;
+                    loadingElement.style.color = '#f59e0b';
+                }
             }
         } catch (error) {
-            console.error(`Error loading ${currentVisualizationMode} for ${filename}:`, error);
+            console.warn(`Error loading ${currentVisualizationMode} for ${filename}:`, error);
             if (loadingElement) {
-                loadingElement.textContent = `Failed to load ${currentVisualizationMode}`;
-                loadingElement.style.color = '#ef4444';
+                loadingElement.textContent = `⚠️ ${currentVisualizationMode} visualization unavailable`;
+                loadingElement.style.color = '#f59e0b';
             }
         }
     }
@@ -4979,34 +5612,75 @@ async function generateAllVisualizations(jobId) {
         const loadPromises = Array.from(instrumentalElements).map(async (element) => {
             const filename = element.dataset.filename;
             if (filename) {
-                // Load main instrumental visualization
-                await loadVisualizationForInstrumental(filename);
-                
-                // Check for backing vocals
-                const backingVocalsElement = element.querySelector('.backing-vocals-viz');
-                if (backingVocalsElement) {
-                    const backingVocalsFilename = backingVocalsElement.dataset.filename;
-                    if (backingVocalsFilename) {
-                        await loadBackingVocalsVisualization(backingVocalsFilename);
+                try {
+                    // Load main instrumental visualization
+                    await loadVisualizationForInstrumental(filename);
+                    
+                    // Check for backing vocals
+                    const backingVocalsElement = element.querySelector('.backing-vocals-viz');
+                    if (backingVocalsElement) {
+                        const backingVocalsFilename = backingVocalsElement.dataset.filename;
+                        if (backingVocalsFilename) {
+                            await loadBackingVocalsVisualization(backingVocalsFilename);
+                        }
                     }
+                    return { filename, success: true };
+                } catch (error) {
+                    console.warn(`Failed to load visualizations for ${filename}:`, error);
+                    return { filename, success: false, error };
+                }
+            }
+            return { filename: 'unknown', success: false, error: 'No filename' };
+        });
+        
+        // Use allSettled to allow some visualizations to fail without breaking everything
+        const results = await Promise.allSettled(loadPromises);
+        
+        // Count successful and failed loads
+        let successCount = 0;
+        let failureCount = 0;
+        
+        results.forEach((result) => {
+            if (result.status === 'fulfilled' && result.value.success) {
+                successCount++;
+            } else {
+                failureCount++;
+                if (result.status === 'fulfilled') {
+                    console.warn(`Visualization failed for ${result.value.filename}:`, result.value.error);
+                } else {
+                    console.warn('Visualization promise rejected:', result.reason);
                 }
             }
         });
         
-        await Promise.all(loadPromises);
-        console.log('All pre-generated visualizations loaded successfully');
+        console.log(`Visualization loading complete: ${successCount} succeeded, ${failureCount} failed`);
         
-        // Enable audio previews now that visualizations are loaded
+        // Always enable audio previews regardless of visualization success
         enableAudioPreviews();
         
         hideInfo();
-        showSuccess('Visualizations loaded successfully');
+        
+        // Show appropriate message based on results
+        if (failureCount === 0) {
+            showSuccess('All visualizations loaded successfully');
+        } else if (successCount > 0) {
+            showSuccess(`${successCount} visualizations loaded successfully. ${failureCount} failed to load but you can still preview audio and select tracks.`);
+        } else {
+            showInfo('Visualizations failed to load, but you can still preview audio and select tracks.');
+        }
         
     } catch (error) {
-        console.error('Error loading visualizations:', error);
+        console.error('Error in generateAllVisualizations:', error);
         hideInfo();
-        showError(`Failed to load visualizations: ${error.message}`);
-        // Don't throw - we can still show the modal without visualizations
+        
+        // Always try to enable audio previews even if visualization loading had errors
+        try {
+            enableAudioPreviews();
+            showInfo('Visualizations failed to load, but audio previews are available for track selection.');
+        } catch (audioError) {
+            console.error('Error enabling audio previews:', audioError);
+            showError('Failed to load visualizations and audio previews. You can still select tracks manually.');
+        }
     }
 }
 
@@ -5051,51 +5725,189 @@ function renderVisualizationForFile(filename, fileType, visualizationData) {
 }
 
 function enableAudioPreviews() {
+    console.log('🔊 Enabling audio previews...');
+    
+    let instrumentalCount = 0;
+    let backingVocalsCount = 0;
+    let errorCount = 0;
+    
     try {
-        console.log('Enabling audio previews after visualization completion');
         showInfo('Setting up audio previews...', 1500);
         
         // Enable main instrumental audio previews
         const instrumentalAudioElements = document.querySelectorAll('.audio-preview-player:not(.backing-vocals-player)');
+        console.log(`Found ${instrumentalAudioElements.length} instrumental audio elements`);
+        
         instrumentalAudioElements.forEach(audio => {
-            const filename = audio.dataset.filename;
-            if (filename && !audio.querySelector('source')) {
-                const source = document.createElement('source');
-                source.src = `${API_BASE_URL}/corrections/${currentJobId}/instrumental-preview/${filename}`;
-                source.type = 'audio/flac';
-                audio.appendChild(source);
-                
-                // Load the audio now that the source is set
-                audio.load();
-                
-                console.log(`Enabled audio preview for: ${filename}`);
+            try {
+                const filename = audio.dataset.filename;
+                if (filename && !audio.querySelector('source')) {
+                    const source = document.createElement('source');
+                    source.src = `${API_BASE_URL}/corrections/${currentJobId}/instrumental-preview/${filename}`;
+                    source.type = 'audio/flac';
+                    audio.appendChild(source);
+                    
+                    // Load the audio now that the source is set
+                    audio.load();
+                    
+                    instrumentalCount++;
+                    console.log(`✅ Enabled audio preview for: ${filename}`);
+                } else if (!filename) {
+                    console.warn('Audio element missing filename:', audio);
+                } else {
+                    console.log(`Audio preview already enabled for: ${filename}`);
+                }
+            } catch (audioError) {
+                errorCount++;
+                console.warn('Error enabling individual audio preview:', audioError);
             }
         });
         
         // Enable backing vocals audio previews
         const backingVocalsAudioElements = document.querySelectorAll('.backing-vocals-player');
+        console.log(`Found ${backingVocalsAudioElements.length} backing vocals audio elements`);
+        
         backingVocalsAudioElements.forEach(audio => {
-            const filename = audio.dataset.filename;
-            if (filename && !audio.querySelector('source')) {
-                const source = document.createElement('source');
-                source.src = `${API_BASE_URL}/corrections/${currentJobId}/backing-vocals-preview/${filename}`;
-                source.type = 'audio/flac';
-                audio.appendChild(source);
-                
-                // Load the audio now that the source is set
-                audio.load();
-                
-                console.log(`Enabled backing vocals audio preview for: ${filename}`);
+            try {
+                const filename = audio.dataset.filename;
+                if (filename && !audio.querySelector('source')) {
+                    const source = document.createElement('source');
+                    source.src = `${API_BASE_URL}/corrections/${currentJobId}/backing-vocals-preview/${filename}`;
+                    source.type = 'audio/flac';
+                    audio.appendChild(source);
+                    
+                    // Load the audio now that the source is set
+                    audio.load();
+                    
+                    backingVocalsCount++;
+                    console.log(`✅ Enabled backing vocals audio preview for: ${filename}`);
+                } else if (!filename) {
+                    console.warn('Backing vocals element missing filename:', audio);
+                } else {
+                    console.log(`Backing vocals preview already enabled for: ${filename}`);
+                }
+            } catch (audioError) {
+                errorCount++;
+                console.warn('Error enabling backing vocals audio preview:', audioError);
             }
         });
         
-        console.log('All audio previews enabled successfully');
-        showInfo('Audio previews ready - you can now play and compare tracks', 2000);
+        console.log(`🎵 Audio preview setup complete: ${instrumentalCount} instrumental, ${backingVocalsCount} backing vocals, ${errorCount} errors`);
+        
+        if (instrumentalCount > 0 || backingVocalsCount > 0) {
+            showInfo(`Audio previews ready - you can now play and compare tracks (${instrumentalCount + backingVocalsCount} tracks available)`, 2000);
+        } else {
+            showInfo('Audio previews setup complete - tracks should be ready shortly', 1500);
+        }
+        
+        // Always ensure the instrumental selection functionality is working
+        // even if audio previews had issues
+        ensureInstrumentalSelectionWorks();
         
     } catch (error) {
-        console.error('Error enabling audio previews:', error);
-        // Don't throw error - audio previews are non-critical
+        console.error('Error in enableAudioPreviews:', error);
+        errorCount++;
+        
+        // Still try to ensure basic functionality works
+        try {
+            ensureInstrumentalSelectionWorks();
+            showInfo('Some audio previews may not be available, but you can still select tracks to proceed');
+        } catch (fallbackError) {
+            console.error('Error in fallback setup:', fallbackError);
+            showError('Audio previews unavailable, but track selection should still work');
+        }
     }
+}
+
+function ensureInstrumentalSelectionWorks() {
+    // Make sure all instrumental options are clickable and the confirm button is properly set up
+    const instrumentalOptions = document.querySelectorAll('.instrumental-option');
+    console.log(`🎯 Ensuring ${instrumentalOptions.length} instrumental options are selectable`);
+    
+    instrumentalOptions.forEach((option, index) => {
+        const filename = option.dataset.filename;
+        if (filename) {
+            // Ensure the click handler works by adding a backup event listener
+            option.addEventListener('click', function(e) {
+                console.log(`📍 Backup click handler for ${filename}`);
+                selectInstrumental(filename, this);
+            });
+            
+            // Make sure the option is visually interactive
+            option.style.cursor = 'pointer';
+            option.style.userSelect = 'none';
+            
+            console.log(`✅ Instrumental option ${index + 1} (${filename}) is ready for selection`);
+        }
+    });
+    
+    // Also ensure all timeline click handlers are working
+    ensureTimelineClickHandlers();
+    
+    // Update the confirm button state
+    updateConfirmInstrumentalButton();
+    
+    console.log('🎯 Instrumental selection functionality verified');
+}
+
+function ensureTimelineClickHandlers() {
+    console.log('🎯 Verifying timeline click handlers...');
+    
+    // Check main instrumental timeline click handlers
+    const timelineElements = document.querySelectorAll('.timeline-clicks');
+    console.log(`Found ${timelineElements.length} timeline click elements`);
+    
+    timelineElements.forEach((timeline, index) => {
+        const timelineId = timeline.id;
+        console.log(`📍 Checking timeline element ${index + 1}: ${timelineId}`);
+        
+        // Make sure it's visible and clickable
+        timeline.style.cursor = 'pointer';
+        timeline.style.pointerEvents = 'auto';
+        
+        // Check if it has a click handler already
+        const hasOnClick = timeline.getAttribute('onclick');
+        if (!hasOnClick) {
+            console.warn(`⚠️ Timeline element ${timelineId} missing onclick handler`);
+            
+            // Try to determine the filename from the ID and add a backup handler
+            if (timelineId.startsWith('timeline-')) {
+                const filenameId = timelineId.replace('timeline-', '');
+                // Try to find the corresponding instrumental option to get the real filename
+                const instrumentalOption = document.querySelector(`[data-filename*="${filenameId}"]`);
+                if (instrumentalOption) {
+                    const filename = instrumentalOption.dataset.filename;
+                    console.log(`📍 Adding backup click handler for ${filename}`);
+                    timeline.addEventListener('click', function(e) {
+                        console.log(`📍 Backup timeline click for ${filename}`);
+                        seekToPosition(filename, e);
+                    });
+                }
+            } else if (timelineId.startsWith('bv-timeline-')) {
+                const filenameId = timelineId.replace('bv-timeline-', '');
+                // Try to find the corresponding backing vocals element
+                const backingVocalsElement = document.querySelector(`[data-filename*="${filenameId}"]`);
+                if (backingVocalsElement) {
+                    const filename = backingVocalsElement.dataset.filename;
+                    console.log(`📍 Adding backup click handler for backing vocals ${filename}`);
+                    timeline.addEventListener('click', function(e) {
+                        console.log(`📍 Backup backing vocals timeline click for ${filename}`);
+                        seekToBackingVocalsPosition(filename, e);
+                    });
+                }
+            }
+        } else {
+            console.log(`✅ Timeline element ${timelineId} has click handler: ${hasOnClick.substring(0, 50)}...`);
+        }
+        
+        // Ensure it's visible
+        if (timeline.style.display === 'none') {
+            console.warn(`⚠️ Timeline element ${timelineId} is hidden - making visible`);
+            timeline.style.display = 'block';
+        }
+    });
+    
+    console.log('🎯 Timeline click handlers verification complete');
 }
 
 async function loadVisualizationForInstrumental(filename) {
@@ -5111,59 +5923,139 @@ async function loadVisualizationForInstrumental(filename) {
     
     try {
         // Load both waveform and spectrogram data to cache for smooth switching
-        await Promise.all([
+        const results = await Promise.allSettled([
             loadVisualizationData(filename, 'waveform'),
             loadVisualizationData(filename, 'spectrogram')
         ]);
         
-        // Display the current visualization mode
-        const cacheKey = `${filename}-${currentVisualizationMode}`;
-        if (visualizationCache.has(cacheKey)) {
-            const cachedData = visualizationCache.get(cacheKey);
-            renderVisualizationToCanvas(canvasElement, cachedData);
-            
-            if (loadingElement) loadingElement.style.display = 'none';
-            if (displayElement) displayElement.style.display = 'block';
+        // Check if at least one visualization type loaded successfully
+        let hasAnyVisualization = false;
+        results.forEach((result, index) => {
+            const vizType = index === 0 ? 'waveform' : 'spectrogram';
+            if (result.status === 'fulfilled') {
+                const cacheKey = `${filename}-${vizType}`;
+                if (visualizationCache.has(cacheKey)) {
+                    hasAnyVisualization = true;
+                }
+            } else {
+                console.warn(`Failed to load ${vizType} for ${filename}:`, result.reason);
+            }
+        });
+        
+        if (hasAnyVisualization) {
+            // Display the current visualization mode if available
+            const cacheKey = `${filename}-${currentVisualizationMode}`;
+            if (visualizationCache.has(cacheKey)) {
+                const cachedData = visualizationCache.get(cacheKey);
+                renderVisualizationToCanvas(canvasElement, cachedData);
+                
+                if (loadingElement) loadingElement.style.display = 'none';
+                if (displayElement) displayElement.style.display = 'block';
+            } else {
+                // Try the other visualization mode
+                const alternateMode = currentVisualizationMode === 'waveform' ? 'spectrogram' : 'waveform';
+                const alternateCacheKey = `${filename}-${alternateMode}`;
+                if (visualizationCache.has(alternateCacheKey)) {
+                    const cachedData = visualizationCache.get(alternateCacheKey);
+                    renderVisualizationToCanvas(canvasElement, cachedData);
+                    
+                    if (loadingElement) {
+                        loadingElement.textContent = `${currentVisualizationMode} unavailable, showing ${alternateMode}`;
+                        loadingElement.style.color = '#f59e0b';
+                        loadingElement.style.display = 'block';
+                    }
+                    if (displayElement) displayElement.style.display = 'block';
+                } else {
+                    throw new Error('No visualizations available');
+                }
+            }
+        } else {
+            throw new Error('All visualization types failed to load');
         }
         
     } catch (error) {
-        console.error(`Error loading visualizations for ${filename}:`, error);
+        console.warn(`Error loading visualizations for ${filename}:`, error);
         
+        // Show error state but keep everything functional
         if (loadingElement) {
-            loadingElement.textContent = `Failed to load visualizations`;
-            loadingElement.style.color = '#ef4444';
+            loadingElement.textContent = `⚠️ Visualization unavailable (audio preview still works)`;
+            loadingElement.style.color = '#f59e0b';
+            loadingElement.style.display = 'block';
         }
+        
+        // Hide the canvas but keep the container and click areas visible
+        if (canvasElement) {
+            canvasElement.style.display = 'none';
+        }
+        
+        // Make sure the display element is shown so the audio controls remain accessible
+        if (displayElement) {
+            displayElement.style.display = 'block';
+        }
+        
+        // Ensure the timeline click handler is still available by creating a fallback click area
+        const timelineClicksElement = document.getElementById(`timeline-${filename.replace(/[^a-zA-Z0-9]/g, '_')}`);
+        if (timelineClicksElement) {
+            // Make sure the timeline clicks element is visible and clickable even without visualization
+            timelineClicksElement.style.display = 'block';
+            timelineClicksElement.style.height = '40px';
+            timelineClicksElement.style.backgroundColor = '#f3f4f6';
+            timelineClicksElement.style.border = '1px dashed #d1d5db';
+            timelineClicksElement.style.borderRadius = '4px';
+            timelineClicksElement.style.cursor = 'pointer';
+            timelineClicksElement.style.position = 'relative';
+            timelineClicksElement.innerHTML = '<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #6b7280; font-size: 12px;">Click to seek in audio</div>';
+        }
+        
+        // Don't throw the error - let the modal continue functioning
     }
 }
 
 async function loadVisualizationData(filename, visualizationType) {
+    const cacheKey = `${filename}-${visualizationType}`;
+    
+    // Skip if already cached
+    if (visualizationCache.has(cacheKey)) {
+        return;
+    }
+    
     try {
-        const cacheKey = `${filename}-${visualizationType}`;
-        
-        // Skip if already cached
-        if (visualizationCache.has(cacheKey)) {
-            return;
-        }
-        
         // Use unified endpoint for all files
         const endpoint = `${API_BASE_URL}/corrections/${currentJobId}/visualization/${visualizationType}/${filename}`;
         
         const response = await authenticatedFetch(endpoint);
         
+        if (!response) {
+            // Auth failed, already handled by authenticatedFetch
+            throw new Error('Authentication failed');
+        }
+        
         if (!response.ok) {
-            throw new Error(`Failed to load ${visualizationType}: ${response.status}`);
+            if (response.status === 404) {
+                throw new Error(`${visualizationType} visualization not found (404) - this is normal if visualization wasn't generated`);
+            } else {
+                throw new Error(`Failed to load ${visualizationType}: HTTP ${response.status}`);
+            }
         }
         
         const data = await response.json();
         
+        // Validate the response data
+        if (!data || (!data.waveform_data && !data.spectrogram_data)) {
+            throw new Error(`Invalid ${visualizationType} data received - missing visualization data`);
+        }
+        
         // Cache the data
         visualizationCache.set(cacheKey, data);
         const fileType = filename.includes('Backing Vocals') ? 'backing vocals' : 'instrumental';
-        console.log(`Cached ${visualizationType} data for ${filename} (${fileType})`);
+        console.log(`✅ Cached ${visualizationType} data for ${filename} (${fileType})`);
         
     } catch (error) {
-        console.error(`Error loading ${visualizationType} for ${filename}:`, error);
-        // Don't throw - allow other visualization types to load
+        console.warn(`⚠️ Could not load ${visualizationType} for ${filename}:`, error.message);
+        // Mark in cache that this visualization failed to load to avoid repeated requests
+        visualizationCache.set(cacheKey, null);
+        // Re-throw the error so calling functions can handle it appropriately
+        throw error;
     }
 }
 
@@ -5180,28 +6072,92 @@ async function loadBackingVocalsVisualization(backingVocalsFilename) {
     
     try {
         // Load both waveform and spectrogram data to cache for smooth switching
-        await Promise.all([
+        const results = await Promise.allSettled([
             loadVisualizationData(backingVocalsFilename, 'waveform'),
             loadVisualizationData(backingVocalsFilename, 'spectrogram')
         ]);
         
-        // Display the current visualization mode
-        const cacheKey = `${backingVocalsFilename}-${currentVisualizationMode}`;
-        if (visualizationCache.has(cacheKey)) {
-            const cachedData = visualizationCache.get(cacheKey);
-            renderVisualizationToCanvas(canvasElement, cachedData);
-            
-            if (loadingElement) loadingElement.style.display = 'none';
-            if (displayElement) displayElement.style.display = 'block';
+        // Check if at least one visualization type loaded successfully
+        let hasAnyVisualization = false;
+        results.forEach((result, index) => {
+            const vizType = index === 0 ? 'waveform' : 'spectrogram';
+            if (result.status === 'fulfilled') {
+                const cacheKey = `${backingVocalsFilename}-${vizType}`;
+                if (visualizationCache.has(cacheKey)) {
+                    hasAnyVisualization = true;
+                }
+            } else {
+                console.warn(`Failed to load backing vocals ${vizType} for ${backingVocalsFilename}:`, result.reason);
+            }
+        });
+        
+        if (hasAnyVisualization) {
+            // Display the current visualization mode if available
+            const cacheKey = `${backingVocalsFilename}-${currentVisualizationMode}`;
+            if (visualizationCache.has(cacheKey)) {
+                const cachedData = visualizationCache.get(cacheKey);
+                renderVisualizationToCanvas(canvasElement, cachedData);
+                
+                if (loadingElement) loadingElement.style.display = 'none';
+                if (displayElement) displayElement.style.display = 'block';
+            } else {
+                // Try the other visualization mode
+                const alternateMode = currentVisualizationMode === 'waveform' ? 'spectrogram' : 'waveform';
+                const alternateCacheKey = `${backingVocalsFilename}-${alternateMode}`;
+                if (visualizationCache.has(alternateCacheKey)) {
+                    const cachedData = visualizationCache.get(alternateCacheKey);
+                    renderVisualizationToCanvas(canvasElement, cachedData);
+                    
+                    if (loadingElement) {
+                        loadingElement.textContent = `${currentVisualizationMode} unavailable, showing ${alternateMode}`;
+                        loadingElement.style.color = '#f59e0b';
+                        loadingElement.style.display = 'block';
+                    }
+                    if (displayElement) displayElement.style.display = 'block';
+                } else {
+                    throw new Error('No backing vocals visualizations available');
+                }
+            }
+        } else {
+            throw new Error('All backing vocals visualization types failed to load');
         }
         
     } catch (error) {
-        console.error(`Error loading backing vocals visualizations for ${backingVocalsFilename}:`, error);
+        console.warn(`Error loading backing vocals visualizations for ${backingVocalsFilename}:`, error);
         
+        // Show error state but keep everything functional
         if (loadingElement) {
-            loadingElement.textContent = 'Failed to load backing vocals visualizations';
-            loadingElement.style.color = '#ef4444';
+            loadingElement.textContent = '⚠️ Backing vocals visualization unavailable (audio preview still works)';
+            loadingElement.style.color = '#f59e0b';
+            loadingElement.style.display = 'block';
         }
+        
+        // Hide the canvas but keep the container and click areas visible
+        if (canvasElement) {
+            canvasElement.style.display = 'none';
+        }
+        
+        // Make sure the display element is shown so the audio controls remain accessible
+        if (displayElement) {
+            displayElement.style.display = 'block';
+        }
+        
+        // Ensure the backing vocals timeline click handler is still available
+        const backingVocalsId = backingVocalsFilename.replace(/[^a-zA-Z0-9]/g, '_');
+        const timelineClicksElement = document.getElementById(`bv-timeline-${backingVocalsId}`);
+        if (timelineClicksElement) {
+            // Make sure the timeline clicks element is visible and clickable even without visualization
+            timelineClicksElement.style.display = 'block';
+            timelineClicksElement.style.height = '30px';
+            timelineClicksElement.style.backgroundColor = '#f3f4f6';
+            timelineClicksElement.style.border = '1px dashed #d1d5db';
+            timelineClicksElement.style.borderRadius = '4px';
+            timelineClicksElement.style.cursor = 'pointer';
+            timelineClicksElement.style.position = 'relative';
+            timelineClicksElement.innerHTML = '<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #6b7280; font-size: 11px;">Click to seek in backing vocals</div>';
+        }
+        
+        // Don't throw the error - let the modal continue functioning
     }
 }
 
@@ -5263,88 +6219,182 @@ function updateVisualizationPlayhead(filename, currentTime, duration) {
 }
 
 function seekToPosition(filename, event) {
+    console.log(`🎯 seekToPosition called for: ${filename}`);
+    
     // Prevent event bubbling to avoid triggering selectInstrumental
     event.stopPropagation();
     event.preventDefault();
     
-    const timelineElement = event.currentTarget;
-    const rect = timelineElement.getBoundingClientRect();
-    const clickX = event.clientX - rect.left;
-    
-    // Calculate percentage with improved accuracy
-    // The backend now generates images with minimal left padding for precise seeking
-    let percentage = clickX / rect.width;
-    
-    // Ensure percentage is within bounds
-    percentage = Math.max(0, Math.min(1, percentage));
-    
-    // Find the corresponding audio player
-    const audioPlayer = document.querySelector(`audio[data-filename="${filename}"]`);
-    if (audioPlayer && audioPlayer.duration) {
-        const newTime = percentage * audioPlayer.duration;
-        audioPlayer.currentTime = newTime;
+    try {
+        const timelineElement = event.currentTarget;
+        const rect = timelineElement.getBoundingClientRect();
+        const clickX = event.clientX - rect.left;
         
-        // Start playback automatically
-        audioPlayer.play().catch(error => {
-            console.warn('Could not start playback:', error);
-            // Still update playhead even if playback fails
-            updateVisualizationPlayhead(filename, newTime, audioPlayer.duration);
-        });
+        // Calculate percentage with improved accuracy
+        // The backend now generates images with minimal left padding for precise seeking
+        let percentage = clickX / rect.width;
+        
+        // Ensure percentage is within bounds
+        percentage = Math.max(0, Math.min(1, percentage));
+        
+        console.log(`🎯 Calculated seek percentage: ${(percentage * 100).toFixed(1)}%`);
+        
+        // Find the corresponding audio player
+        const audioPlayer = document.querySelector(`audio[data-filename="${filename}"]`);
+        if (audioPlayer) {
+            if (audioPlayer.duration) {
+                const newTime = percentage * audioPlayer.duration;
+                audioPlayer.currentTime = newTime;
+                
+                console.log(`🎯 Seeking to ${newTime.toFixed(1)}s of ${audioPlayer.duration.toFixed(1)}s`);
+                
+                // Start playback automatically
+                audioPlayer.play().then(() => {
+                    console.log(`✅ Playback started successfully for ${filename}`);
+                }).catch(error => {
+                    console.warn('Could not start playback:', error);
+                    // Still update playhead even if playback fails
+                    updateVisualizationPlayhead(filename, newTime, audioPlayer.duration);
+                });
+            } else {
+                console.warn(`Audio for ${filename} is not ready for seeking yet (duration: ${audioPlayer.duration})`);
+                showInfo('Loading audio - please try again in a moment');
+                
+                // Try to load the audio and then seek
+                audioPlayer.addEventListener('loadedmetadata', () => {
+                    if (audioPlayer.duration) {
+                        const newTime = percentage * audioPlayer.duration;
+                        audioPlayer.currentTime = newTime;
+                        console.log(`🎯 Delayed seek to ${newTime.toFixed(1)}s after metadata loaded`);
+                        audioPlayer.play().catch(error => {
+                            console.warn('Could not start playback after loading metadata:', error);
+                        });
+                    }
+                }, { once: true });
+                
+                // Force load if not already loading
+                audioPlayer.load();
+            }
+        } else {
+            console.warn(`Audio player not found for ${filename} - seeking not available`);
+            showInfo('Audio preview not ready yet - please wait a moment and try again');
+        }
+    } catch (error) {
+        console.error('Error in seekToPosition:', error);
+        showError('Error seeking in audio - please try again');
     }
 }
 
 function seekToBackingVocalsPosition(backingVocalsFilename, event) {
+    console.log(`🎯 seekToBackingVocalsPosition called for: ${backingVocalsFilename}`);
+    
     // Prevent event bubbling to avoid triggering selectInstrumental
     event.stopPropagation();
     event.preventDefault();
     
-    const timelineElement = event.currentTarget;
-    const rect = timelineElement.getBoundingClientRect();
-    const clickX = event.clientX - rect.left;
-    
-    // Calculate percentage with improved accuracy
-    // The backend now generates images with minimal left padding for precise seeking
-    let percentage = clickX / rect.width;
-    
-    // Ensure percentage is within bounds
-    percentage = Math.max(0, Math.min(1, percentage));
-    
-    // Find the corresponding backing vocals audio player
-    const audioPlayer = document.querySelector(`audio[data-filename="${backingVocalsFilename}"]`);
-    if (audioPlayer && audioPlayer.duration) {
-        const newTime = percentage * audioPlayer.duration;
-        audioPlayer.currentTime = newTime;
+    try {
+        const timelineElement = event.currentTarget;
+        const rect = timelineElement.getBoundingClientRect();
+        const clickX = event.clientX - rect.left;
         
-        // Start playback automatically
-        audioPlayer.play().catch(error => {
-            console.warn('Could not start backing vocals playback:', error);
-            // Still update playhead even if playback fails
-            updateVisualizationPlayhead(backingVocalsFilename, newTime, audioPlayer.duration);
-        });
+        // Calculate percentage with improved accuracy
+        // The backend now generates images with minimal left padding for precise seeking
+        let percentage = clickX / rect.width;
+        
+        // Ensure percentage is within bounds
+        percentage = Math.max(0, Math.min(1, percentage));
+        
+        console.log(`🎯 Calculated backing vocals seek percentage: ${(percentage * 100).toFixed(1)}%`);
+        
+        // Find the corresponding backing vocals audio player
+        const audioPlayer = document.querySelector(`audio[data-filename="${backingVocalsFilename}"]`);
+        if (audioPlayer) {
+            if (audioPlayer.duration) {
+                const newTime = percentage * audioPlayer.duration;
+                audioPlayer.currentTime = newTime;
+                
+                console.log(`🎯 Seeking backing vocals to ${newTime.toFixed(1)}s of ${audioPlayer.duration.toFixed(1)}s`);
+                
+                // Start playback automatically
+                audioPlayer.play().then(() => {
+                    console.log(`✅ Backing vocals playback started successfully for ${backingVocalsFilename}`);
+                }).catch(error => {
+                    console.warn('Could not start backing vocals playback:', error);
+                    // Still update playhead even if playback fails
+                    updateVisualizationPlayhead(backingVocalsFilename, newTime, audioPlayer.duration);
+                });
+            } else {
+                console.warn(`Backing vocals audio for ${backingVocalsFilename} is not ready for seeking yet (duration: ${audioPlayer.duration})`);
+                showInfo('Loading backing vocals audio - please try again in a moment');
+                
+                // Try to load the audio and then seek
+                audioPlayer.addEventListener('loadedmetadata', () => {
+                    if (audioPlayer.duration) {
+                        const newTime = percentage * audioPlayer.duration;
+                        audioPlayer.currentTime = newTime;
+                        console.log(`🎯 Delayed backing vocals seek to ${newTime.toFixed(1)}s after metadata loaded`);
+                        audioPlayer.play().catch(error => {
+                            console.warn('Could not start backing vocals playback after loading metadata:', error);
+                        });
+                    }
+                }, { once: true });
+                
+                // Force load if not already loading
+                audioPlayer.load();
+            }
+        } else {
+            console.warn(`Backing vocals audio player not found for ${backingVocalsFilename} - seeking not available`);
+            showInfo('Backing vocals preview not ready yet - please wait a moment and try again');
+        }
+    } catch (error) {
+        console.error('Error in seekToBackingVocalsPosition:', error);
+        showError('Error seeking in backing vocals audio - please try again');
     }
 }
 
 function selectInstrumental(filename, element) {
-    // Remove selection from all options
-    document.querySelectorAll('.instrumental-option').forEach(opt => {
-        opt.classList.remove('selected');
-    });
+    console.log('🎵 selectInstrumental called with:', filename);
     
-    // Add selection to clicked option
-    element.classList.add('selected');
-    selectedInstrumental = filename;
-    
-    // Update confirm button
-    updateConfirmInstrumentalButton();
-    
-    // Pause any currently playing audio
-    document.querySelectorAll('.audio-preview-player').forEach(audio => {
-        if (!audio.paused) {
-            audio.pause();
+    try {
+        // Remove selection from all options
+        document.querySelectorAll('.instrumental-option').forEach(opt => {
+            opt.classList.remove('selected');
+        });
+        
+        // Add selection to clicked option
+        if (element) {
+            element.classList.add('selected');
+        } else {
+            console.warn('Element not provided to selectInstrumental, finding by filename');
+            const targetElement = document.querySelector(`[data-filename="${filename}"]`);
+            if (targetElement) {
+                targetElement.classList.add('selected');
+            }
         }
-    });
-    
-    showInfo(`Selected: ${filename}`);
+        
+        selectedInstrumental = filename;
+        console.log('✅ Selected instrumental:', selectedInstrumental);
+        
+        // Update confirm button
+        updateConfirmInstrumentalButton();
+        
+        // Pause any currently playing audio
+        document.querySelectorAll('.audio-preview-player').forEach(audio => {
+            try {
+                if (!audio.paused) {
+                    audio.pause();
+                }
+            } catch (audioError) {
+                console.warn('Error pausing audio:', audioError);
+            }
+        });
+        
+        showInfo(`Selected: ${filename}`);
+        
+    } catch (error) {
+        console.error('Error in selectInstrumental:', error);
+        showError('Error selecting instrumental - please try again');
+    }
 }
 
 // ... existing code ...
@@ -5718,9 +6768,6 @@ window.debugTimestamp = function(timestamp) {
 };
 
 console.log('🎤 Karaoke Generator Frontend Ready!');
-console.log('💡 Use debugTimestamp("your-timestamp-here") to test timestamp parsing');
-console.log('🕐 Timestamps now display in your local timezone with improved error handling'); 
-
 // Add job cloning functions after the existing admin functions
 
 // Job cloning functions (admin only)
